@@ -55,13 +55,13 @@ void Timeout::shutdown() {
     }
     shuttingDown = true;
     for (const std::pair<const int32_t, Timer>& entry : timerMap) {
-        JS_FreeValue(jsContext, entry.second.callback);
         uv_close(reinterpret_cast<uv_handle_t*>(entry.second.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
             const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
             delete uvTimerHandle;
             delete handleData;
         });
+        JS_FreeValue(jsContext, entry.second.callback);
     }
     timerMap.clear();
 }
@@ -135,6 +135,9 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
+                const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
+                const Timeout::Timer timer = handleData->timeout->timerMap.at(handleData->timerID);
+
                 // Close uvTimerHandle and delete it and its HandleData after closure.
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
                     const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
@@ -143,15 +146,12 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                     delete handleData;
                 });
 
-                // Remove the fired timer before JS can cancel timers or shut down.
-                const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
-                const Timeout::Timer timer = handleData->timeout->timerMap.at(handleData->timerID);
-                handleData->timeout->timerMap.erase(handleData->timerID);
-
                 // Call the callback and discard the result.
                 const JSValue result = JS_Call(handleData->timeout->jsContext, timer.callback, JS_UNDEFINED, 0, nullptr);
                 JS_FreeValue(handleData->timeout->jsContext, result);
                 JS_FreeValue(handleData->timeout->jsContext, timer.callback);
+
+                handleData->timeout->timerMap.erase(handleData->timerID);
 
                 // Let the host report any JS exceptions and execute pending Promise jobs.
                 handleData->timeout->callbackDidRun(handleData->timeout->jsContext);
@@ -161,14 +161,14 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         };
         status = uv_timer_start(uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
         if (status != 0) {
-            JS_FreeValue(jsContext, timeout.timerMap.at(timerID).callback);
-            timeout.timerMap.erase(timerID);
             uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle.release()), [](uv_handle_t* uvHandle) {
                 const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
                 const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
                 delete uvTimerHandle;
                 delete handleData;
             });
+            JS_FreeValue(jsContext, timeout.timerMap.at(timerID).callback);
+            timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));
         }
         timeout.timerMap.at(timerID).uvTimerHandle = uvTimerHandle.release();
@@ -217,14 +217,14 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
 
         const Timeout::Timer timer = timeout.timerMap.at(timerIDInt32);
-        timeout.timerMap.erase(timerIDInt32);
-        JS_FreeValue(jsContext, timer.callback);
         uv_close(reinterpret_cast<uv_handle_t*>(timer.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
             const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
             delete uvTimerHandle;
             delete handleData;
         });
+        JS_FreeValue(jsContext, timer.callback);
+        timeout.timerMap.erase(timerIDInt32);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
