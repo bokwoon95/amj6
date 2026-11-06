@@ -48,7 +48,7 @@ namespace {
 std::mutex timeoutClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-[[maybe_unused]] std::expected<Timeout::Timer*, errors::Error> createTimer(Timeout& timeout, JSValue callback) {
+std::expected<Timeout::Timer*, errors::Error> createTimer(Timeout& timeout, JSValue callback) {
     while (true) {
         // If the registry is full, there are no more available
         // timerIDs.
@@ -82,7 +82,7 @@ std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throw
     return timer.release();
 };
 
-[[maybe_unused]] void destroyTimer(Timeout::Timer* timer) {
+void destroyTimer(Timeout::Timer* timer) {
     timer->timeout->registry.erase(timer->timerID);
     JS_FreeValue(timer->timeout->jsContext, timer->callback);
     uv_close(reinterpret_cast<uv_handle_t*>(&timer->uvTimerHandle), [](uv_handle_t* uvHandle) {
