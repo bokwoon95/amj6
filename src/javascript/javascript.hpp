@@ -18,8 +18,6 @@ namespace amj::javascript {
 // the context's owner thread.
 class ScopedJSValue {
   public:
-    JSContext* jsContext = nullptr;
-    JSValue jsValue = JS_UNDEFINED;
     ScopedJSValue(JSContext* jsContext, JSValue jsValue) {
         this->jsContext = jsContext;
         this->jsValue = jsValue;
@@ -29,9 +27,16 @@ class ScopedJSValue {
     }
     ScopedJSValue(const ScopedJSValue&) = delete;
     ScopedJSValue& operator=(const ScopedJSValue&) = delete;
+    JSValue get() const {
+        return jsValue;
+    }
     JSValue release() {
         return std::exchange(jsValue, JS_UNDEFINED);
     }
+
+  private:
+    JSContext* jsContext = nullptr;
+    JSValue jsValue = JS_UNDEFINED;
 };
 
 // An in-memory JSON tree, not serialized JSON text. Numbers must be finite.
@@ -88,6 +93,6 @@ std::optional<std::string> jsstring(JSContext* jsContext, JSValueConst value);
 
 // Defines an own, writable/enumerable/configurable string property.
 // Returns false with a pending JS exception on failure.
-bool setstringfield(const ScopedJSValue& obj, const char* key, std::string_view value);
+bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, std::string_view value);
 
 } // namespace amj::javascript

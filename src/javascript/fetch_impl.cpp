@@ -354,74 +354,86 @@ errors::Error deliver(const std::shared_ptr<FetchRequestState>& fetchRequestStat
     }
     fetchRequestState->transport->condition.notify_all();
     JSContext* jsContext = fetchRequestState->jsContext;
-    ScopedJSValue callback(jsContext, undefinedValue);
+    JSValue callbackValue = undefinedValue;
     if (reading) {
         fetchRequestState->readID = 0;
-        callback.jsValue = std::exchange(fetchRequestState->onRead, undefinedValue);
+        callbackValue = std::exchange(fetchRequestState->onRead, undefinedValue);
     } else {
         fetchRequestState->headersID = 0;
         fetchRequestState->headersDelivered = !failure.has_value();
-        callback.jsValue = std::exchange(fetchRequestState->onHeaders, undefinedValue);
+        callbackValue = std::exchange(fetchRequestState->onHeaders, undefinedValue);
     }
-    if (JS_IsUndefined(callback.jsValue)) {
+    const ScopedJSValue callback(jsContext, callbackValue);
+    if (JS_IsUndefined(callback.get())) {
         return {};
     }
-    ScopedJSValue failureValue(jsContext, nullValue);
-    ScopedJSValue data(jsContext, nullValue);
-    if (failure.has_value()) {
-        failureValue.jsValue = JS_NewObjectProto(jsContext, nullValue);
-        if (!JS_IsException(failureValue.jsValue)) {
-            if (!setstringfield(failureValue, "type", failure.value().type) || !setstringfield(failureValue, "message", failure.value().message)) {
-                return errors::Error{
-                    .errorCode = ErrorCode::JSException,
-                    .errorMessage = "Could not convert HTTP completion data",
-                };
-            }
-        }
-    } else if (reading && !done) {
-        const ScopedJSValue buffer(jsContext, JS_NewArrayBufferCopy(jsContext, chunk.data(), chunk.size()));
-        if (!JS_IsException(buffer.jsValue)) {
-            // QuickJS-NG's public helper reads offset/length slots even with argc=1.
-            std::array<JSValue, 3> arguments = {buffer.jsValue, undefinedValue, undefinedValue};
-            data.jsValue = JS_NewTypedArray(jsContext, static_cast<int>(arguments.size()), arguments.data(), JS_TYPED_ARRAY_UINT8);
-        }
-    } else if (!reading) {
-        data.jsValue = JS_NewObjectProto(jsContext, nullValue);
-        ScopedJSValue pairs(jsContext, JS_NewArray(jsContext));
-        if (!JS_IsException(data.jsValue) && !JS_IsException(pairs.jsValue)) {
-            uint32_t index = 0;
-            for (const std::pair<std::string, std::string>& header : metadata.headers) {
-                ScopedJSValue pair(jsContext, JS_NewArray(jsContext));
-                if (JS_IsException(pair.jsValue)) {
-                    break;
-                }
-                const std::array<std::string_view, 2> fields = {header.first, header.second};
-                for (uint32_t field = 0; field < fields.size(); field++) {
-                    const std::string_view text = fields.at(field);
-                    const JSValue value = JS_NewStringLen(jsContext, text.data(), text.size());
-                    if (JS_IsException(value) || JS_DefinePropertyValueUint32(jsContext, pair.jsValue, field, value, JS_PROP_C_W_E) < 0) {
-                        break;
-                    }
-                }
-                if (JS_HasException(jsContext) || JS_DefinePropertyValueUint32(jsContext, pairs.jsValue, index, pair.release(), JS_PROP_C_W_E) < 0) {
-                    break;
-                }
-                index++;
-            }
-            if (!JS_HasException(jsContext) && JS_DefinePropertyValueStr(jsContext, data.jsValue, "status", JS_NewInt32(jsContext, metadata.status), JS_PROP_C_W_E) >= 0) {
-                JS_DefinePropertyValueStr(jsContext, data.jsValue, "headers", pairs.release(), JS_PROP_C_W_E);
-            }
+    const ScopedJSValue failureValue(jsContext, failure.has_value() ? JS_NewObjectProto(jsContext, nullValue) : nullValue);
+    if (failure.has_value() && !JS_IsException(failureValue.get())) {
+        if (!setstringfield(jsContext, failureValue.get(), "type", failure.value().type) || !setstringfield(jsContext, failureValue.get(), "message", failure.value().message)) {
+            return errors::Error{
+                .errorCode = ErrorCode::JSException,
+                .errorMessage = "Could not convert HTTP completion data",
+            };
         }
     }
+    const auto createData = [&]() -> JSValue {
+        if (failure.has_value() || (reading && done)) {
+            return nullValue;
+        }
+        if (reading) {
+            const ScopedJSValue buffer(jsContext, JS_NewArrayBufferCopy(jsContext, chunk.data(), chunk.size()));
+            if (JS_IsException(buffer.get())) {
+                return exceptionValue;
+            }
+            // QuickJS-NG's public helper reads offset/length slots even with argc=1.
+            std::array<JSValue, 3> arguments = {buffer.get(), undefinedValue, undefinedValue};
+            return JS_NewTypedArray(jsContext, static_cast<int>(arguments.size()), arguments.data(), JS_TYPED_ARRAY_UINT8);
+        }
+        ScopedJSValue object(jsContext, JS_NewObjectProto(jsContext, nullValue));
+        if (JS_IsException(object.get())) {
+            return exceptionValue;
+        }
+        ScopedJSValue pairs(jsContext, JS_NewArray(jsContext));
+        if (JS_IsException(pairs.get())) {
+            return exceptionValue;
+        }
+        uint32_t index = 0;
+        for (const std::pair<std::string, std::string>& header : metadata.headers) {
+            ScopedJSValue pair(jsContext, JS_NewArray(jsContext));
+            if (JS_IsException(pair.get())) {
+                return exceptionValue;
+            }
+            const std::array<std::string_view, 2> fields = {header.first, header.second};
+            for (uint32_t field = 0; field < fields.size(); field++) {
+                const std::string_view text = fields.at(field);
+                const JSValue value = JS_NewStringLen(jsContext, text.data(), text.size());
+                if (JS_IsException(value) || JS_DefinePropertyValueUint32(jsContext, pair.get(), field, value, JS_PROP_C_W_E) < 0) {
+                    return exceptionValue;
+                }
+            }
+            if (JS_DefinePropertyValueUint32(jsContext, pairs.get(), index, pair.release(), JS_PROP_C_W_E) < 0) {
+                return exceptionValue;
+            }
+            index++;
+        }
+        if (JS_DefinePropertyValueStr(jsContext, object.get(), "status", JS_NewInt32(jsContext, metadata.status), JS_PROP_C_W_E) < 0) {
+            return exceptionValue;
+        }
+        if (JS_DefinePropertyValueStr(jsContext, object.get(), "headers", pairs.release(), JS_PROP_C_W_E) < 0) {
+            return exceptionValue;
+        }
+        return object.release();
+    };
+    const ScopedJSValue data(jsContext, createData());
     if (JS_HasException(jsContext)) {
         return errors::Error{
             .errorCode = ErrorCode::JSException,
             .errorMessage = "Could not convert HTTP completion data",
         };
     }
-    std::array<JSValue, 2> arguments = {failureValue.jsValue, data.jsValue};
-    const ScopedJSValue result(jsContext, JS_Call(jsContext, callback.jsValue, undefinedValue, static_cast<int>(arguments.size()), arguments.data()));
-    if (JS_IsException(result.jsValue)) {
+    std::array<JSValue, 2> arguments = {failureValue.get(), data.get()};
+    const ScopedJSValue result(jsContext, JS_Call(jsContext, callback.get(), undefinedValue, static_cast<int>(arguments.size()), arguments.data()));
+    if (JS_IsException(result.get())) {
         return errors::Error{
             .errorCode = ErrorCode::JSException,
             .errorMessage = "HTTP completion callback threw",
@@ -525,38 +537,38 @@ JSValue FetchImpl::start(JSContext* jsContext, JSValueConst url, JSValueConst me
     std::size_t headerBytes = 0;
     for (int64_t index = 0; index < count; index++) {
         const ScopedJSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headerPairs, static_cast<uint32_t>(index)));
-        if (JS_IsException(pair.jsValue)) {
+        if (JS_IsException(pair.get())) {
             return exceptionValue;
         }
         int64_t length = 0;
-        if (!JS_IsArray(pair.jsValue)) {
+        if (!JS_IsArray(pair.get())) {
             return JS_ThrowTypeError(jsContext, "Expected header pairs");
         }
-        if (JS_GetLength(jsContext, pair.jsValue, &length) < 0) {
+        if (JS_GetLength(jsContext, pair.get(), &length) < 0) {
             return exceptionValue;
         }
         if (length != 2) {
             return JS_ThrowTypeError(jsContext, "Expected two fields per header pair");
         }
-        const ScopedJSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.jsValue, 0));
-        const ScopedJSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.jsValue, 1));
-        if (JS_IsException(name.jsValue) || JS_IsException(value.jsValue)) {
+        const ScopedJSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
+        const ScopedJSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
+        if (JS_IsException(name.get()) || JS_IsException(value.get())) {
             return exceptionValue;
         }
-        if (!JS_IsString(name.jsValue)) {
+        if (!JS_IsString(name.get())) {
             return JS_ThrowTypeError(jsContext, "FetchImpl.start: header name must be a string");
         }
-        const std::optional<std::string> nameText = jsstring(jsContext, name.jsValue);
+        const std::optional<std::string> nameText = jsstring(jsContext, name.get());
         if (!nameText.has_value()) {
             return exceptionValue;
         }
         if (nameText.value().size() > headerLimit) {
             return JS_ThrowRangeError(jsContext, "FetchImpl.start: header name exceeds 64 KiB");
         }
-        if (!JS_IsString(value.jsValue)) {
+        if (!JS_IsString(value.get())) {
             return JS_ThrowTypeError(jsContext, "FetchImpl.start: header value must be a string");
         }
-        const std::optional<std::string> valueText = jsstring(jsContext, value.jsValue);
+        const std::optional<std::string> valueText = jsstring(jsContext, value.get());
         if (!valueText.has_value()) {
             return exceptionValue;
         }
@@ -590,7 +602,7 @@ JSValue FetchImpl::start(JSContext* jsContext, JSValueConst url, JSValueConst me
     std::size_t length = 0;
     std::size_t elementSize = 0;
     const ScopedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, bytes, &offset, &length, &elementSize));
-    if (JS_IsException(buffer.jsValue)) {
+    if (JS_IsException(buffer.get())) {
         return exceptionValue;
     }
     if (elementSize != 1 || length > bodyLimit || (length != 0 && (request.method == "GET" || request.method == "HEAD"))) {
@@ -598,7 +610,7 @@ JSValue FetchImpl::start(JSContext* jsContext, JSValueConst url, JSValueConst me
     }
     if (length != 0) {
         std::size_t bufferLength = 0;
-        const uint8_t* data = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.jsValue);
+        const uint8_t* data = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
         if (data == nullptr) {
             return exceptionValue;
         }
@@ -635,13 +647,13 @@ JSValue FetchImpl::start(JSContext* jsContext, JSValueConst url, JSValueConst me
     client.enable_server_certificate_verification(true);
     client.enable_server_hostname_verification(true);
     const ScopedJSValue handle(jsContext, JS_NewObjectProtoClass(jsContext, nullValue, getClassID(JS_GetRuntime(jsContext))));
-    if (JS_IsException(handle.jsValue)) {
+    if (JS_IsException(handle.get())) {
         return exceptionValue;
     }
     std::unique_ptr<FetchHandle> fetchHandle = std::make_unique<FetchHandle>();
     fetchHandle->owner = fetchImplState;
     fetchHandle->fetchRequestState = fetchRequestState;
-    JS_SetOpaque(handle.jsValue, fetchHandle.release());
+    JS_SetOpaque(handle.get(), fetchHandle.release());
     try {
         fetchImplState->requests.insert_or_assign(fetchRequestState->requestID, fetchRequestState);
         const std::weak_ptr<FetchRequestState> weakFetchRequestState = fetchRequestState;
@@ -663,7 +675,7 @@ JSValue FetchImpl::start(JSContext* jsContext, JSValueConst url, JSValueConst me
         closeRequest(fetchRequestState, fetchImplState);
         throw;
     }
-    return JS_DupValue(jsContext, handle.jsValue);
+    return JS_DupValue(jsContext, handle.get());
 } catch (const std::bad_alloc&) {
     return JS_ThrowOutOfMemory(jsContext);
 } catch (const std::exception& exception) {
@@ -797,16 +809,16 @@ JSModuleDef* FetchImpl::createModule(JSContext* jsContext, Scheduler& scheduler)
     fetchHandle->fetchImpl = std::make_unique<FetchImpl>();
     fetchHandle->fetchImpl->fetchImplState = fetchImplState;
     ScopedJSValue object(jsContext, JS_NewObjectProtoClass(jsContext, nullValue, classID));
-    if (JS_IsException(object.jsValue)) {
+    if (JS_IsException(object.get())) {
         return nullptr;
     }
-    JS_SetOpaque(object.jsValue, fetchHandle.release());
+    JS_SetOpaque(object.get(), fetchHandle.release());
     const std::array<const char*, 3> names = {"start", "read", "close"};
     const std::array<int, 3> argumentCounts = {5, 2, 1};
     for (std::size_t index = 0; index < names.size(); index++) {
-        JSValue functionData = object.jsValue;
+        JSValue functionData = object.get();
         const JSValue function = JS_NewCFunctionData(jsContext, fetchOperation, argumentCounts.at(index), static_cast<int>(index), 1, &functionData);
-        if (JS_IsException(function) || JS_DefinePropertyValueStr(jsContext, object.jsValue, names.at(index), function, JS_PROP_C_W_E) < 0) {
+        if (JS_IsException(function) || JS_DefinePropertyValueStr(jsContext, object.get(), names.at(index), function, JS_PROP_C_W_E) < 0) {
             return nullptr;
         }
     }

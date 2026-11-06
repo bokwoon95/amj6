@@ -292,14 +292,14 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         for (size_t index = 0; index < countSize; index++) {
             // Get entry array.
             const ScopedJSValue entryJSValue(jsContext, JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
-            if (JS_IsException(entryJSValue.jsValue)) {
+            if (JS_IsException(entryJSValue.get())) {
                 return JS_EXCEPTION;
             }
-            if (!JS_IsArray(entryJSValue.jsValue)) {
+            if (!JS_IsArray(entryJSValue.get())) {
                 return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu] not an array", index);
             }
             int64_t length = 0;
-            if (JS_GetLength(jsContext, entryJSValue.jsValue, &length) < 0) {
+            if (JS_GetLength(jsContext, entryJSValue.get(), &length) < 0) {
                 return JS_EXCEPTION;
             }
             if (length != 2) {
@@ -307,14 +307,14 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get name string.
-            const ScopedJSValue nameJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.jsValue, 0));
-            if (JS_IsException(nameJSValue.jsValue)) {
+            const ScopedJSValue nameJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
+            if (JS_IsException(nameJSValue.get())) {
                 return JS_EXCEPTION;
             }
-            if (!JS_IsString(nameJSValue.jsValue)) {
+            if (!JS_IsString(nameJSValue.get())) {
                 return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu][0] must be a string", index);
             }
-            const std::optional<std::string> name = jsstring(jsContext, nameJSValue.jsValue);
+            const std::optional<std::string> name = jsstring(jsContext, nameJSValue.get());
             if (!name.has_value()) {
                 return JS_EXCEPTION;
             }
@@ -323,14 +323,14 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get value string.
-            const ScopedJSValue valueJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.jsValue, 1));
-            if (JS_IsException(valueJSValue.jsValue)) {
+            const ScopedJSValue valueJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
+            if (JS_IsException(valueJSValue.get())) {
                 return JS_EXCEPTION;
             }
-            if (!JS_IsString(valueJSValue.jsValue)) {
+            if (!JS_IsString(valueJSValue.get())) {
                 return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu][1] must be a string", index);
             }
-            const std::optional<std::string> value = jsstring(jsContext, valueJSValue.jsValue);
+            const std::optional<std::string> value = jsstring(jsContext, valueJSValue.get());
             if (!value.has_value()) {
                 return JS_EXCEPTION;
             }
