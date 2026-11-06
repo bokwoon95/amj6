@@ -29,14 +29,19 @@ namespace amj::javascript {
 // remain alive through shutdown()/destruction. The host must finish native close
 // callbacks before closing/destroying the loop.
 struct Timeout {
-    struct Timer;
+    // One setTimeout() registration.
+    struct Timer {
+        // Libuv timer started with uv_timer_start() and closed with uv_close().
+        uv_timer_t* uvTimerHandle = nullptr;
+        JSValue callback = JS_UNDEFINED;
+    };
 
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
-    std::map<int32_t, Timer*> registry = {}; // Public timer ID -> native timer.
+    std::map<int32_t, Timer> registry = {}; // Public timer ID -> timer registration.
     bool shuttingDown = false;
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
