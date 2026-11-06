@@ -26,12 +26,6 @@
 namespace amj::javascript {
 namespace errors = amj::errors;
 namespace this_thread = std::this_thread;
-namespace {
-
-std::mutex timeoutClassIDMutex = {};
-std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
-
-} // namespace
 
 struct Timeout::Timer {
     // Embedded uvTimerHandle that lets this TimeoutTimer actually be started
@@ -50,6 +44,9 @@ struct Timeout::Timer {
 
 // TODO: implement this? And use it everywhere.
 namespace {
+
+std::mutex timeoutClassIDMutex = {};
+std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
 [[maybe_unused]] std::expected<Timeout::Timer*, errors::Error> createTimer(Timeout& timeout, JSValue callback) {
     while (true) {
