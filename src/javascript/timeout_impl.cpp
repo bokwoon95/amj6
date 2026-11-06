@@ -1,75 +1,126 @@
 #include "timeout_impl.hpp"
 
-#include "errors/errors.hpp"
 #include "javascript.hpp"
-#include "scheduler.hpp"
 
 #include <quickjs.h>
+#include <uv.h>
 
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <expected>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace amj::javascript {
-namespace chrono = std::chrono;
-namespace errors = amj::errors;
+namespace this_thread = std::this_thread;
+
+// Libuv borrows this allocation until its close callback. The JS callback is
+// detached and all borrowed pointers are cleared before closure is requested.
+struct TimeoutTimer {
+    uv_timer_t handle = {};
+    JSContext* jsContext = nullptr;
+    JSValue callback = JS_UNDEFINED;
+    Timeout* timeout = nullptr;
+    int32_t timerID = 0;
+};
+
 namespace {
 
 std::mutex timeoutClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-// Owned by the scheduler callback. Destruction handles cancellation and clear()
-// without reentering the scheduler.
-struct TimeoutCallback {
-    JSContext* jsContext = nullptr;
-    JSValue callback = JS_UNDEFINED;
-    Timeout* timeout = nullptr; // Owner keeps this alive through callback destruction.
-    int32_t timerID = 0;
-    int64_t callbackID = 0;
+// Closure never accesses QuickJS or the Timeout owner. This allocation may
+// outlive both of them, but not the borrowed loop.
+void timerClosed(uv_handle_t* handle) noexcept {
+    const TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(handle->data);
+    handle->data = nullptr;
+    delete timeoutTimer;
+}
 
-    ~TimeoutCallback() {
-        try {
-            // A timer ID may have been reused while this callback was executing.
-            if (timeout != nullptr && timeout->registry.contains(timerID) && timeout->registry.at(timerID) == callbackID) {
-                timeout->registry.erase(timerID);
+void timerFired(uv_timer_t* handle) noexcept {
+    try {
+        TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(handle->data);
+        Timeout* timeout = timeoutTimer->timeout;
+        JSContext* jsContext = timeoutTimer->jsContext;
+        timeout->registry.erase(timeoutTimer->timerID);
+
+        // Detach the JS reference before calling user code: that code can clear
+        // other timers or shut down the owner. This timer is no longer active.
+        {
+            const ScopedJSValue callback(jsContext, timeoutTimer->callback);
+            timeoutTimer->callback = JS_UNDEFINED;
+            timeoutTimer->jsContext = nullptr;
+            timeoutTimer->timeout = nullptr;
+            // Libuv requires a generic handle pointer for closing typed handles.
+            uv_close(reinterpret_cast<uv_handle_t*>(handle), timerClosed);
+
+            // A prior failure must be handled before executing more JS. The
+            // host hook normally consumes exceptions before the next timer.
+            if (!JS_HasException(jsContext)) {
+                const ScopedJSValue result(jsContext, JS_Call(jsContext, callback.value, JS_UNDEFINED, 0, nullptr));
             }
-            JS_FreeValue(jsContext, callback);
-        } catch (...) {
-            std::terminate();
         }
+        // No retained JS references remain in this timer when the host runs.
+        timeout->afterCallback(jsContext);
+    } catch (...) {
+        std::terminate();
     }
-
-    errors::Error call() {
-        if (timeout->registry.contains(timerID) && timeout->registry.at(timerID) == callbackID) {
-            timeout->registry.erase(timerID);
-        }
-        const ScopedJSValue result(jsContext, JS_Call(jsContext, callback, JS_UNDEFINED, 0, nullptr));
-        if (JS_IsException(result.value)) {
-            return errors::Error{
-                .errorCode = ErrorCode::JSException,
-                .errorMessage = "Timer callback threw a JavaScript exception",
-            };
-        }
-        return {};
-    }
-};
+}
 
 } // namespace
 
+Timeout::Timeout(JSContext* jsContext, uv_loop_t* loop, std::function<void(JSContext*)> afterCallback) {
+    if (jsContext == nullptr || loop == nullptr || afterCallback == nullptr) {
+        throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
+    }
+    this->jsContext = jsContext;
+    this->loop = loop;
+    this->afterCallback = std::move(afterCallback);
+    this->ownerThreadID = this_thread::get_id();
+}
+
+Timeout::~Timeout() {
+    shutdown();
+}
+
+void Timeout::shutdown() {
+    if (this_thread::get_id() != ownerThreadID) {
+        std::terminate();
+    }
+    shuttingDown = true;
+    while (!registry.empty()) {
+        TimeoutTimer* timeoutTimer = registry.begin()->second;
+        registry.erase(registry.begin());
+        if (uv_timer_stop(&timeoutTimer->handle) != 0) {
+            std::terminate(); // Every registry entry is an initialized timer.
+        }
+        JS_FreeValue(jsContext, timeoutTimer->callback);
+        timeoutTimer->callback = JS_UNDEFINED;
+        timeoutTimer->jsContext = nullptr;
+        timeoutTimer->timeout = nullptr;
+        uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->handle), timerClosed);
+    }
+}
+
 JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, Timeout& timeout) {
     try {
-        if (timeout.scheduler == nullptr) {
-            return JS_ThrowInternalError(jsContext, "timeoutSet: missing scheduler");
+        if (this_thread::get_id() != timeout.ownerThreadID) {
+            std::terminate(); // Even creating a JS exception requires the owner thread.
+        }
+        if (jsContext != timeout.jsContext) {
+            return JS_ThrowInternalError(jsContext, "timeoutSet: wrong context");
+        }
+        if (timeout.shuttingDown) {
+            return JS_ThrowInternalError(jsContext, "timeoutSet: owner is shut down");
         }
         if (argc < 2) {
             return JS_ThrowTypeError(jsContext, "timeoutSet: requires at least 2 arguments (%d provided)", argc);
@@ -90,32 +141,24 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (status < 0) {
             return JS_EXCEPTION;
         }
-        if (!std::isfinite(delayMs) || std::floor(delayMs) != delayMs || delayMs < 0.0 || delayMs > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+        if (!std::isfinite(delayMs) || std::floor(delayMs) != delayMs || delayMs < 0.0 || delayMs > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
             return JS_ThrowRangeError(jsContext, "timeoutSet: arg1: delay must be a positive number within 32-bit signed integer range");
-        }
-
-        // Ensure now + delay is within chrono::steady_clock::time_point's
-        // maximum range.
-        const chrono::steady_clock::time_point now = chrono::steady_clock::now();
-        const chrono::milliseconds delayDuration(static_cast<int64_t>(delayMs));
-        if (now > chrono::steady_clock::time_point::max() - delayDuration) {
-            return JS_ThrowRangeError(jsContext, "timeoutSet: timer deadline is out of range");
         }
 
         // Increment timerIDCounter to the next available timerID. timerIDs can
         // be reused (the counter wraps around starting from 1), so after
         // wrapping around it's possible that the next timerID is still in use
-        // (check the timerCallbackIDs map) so we have to keep incrementing
+        // (check the registry) so we have to keep incrementing
         // until we find one that is not in use.
         while (true) {
-            // If the timerCallbackIDs map is full, there are no more available
+            // If the registry is full, there are no more available
             // timerIDs.
-            if (timeout.registry.size() >= static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            if (timeout.registry.size() >= static_cast<std::size_t>((std::numeric_limits<int32_t>::max)())) {
                 return JS_ThrowRangeError(jsContext, "timeoutSet: timerIDs exhausted");
             }
             // Increment the timerIDCounter by 1, wrapping when we hit
             // int32_t's maximum value.
-            if (timeout.timerIDCounter == std::numeric_limits<int32_t>::max()) {
+            if (timeout.timerIDCounter == (std::numeric_limits<int32_t>::max)()) {
                 timeout.timerIDCounter = 1;
             } else {
                 timeout.timerIDCounter++;
@@ -128,27 +171,35 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         }
         const int32_t timerID = timeout.timerIDCounter;
 
-        const std::shared_ptr<TimeoutCallback> timeoutCallback = std::make_shared<TimeoutCallback>();
-        timeoutCallback->jsContext = jsContext;
-        timeoutCallback->callback = callback.release();
-        timeoutCallback->timeout = &timeout;
-        timeoutCallback->timerID = timerID;
-        auto schedulerCallback = [timeoutCallback]() -> errors::Error {
-            return timeoutCallback->call();
-        };
-        const std::expected<int64_t, errors::Error> callbackID = timeout.scheduler->registerCallback(std::move(schedulerCallback), now + delayDuration);
-        if (!callbackID.has_value()) {
-            return JS_ThrowInternalError(jsContext, "timeoutSet: %s", callbackID.error().toString().c_str());
+        // Allocate and insert before initializing the handle, so allocation
+        // failure cannot leave a live libuv handle without an owner.
+        std::unique_ptr<TimeoutTimer> ownedTimeoutTimer = std::make_unique<TimeoutTimer>();
+        timeout.registry.insert_or_assign(timerID, ownedTimeoutTimer.get());
+        int timerStatus = uv_timer_init(timeout.loop, &ownedTimeoutTimer->handle);
+        if (timerStatus != 0) {
+            timeout.registry.erase(timerID);
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(timerStatus));
         }
-        timeoutCallback->callbackID = callbackID.value();
-        try {
-            timeout.registry.insert_or_assign(timerID, callbackID.value());
-        } catch (...) {
-            const errors::Error error = timeout.scheduler->unregisterCallback(callbackID.value());
-            if (error.errorCode) {
-                std::terminate();
-            }
-            throw;
+        ownedTimeoutTimer->handle.data = ownedTimeoutTimer.get();
+        ownedTimeoutTimer->jsContext = jsContext;
+        ownedTimeoutTimer->callback = callback.release();
+        ownedTimeoutTimer->timeout = &timeout;
+        ownedTimeoutTimer->timerID = timerID;
+
+        // From here only the close callback may delete the initialized handle.
+        TimeoutTimer* timeoutTimer = ownedTimeoutTimer.release();
+        // Libuv caches loop time. Refresh it so delays start at registration,
+        // even if the host has been executing JS for a long time this turn.
+        uv_update_time(timeout.loop);
+        timerStatus = uv_timer_start(&timeoutTimer->handle, timerFired, static_cast<uint64_t>(delayMs), 0);
+        if (timerStatus != 0) {
+            timeout.registry.erase(timerID);
+            JS_FreeValue(jsContext, timeoutTimer->callback);
+            timeoutTimer->callback = JS_UNDEFINED;
+            timeoutTimer->jsContext = nullptr;
+            timeoutTimer->timeout = nullptr;
+            uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->handle), timerClosed);
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(timerStatus));
         }
         return JS_NewInt32(jsContext, timerID);
     } catch (const std::bad_alloc&) {
@@ -165,8 +216,11 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
 
 JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, Timeout& timeout) {
     try {
-        if (timeout.scheduler == nullptr) {
-            return JS_ThrowInternalError(jsContext, "timeoutClear: missing scheduler");
+        if (this_thread::get_id() != timeout.ownerThreadID) {
+            std::terminate();
+        }
+        if (jsContext != timeout.jsContext) {
+            return JS_ThrowInternalError(jsContext, "timeoutClear: wrong context");
         }
         if (argc < 1) {
             return JS_ThrowTypeError(jsContext, "timeoutClear: requires 1 argument (%d provided)", argc);
@@ -181,7 +235,7 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         if (status < 0) {
             return JS_EXCEPTION;
         }
-        if (!std::isfinite(timerID) || std::floor(timerID) != timerID || timerID < 0.0 || timerID > static_cast<double>(std::numeric_limits<int32_t>::max())) {
+        if (!std::isfinite(timerID) || std::floor(timerID) != timerID || timerID < 0.0 || timerID > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
             return JS_UNDEFINED;
         }
         const int32_t timerIDInt32 = static_cast<int32_t>(timerID);
@@ -191,15 +245,17 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             return JS_UNDEFINED;
         }
 
-        // Else unregister the timeout callback.
-        const int64_t callbackID = timeout.registry.at(timerIDInt32);
-        const errors::Error error = timeout.scheduler->unregisterCallback(callbackID);
-        if (error.errorCode) {
-            return JS_ThrowInternalError(jsContext, "timeoutClear: %s", error.toString().c_str());
+        TimeoutTimer* timeoutTimer = timeout.registry.at(timerIDInt32);
+        const int timerStatus = uv_timer_stop(&timeoutTimer->handle);
+        if (timerStatus != 0) {
+            return JS_ThrowInternalError(jsContext, "timeoutClear: uv_timer_stop: %s", uv_strerror(timerStatus));
         }
-        if (timeout.registry.contains(timerIDInt32) && timeout.registry.at(timerIDInt32) == callbackID) {
-            timeout.registry.erase(timerIDInt32);
-        }
+        timeout.registry.erase(timerIDInt32);
+        JS_FreeValue(jsContext, timeoutTimer->callback);
+        timeoutTimer->callback = JS_UNDEFINED;
+        timeoutTimer->jsContext = nullptr;
+        timeoutTimer->timeout = nullptr;
+        uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->handle), timerClosed);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
@@ -215,8 +271,11 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
 
 JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
     try {
-        if (timeout.scheduler == nullptr) {
-            JS_ThrowInternalError(jsContext, "createTimeoutImplModule: missing scheduler");
+        if (this_thread::get_id() != timeout.ownerThreadID) {
+            std::terminate();
+        }
+        if (jsContext != timeout.jsContext || timeout.shuttingDown) {
+            JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
             return nullptr;
         }
 
