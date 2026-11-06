@@ -1,0 +1,14 @@
+CompileFlags:
+  CompilationDatabase: build/clang
+  # clangd builds its own preambles; do not load compiler-version-specific PCHs.
+  Remove: [-include-pch, /Yu*, /Fp*]
+
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
+  Includes:
+    AnalyzeAngledIncludes: true
+  ClangTidy:
+    # Shared checks are in .clang-tidy; retain clangd's latency filter.
+    FastCheckFilter: Strict
+    Remove: [bugprone-use-after-move, bugprone-unchecked-optional-access]

@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "types": [],
+    "paths": {
+      "amj:text": ["./src/javascript/text.js"],
+      "amj:url": ["./src/javascript/url.js"],
+      "amj:fetch": ["./src/javascript/fetch.js"],
+      "amj:timeout": ["./src/javascript/timeout.js"]
+    }
+  },
+  "files": [
+    "src/javascript/global.d.ts",
+    "src/javascript/url_impl.d.ts",
+    "src/javascript/timeout_impl.d.ts",
+    "src/javascript/fetch_impl.d.ts"
+  ],
+  "include": ["src"],
+  "exclude": ["build", "dist", "vcpkg_installed", "node_modules", ".venv"]
+}

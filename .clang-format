@@ -1,0 +1,32 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 0
+
+# Braces & Control Statements (Go style)
+BreakBeforeBraces: Attach
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+IndentCaseLabels: true
+IndentCaseBlocks: false
+# Case scopes must be written explicitly; InsertBraces does not cover case labels.
+AllowShortBlocksOnASingleLine: Never
+AllowShortLambdasOnASingleLine: None
+BreakBeforeCloseBracketFunction: true
+
+# Mandatory Braces
+InsertBraces: true
+
+# Alignment & Spacing
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Import / Include Sorting (gofmt style)
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve

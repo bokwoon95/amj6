@@ -1,0 +1,14 @@
+{
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write src/javascript",
+    "check": "eslint src/javascript && prettier --check src/javascript",
+    "fix": "eslint src/javascript --fix && prettier --write src/javascript"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-plugin-jsdoc": "^63.3.3",
+    "prettier": "^3.0.0"
+  }
+}

@@ -1,0 +1,51 @@
+Checks: >-
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  clang-diagnostic-format*,
+  clang-diagnostic-missing-designated-field-initializers,
+  misc-const-correctness,
+  misc-definitions-in-headers,
+  misc-header-include-cycle,
+  misc-include-cleaner,
+  misc-misplaced-const,
+  misc-new-delete-overloads,
+  misc-non-copyable-objects,
+  misc-redundant-expression,
+  misc-static-assert,
+  misc-throw-by-value-catch-by-reference,
+  misc-unconventional-assign-operator,
+  misc-uniqueptr-reset-release,
+  misc-unused-alias-decls,
+  misc-unused-parameters,
+  misc-unused-using-decls,
+  modernize-avoid-c-arrays,
+  modernize-loop-convert,
+  modernize-make-shared,
+  modernize-make-unique,
+  modernize-replace-auto-ptr,
+  modernize-use-default-member-init,
+  modernize-use-equals-delete,
+  modernize-use-nullptr,
+  modernize-use-override,
+  performance-*,
+  readability-braces-around-statements,
+  readability-container-size-empty,
+  readability-implicit-bool-conversion,
+  readability-inconsistent-declaration-parameter-name,
+  readability-isolate-declaration,
+  readability-misleading-indentation,
+  readability-non-const-parameter
+  readability-qualified-auto,
+  readability-redundant-smartptr-get,
+ExtraArgsBefore:
+  - '-Wformat'
+  - '-Wformat-security'
+  - '-Wmissing-designated-field-initializers'
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*[/\\]src[/\\].*'
+CheckOptions:
+  performance-unnecessary-value-param.AllowedTypes: 'std::shared_ptr;std::weak_ptr'
+  # An earlier implicit reference must not hide a later explicit missing include.
+  misc-include-cleaner.DeduplicateFindings: false

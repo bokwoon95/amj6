@@ -1,0 +1,16 @@
+{
+  "name": "automate-my-job",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "ada-url",
+    {
+      "name": "cpp-httplib",
+      "default-features": false,
+      "features": ["openssl"]
+    },
+    "cpptrace",
+    "gtest",
+    "openssl",
+    "quickjs-ng"
+  ]
+}
