@@ -46,9 +46,9 @@ void timerClosed(uv_handle_t* handle) noexcept {
     delete timeoutTimer;
 }
 
-void timerFired(uv_timer_t* handle) noexcept {
+void timerFired(uv_timer_t* timerHandle) noexcept {
     try {
-        TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(handle->data);
+        TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(timerHandle->data);
         Timeout* timeout = timeoutTimer->timeout;
         JSContext* jsContext = timeoutTimer->jsContext;
         timeout->registry.erase(timeoutTimer->timerID);
@@ -61,7 +61,7 @@ void timerFired(uv_timer_t* handle) noexcept {
             timeoutTimer->jsContext = nullptr;
             timeoutTimer->timeout = nullptr;
             // Libuv requires a generic handle pointer for closing typed handles.
-            uv_close(reinterpret_cast<uv_handle_t*>(handle), timerClosed);
+            uv_close(reinterpret_cast<uv_handle_t*>(timerHandle), timerClosed);
 
             // A prior failure must be handled before executing more JS. The
             // host hook normally consumes exceptions before the next timer.
