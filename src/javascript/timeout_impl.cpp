@@ -135,11 +135,6 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                // Remove the fired timer before JS can cancel timers or shut down.
-                const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
-                const Timeout::Timer timer = handleData->timeout->timerMap.at(handleData->timerID);
-                handleData->timeout->timerMap.erase(handleData->timerID);
-
                 // Close uvTimerHandle and delete it and its HandleData after closure.
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
                     const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
@@ -147,6 +142,11 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                     delete uvTimerHandle;
                     delete handleData;
                 });
+
+                // Remove the fired timer before JS can cancel timers or shut down.
+                const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
+                const Timeout::Timer timer = handleData->timeout->timerMap.at(handleData->timerID);
+                handleData->timeout->timerMap.erase(handleData->timerID);
 
                 // Call the callback and discard the result.
                 const JSValue result = JS_Call(handleData->timeout->jsContext, timer.callback, JS_UNDEFINED, 0, nullptr);
