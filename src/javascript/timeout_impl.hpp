@@ -32,7 +32,7 @@ struct TimeoutTimer;
 // callbacks before closing/destroying the loop.
 struct Timeout {
     JSContext* jsContext = nullptr;
-    uv_loop_t* loop = nullptr;
+    uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> afterCallback = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
@@ -41,7 +41,7 @@ struct Timeout {
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
     // run the borrowed loop; the caller must supply an initialized loop.
-    Timeout(JSContext* jsContext, uv_loop_t* loop, std::function<void(JSContext*)> afterCallback);
+    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> afterCallback);
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;

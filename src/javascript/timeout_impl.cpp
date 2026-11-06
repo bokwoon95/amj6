@@ -40,15 +40,15 @@ std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throw
 
 // Closure never accesses QuickJS or the Timeout owner. This allocation may
 // outlive both of them, but not the borrowed loop.
-void timerClosed(uv_handle_t* handle) noexcept {
-    const TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(handle->data);
-    handle->data = nullptr;
+void timerClosed(uv_handle_t* uvHandle) noexcept {
+    const TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(uvHandle->data);
+    uvHandle->data = nullptr;
     delete timeoutTimer;
 }
 
-void timerFired(uv_timer_t* timerHandle) noexcept {
+void timerFired(uv_timer_t* uvTimerHandle) noexcept {
     try {
-        TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(timerHandle->data);
+        TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(uvTimerHandle->data);
         Timeout* timeout = timeoutTimer->timeout;
         JSContext* jsContext = timeoutTimer->jsContext;
         timeout->registry.erase(timeoutTimer->timerID);
@@ -61,7 +61,7 @@ void timerFired(uv_timer_t* timerHandle) noexcept {
             timeoutTimer->jsContext = nullptr;
             timeoutTimer->timeout = nullptr;
             // Libuv requires a generic handle pointer for closing typed handles.
-            uv_close(reinterpret_cast<uv_handle_t*>(timerHandle), timerClosed);
+            uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), timerClosed);
 
             // A prior failure must be handled before executing more JS. The
             // host hook normally consumes exceptions before the next timer.
@@ -83,7 +83,7 @@ Timeout::Timeout(JSContext* jsContext, uv_loop_t* loop, std::function<void(JSCon
         throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
     }
     this->jsContext = jsContext;
-    this->loop = loop;
+    this->uvLoop = loop;
     this->afterCallback = std::move(afterCallback);
     this->ownerThreadID = this_thread::get_id();
 }
@@ -175,7 +175,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         // failure cannot leave a live libuv handle without an owner.
         std::unique_ptr<TimeoutTimer> ownedTimeoutTimer = std::make_unique<TimeoutTimer>();
         timeout.registry.insert_or_assign(timerID, ownedTimeoutTimer.get());
-        int timerStatus = uv_timer_init(timeout.loop, &ownedTimeoutTimer->handle);
+        int timerStatus = uv_timer_init(timeout.uvLoop, &ownedTimeoutTimer->handle);
         if (timerStatus != 0) {
             timeout.registry.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(timerStatus));
@@ -190,7 +190,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         TimeoutTimer* timeoutTimer = ownedTimeoutTimer.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
-        uv_update_time(timeout.loop);
+        uv_update_time(timeout.uvLoop);
         timerStatus = uv_timer_start(&timeoutTimer->handle, timerFired, static_cast<uint64_t>(delayMs), 0);
         if (timerStatus != 0) {
             timeout.registry.erase(timerID);
