@@ -1,7 +1,10 @@
 #include "timeout_impl.hpp"
 
+#include "errors/errors.hpp"
 #include "javascript.hpp"
 
+#include <expected>
+#include <format>
 #include <quickjs.h>
 #include <uv.h>
 
@@ -21,6 +24,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace this_thread = std::this_thread;
 namespace {
 
@@ -40,23 +44,56 @@ struct Timeout::Timer {
     // timerID of this timeoutTimer inside the Timeout registry.
     int32_t timerID = 0;
 
-    // JSContext that the timeoutTimer is running on.
-    JSContext* jsContext = nullptr;
-
     // The setTimeout() callback JSValue.
     JSValue callback = JS_UNDEFINED;
 };
 
 // TODO: implement this? And use it everywhere.
-// namespace {
+namespace {
 
-// void createTimer() {
-// };
+[[maybe_unused]] std::expected<Timeout::Timer*, errors::Error> createTimer(Timeout& timeout, JSValue callback) {
+    while (true) {
+        // If the registry is full, there are no more available
+        // timerIDs.
+        if (timeout.registry.size() >= static_cast<std::size_t>((std::numeric_limits<int32_t>::max)())) {
+            return std::unexpected(errors::message("timeoutSet: timerIDs exhausted"));
+        }
+        // Increment the timerIDCounter by 1, wrapping when we hit
+        // int32_t's maximum value.
+        if (timeout.timerIDCounter == (std::numeric_limits<int32_t>::max)()) {
+            timeout.timerIDCounter = 1;
+        } else {
+            timeout.timerIDCounter++;
+        }
+        // If the timerID is in use, try again.
+        if (timeout.registry.contains(timeout.timerIDCounter)) {
+            continue;
+        }
+        break;
+    }
+    const int32_t timerID = timeout.timerIDCounter;
+    std::unique_ptr<Timeout::Timer> timer = std::make_unique<Timeout::Timer>();
+    const int status = uv_timer_init(timeout.uvLoop, &timer->uvTimerHandle);
+    if (status != 0) {
+        return std::unexpected(errors::message(std::format("timeoutSet: uv_timer_init: %s", uv_strerror(status))));
+    }
+    timer->uvTimerHandle.data = timer.get();
+    timer->timeout = &timeout;
+    timer->timerID = timerID;
+    timer->callback = callback;
+    timeout.registry.insert_or_assign(timerID, timer.get());
+    return timer.release();
+};
 
-// void destroyTimer() {
-// };
+[[maybe_unused]] void destroyTimer(Timeout::Timer* timer) {
+    timer->timeout->registry.erase(timer->timerID);
+    JS_FreeValue(timer->timeout->jsContext, timer->callback);
+    uv_close(reinterpret_cast<uv_handle_t*>(&timer->uvTimerHandle), [](uv_handle_t* uvHandle) {
+        delete static_cast<Timeout::Timer*>(uvHandle->data);
+    });
+};
 
-// } // namespace
+} // namespace
 
 // Represents a single setTimeout() callback.
 struct TimeoutTimer {
@@ -201,8 +238,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 timeoutTimer->timeout->callbackDidRun(timeoutTimer->jsContext);
 
                 // DESTROY
-                JS_FreeValue(timeoutTimer->jsContext, callback);
                 timeoutTimer->timeout->registry.erase(timeoutTimer->timerID);
+                JS_FreeValue(timeoutTimer->jsContext, callback);
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
                     delete static_cast<TimeoutTimer*>(uvHandle->data);
                 });
