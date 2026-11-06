@@ -41,7 +41,7 @@ struct Timeout {
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
-    std::map<int32_t, Timer> registryMap = {}; // Public timer ID -> timer registration.
+    std::map<int32_t, Timer> timerMap = {}; // Public timer ID -> timer registration.
     bool shuttingDown = false;
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
