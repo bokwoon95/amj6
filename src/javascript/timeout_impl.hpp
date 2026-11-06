@@ -31,6 +31,8 @@ struct TimeoutTimer;
 // remain alive through shutdown()/destruction. The host must finish native close
 // callbacks before closing/destroying the loop.
 struct Timeout {
+    struct Timer;
+
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};
