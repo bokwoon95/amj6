@@ -66,7 +66,7 @@ void timerFired(uv_timer_t* uvTimerHandle) noexcept {
             // A prior failure must be handled before executing more JS. The
             // host hook normally consumes exceptions before the next timer.
             if (!JS_HasException(jsContext)) {
-                const ScopedJSValue result(jsContext, JS_Call(jsContext, callback.value, JS_UNDEFINED, 0, nullptr));
+                const ScopedJSValue result(jsContext, JS_Call(jsContext, callback.jsValue, JS_UNDEFINED, 0, nullptr));
             }
         }
         // No retained JS references remain in this timer when the host runs.
@@ -320,10 +320,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
         ScopedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
-        if (JS_IsException(modulePrivateValue.value)) {
+        if (JS_IsException(modulePrivateValue.jsValue)) {
             return nullptr;
         }
-        JS_SetOpaque(modulePrivateValue.value, &timeout);
+        JS_SetOpaque(modulePrivateValue.jsValue, &timeout);
 
         // Define the function entries to register.
         struct FunctionEntry {
@@ -348,7 +348,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
             // Extract the modulePrivateValue from the jsContext.
             const ScopedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
-            if (JS_IsException(modulePrivateValue.value)) {
+            if (JS_IsException(modulePrivateValue.jsValue)) {
                 return -1;
             }
 
@@ -363,7 +363,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
                 }
                 return functionEntries.at(static_cast<std::size_t>(magic)).function(jsContext, thisValue, argc, argv, *timeout);
             };
-            std::vector<JSValue> functionData = {modulePrivateValue.value};
+            std::vector<JSValue> functionData = {modulePrivateValue.jsValue};
             for (std::size_t index = 0; index < functionEntries.size(); index++) {
                 const FunctionEntry& functionEntry = functionEntries.at(index);
                 const JSValue function = JS_NewCFunctionData(jsContext, jsCFunctionData, functionEntry.argc, static_cast<int>(index), static_cast<int>(functionData.size()), functionData.data());

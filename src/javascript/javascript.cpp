@@ -48,7 +48,7 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
             return JS_ThrowRangeError(jsContext, "JSON array exceeds the JS array length limit");
         }
         ScopedJSValue result(jsContext, JS_NewArray(jsContext));
-        if (JS_IsException(result.value)) {
+        if (JS_IsException(result.jsValue)) {
             return JS_EXCEPTION;
         }
         for (std::size_t index = 0; index < array->size(); index++) {
@@ -56,7 +56,7 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
             if (JS_IsException(element)) {
                 return JS_EXCEPTION;
             }
-            if (JS_DefinePropertyValueUint32(jsContext, result.value, static_cast<uint32_t>(index), element, JS_PROP_C_W_E) < 0) {
+            if (JS_DefinePropertyValueUint32(jsContext, result.jsValue, static_cast<uint32_t>(index), element, JS_PROP_C_W_E) < 0) {
                 return JS_EXCEPTION;
             }
         }
@@ -65,19 +65,19 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
     const std::map<std::string, JSONValue>* object = std::get_if<std::map<std::string, JSONValue>>(&jsonValue.value);
     if (object != nullptr) {
         ScopedJSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
-        if (JS_IsException(result.value)) {
+        if (JS_IsException(result.jsValue)) {
             return JS_EXCEPTION;
         }
         for (const std::pair<const std::string, JSONValue>& field : *object) {
             ScopedJSValue element(jsContext, convertJSON(jsContext, field.second, depth + 1));
-            if (JS_IsException(element.value)) {
+            if (JS_IsException(element.jsValue)) {
                 return JS_EXCEPTION;
             }
             const JSAtom key = JS_NewAtomLen(jsContext, field.first.data(), field.first.size());
             if (key == JS_ATOM_NULL) {
                 return JS_EXCEPTION;
             }
-            const int status = JS_DefinePropertyValue(jsContext, result.value, key, element.release(), JS_PROP_C_W_E);
+            const int status = JS_DefinePropertyValue(jsContext, result.jsValue, key, element.release(), JS_PROP_C_W_E);
             JS_FreeAtom(jsContext, key);
             if (status < 0) {
                 return JS_EXCEPTION;
@@ -118,7 +118,7 @@ bool setstringfield(const ScopedJSValue& obj, const char* key, std::string_view 
     if (JS_IsException(text)) {
         return false;
     }
-    return JS_DefinePropertyValueStr(obj.jsContext, obj.value, key, text, JS_PROP_C_W_E) >= 0;
+    return JS_DefinePropertyValueStr(obj.jsContext, obj.jsValue, key, text, JS_PROP_C_W_E) >= 0;
 }
 
 } // namespace amj::javascript

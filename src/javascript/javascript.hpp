@@ -19,18 +19,18 @@ namespace amj::javascript {
 class ScopedJSValue {
   public:
     JSContext* jsContext = nullptr;
-    JSValue value = JS_UNDEFINED;
-    ScopedJSValue(JSContext* jsContext, JSValue value) {
+    JSValue jsValue = JS_UNDEFINED;
+    ScopedJSValue(JSContext* jsContext, JSValue jsValue) {
         this->jsContext = jsContext;
-        this->value = value;
+        this->jsValue = jsValue;
     }
     ~ScopedJSValue() {
-        JS_FreeValue(jsContext, value);
+        JS_FreeValue(jsContext, jsValue);
     }
     ScopedJSValue(const ScopedJSValue&) = delete;
     ScopedJSValue& operator=(const ScopedJSValue&) = delete;
     JSValue release() {
-        return std::exchange(value, JS_UNDEFINED);
+        return std::exchange(jsValue, JS_UNDEFINED);
     }
 };
 
