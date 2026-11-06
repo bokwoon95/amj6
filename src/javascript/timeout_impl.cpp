@@ -32,10 +32,10 @@ struct Timeout::Timer {
     // with uv_timer_start() and stopped with uv_timer_stop().
     uv_timer_t uvTimerHandle = {};
 
-    // Parent Timeout that holds this timeoutTimer in its registry.
+    // Parent Timeout that holds this timer in its registry.
     Timeout* timeout = nullptr;
 
-    // timerID of this timeoutTimer inside the Timeout registry.
+    // timerID of this timer inside the Timeout registry.
     int32_t timerID = 0;
 
     // The setTimeout() callback JSValue.
@@ -92,25 +92,6 @@ std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throw
 
 } // namespace
 
-// Represents a single setTimeout() callback.
-struct TimeoutTimer {
-    // Embedded uvTimerHandle that lets this TimeoutTimer actually be started
-    // with uv_timer_start() and stopped with uv_timer_stop().
-    uv_timer_t uvTimerHandle = {};
-
-    // Parent Timeout that holds this timeoutTimer in its registry.
-    Timeout* timeout = nullptr;
-
-    // timerID of this timeoutTimer inside the Timeout registry.
-    int32_t timerID = 0;
-
-    // JSContext that the timeoutTimer is running on.
-    JSContext* jsContext = nullptr;
-
-    // The setTimeout() callback JSValue.
-    JSValue callback = JS_UNDEFINED;
-};
-
 Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {
     if (jsContext == nullptr || uvLoop == nullptr || callbackDidRun == nullptr) {
         throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
@@ -131,17 +112,7 @@ void Timeout::shutdown() {
     }
     shuttingDown = true;
     while (!registry.empty()) {
-        TimeoutTimer* timeoutTimer = registry.begin()->second;
-        registry.erase(registry.begin());
-
-        // DESTROY
-        JS_FreeValue(jsContext, timeoutTimer->callback);
-        timeoutTimer->callback = JS_UNDEFINED;
-        timeoutTimer->jsContext = nullptr;
-        timeoutTimer->timeout = nullptr;
-        uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->uvTimerHandle), [](uv_handle_t* uvHandle) {
-            delete static_cast<TimeoutTimer*>(uvHandle->data);
-        });
+        destroyTimer(registry.begin()->second);
     }
 }
 
@@ -171,7 +142,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             return JS_ThrowTypeError(jsContext, "timeoutSet: arg1: delay not a number");
         }
         double delayMs = 0.0;
-        const int status = JS_ToFloat64(jsContext, &delayMs, argv[1]);
+        int status = JS_ToFloat64(jsContext, &delayMs, argv[1]);
         if (status < 0) {
             return JS_EXCEPTION;
         }
@@ -179,85 +150,30 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             return JS_ThrowRangeError(jsContext, "timeoutSet: arg1: delay must be a positive number within 32-bit signed integer range");
         }
 
-        // Increment timerIDCounter to the next available timerID. timerIDs can
-        // be reused (the counter wraps around starting from 1), so after
-        // wrapping around it's possible that the next timerID is still in use
-        // (check the registry) so we have to keep incrementing
-        // until we find one that is not in use.
-        while (true) {
-            // If the registry is full, there are no more available
-            // timerIDs.
-            if (timeout.registry.size() >= static_cast<std::size_t>((std::numeric_limits<int32_t>::max)())) {
-                return JS_ThrowRangeError(jsContext, "timeoutSet: timerIDs exhausted");
-            }
-            // Increment the timerIDCounter by 1, wrapping when we hit
-            // int32_t's maximum value.
-            if (timeout.timerIDCounter == (std::numeric_limits<int32_t>::max)()) {
-                timeout.timerIDCounter = 1;
-            } else {
-                timeout.timerIDCounter++;
-            }
-            // If the timerID is in use, try again.
-            if (timeout.registry.contains(timeout.timerIDCounter)) {
-                continue;
-            }
-            break;
+        std::expected<Timeout::Timer*, errors::Error> timer = createTimer(timeout, callback.release());
+        if (!timer.has_value()) {
+            return JS_ThrowInternalError(jsContext, "%s", timer.error().errorMessage.c_str());
         }
-        const int32_t timerID = timeout.timerIDCounter;
-
-        // Allocate and insert before initializing the handle, so allocation
-        // failure cannot leave a live libuv handle without an owner.
-        std::unique_ptr<TimeoutTimer> ownedTimeoutTimer = std::make_unique<TimeoutTimer>();
-        // create
-        timeout.registry.insert_or_assign(timerID, ownedTimeoutTimer.get());
-        int timerStatus = uv_timer_init(timeout.uvLoop, &ownedTimeoutTimer->uvTimerHandle);
-        if (timerStatus != 0) {
-            timeout.registry.erase(timerID);
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(timerStatus));
-        }
-        ownedTimeoutTimer->uvTimerHandle.data = ownedTimeoutTimer.get();
-        ownedTimeoutTimer->jsContext = jsContext;
-        ownedTimeoutTimer->callback = callback.release();
-        ownedTimeoutTimer->timeout = &timeout;
-        ownedTimeoutTimer->timerID = timerID;
-
-        // From here only the close callback may delete the initialized handle.
-        TimeoutTimer* timeoutTimer = ownedTimeoutTimer.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                TimeoutTimer* timeoutTimer = static_cast<TimeoutTimer*>(uvTimerHandle->data);
-                const JSValue callback = timeoutTimer->callback;
-                const JSValue result = JS_Call(timeoutTimer->jsContext, callback, JS_UNDEFINED, 0, nullptr);
-                JS_FreeValue(timeoutTimer->jsContext, result);
-                timeoutTimer->timeout->callbackDidRun(timeoutTimer->jsContext);
-
-                // DESTROY
-                timeoutTimer->timeout->registry.erase(timeoutTimer->timerID);
-                JS_FreeValue(timeoutTimer->jsContext, callback);
-                uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
-                    delete static_cast<TimeoutTimer*>(uvHandle->data);
-                });
+                Timeout::Timer* timer = static_cast<Timeout::Timer*>(uvTimerHandle->data);
+                const JSValue result = JS_Call(timer->timeout->jsContext, timer->callback, JS_UNDEFINED, 0, nullptr);
+                JS_FreeValue(timer->timeout->jsContext, result);
+                timer->timeout->callbackDidRun(timer->timeout->jsContext);
+                destroyTimer(timer);
             } catch (...) {
                 std::terminate();
             }
         };
-        timerStatus = uv_timer_start(&timeoutTimer->uvTimerHandle, uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
-        if (timerStatus != 0) {
-            // DESTROY
-            timeout.registry.erase(timerID);
-            JS_FreeValue(jsContext, timeoutTimer->callback);
-            timeoutTimer->callback = JS_UNDEFINED;
-            timeoutTimer->jsContext = nullptr;
-            timeoutTimer->timeout = nullptr;
-            uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->uvTimerHandle), [](uv_handle_t* uvHandle) {
-                delete static_cast<TimeoutTimer*>(uvHandle->data);
-            });
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(timerStatus));
+        status = uv_timer_start(&timer.value()->uvTimerHandle, uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
+        if (status != 0) {
+            destroyTimer(timer.value());
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));
         }
-        return JS_NewInt32(jsContext, timerID);
+        return JS_NewInt32(jsContext, timer.value()->timerID);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -301,20 +217,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             return JS_UNDEFINED;
         }
 
-        TimeoutTimer* timeoutTimer = timeout.registry.at(timerIDInt32);
-        const int timerStatus = uv_timer_stop(&timeoutTimer->uvTimerHandle);
+        Timeout::Timer* timer = timeout.registry.at(timerIDInt32);
+        const int timerStatus = uv_timer_stop(&timer->uvTimerHandle);
         if (timerStatus != 0) {
             return JS_ThrowInternalError(jsContext, "timeoutClear: uv_timer_stop: %s", uv_strerror(timerStatus));
         }
-        // DESTROY
-        timeout.registry.erase(timerIDInt32);
-        JS_FreeValue(jsContext, timeoutTimer->callback);
-        timeoutTimer->callback = JS_UNDEFINED;
-        timeoutTimer->jsContext = nullptr;
-        timeoutTimer->timeout = nullptr;
-        uv_close(reinterpret_cast<uv_handle_t*>(&timeoutTimer->uvTimerHandle), [](uv_handle_t* uvHandle) {
-            delete static_cast<TimeoutTimer*>(uvHandle->data);
-        });
+        destroyTimer(timer);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);

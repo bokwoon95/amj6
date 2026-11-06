@@ -10,8 +10,6 @@
 
 namespace amj::javascript {
 
-struct TimeoutTimer;
-
 // Owner-managed, one per context/loop pair. Neither the context nor the loop is
 // owned or run here. All operations and destruction require the constructing
 // thread, which must also run the loop and own the context. Keep this object at
@@ -38,7 +36,7 @@ struct Timeout {
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
-    std::map<int32_t, TimeoutTimer*> registry = {}; // Public timer ID -> native timer.
+    std::map<int32_t, Timer*> registry = {}; // Public timer ID -> native timer.
     bool shuttingDown = false;
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
@@ -49,10 +47,6 @@ struct Timeout {
     Timeout& operator=(const Timeout&) = delete;
     Timeout(Timeout&&) = delete;
     Timeout& operator=(Timeout&&) = delete;
-
-    // TODO:
-    // createTimeoutTimer()
-    // destroyTimeoutTimer()
 
     // Idempotent; permanently rejects new timers. Does not execute JS callbacks
     // or alter a pending JS exception. Wrong-thread use terminates the process.
