@@ -57,9 +57,15 @@ find_package(cpptrace REQUIRED)
 # JavaScript engine.
 find_package(qjs REQUIRED)
 
-# Native Fetch URL parsing and HTTPS transport.
-find_package(ada CONFIG REQUIRED)
-find_package(httplib CONFIG REQUIRED)
+# Backend event loop.
+find_package(libuv REQUIRED)
+
+# URL parsing.
+find_package(ada REQUIRED)
+
+# HTTP (curl for libuv, httplib for server).
+find_package(CURL REQUIRED)
+find_package(httplib REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 # Select MSVC C/C++ runtime linkage; CMake generates the compiler flags.
@@ -160,7 +166,7 @@ add_library(amj_javascript STATIC
     src/javascript/fetch_impl.d.ts
 )
 list(APPEND amj_libraries amj_javascript)
-target_link_libraries(amj_javascript PUBLIC amj_errors qjs PRIVATE Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(amj_javascript PUBLIC amj_errors qjs PRIVATE Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
 # Keep the JS modules alongside the build without evaluating them globally.
 configure_file(src/javascript/url.js javascript/url.js COPYONLY)
 configure_file(src/javascript/text.js javascript/text.js COPYONLY)

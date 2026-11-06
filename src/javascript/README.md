@@ -138,7 +138,7 @@ lead to `global.d.ts`; following its imported member leads to the JS export.
 Following implementation imports leads to the C++ module declarations.
 TypeScript cannot navigate into C++.
 
-## Scheduling and cleanup
+## Scheduling and cleanup (current implementation)
 
 The outer owner loop drains all QuickJS jobs, checks its awaited Promise, then
 calls `scheduler.runNext()` to wait for and execute one native callback. Repeat.
@@ -169,3 +169,94 @@ string/Uint8Array uploads, `.text()`/`.json()`, and `body.getReader()` streaming
 There are no public Request/Response constructors, cloning, full WHATWG streams,
 or body async iteration. Native HTTP validation and memory limits remain enforced
 in C++ even though public normalization and API behavior are implemented in JS.
+
+## Planned backend: libuv, libcurl, and Qt
+
+This is the migration target, not the implementation described above. Replace the
+homebrew event loop with libuv and replace fetch's blocking cpp-httplib transport
+with libcurl multi from the start of the transport migration. Retain cpp-httplib
+only for the lightweight localhost OAuth callback server.
+
+### Ownership and communication
+
+- The main thread runs Qt's event loop and owns the GUI/QML objects.
+- A backend thread runs an explicitly initialized `uv_loop_t` and owns QuickJS,
+  timers, asynchronous HTTP, and future process/pipe operations. Share this loop
+  across script invocations rather than creating one loop per script.
+- The backend library has no Qt dependency, so the daemon can run without Qt.
+  Keep the Qt bridge outside that library.
+- Qt sends owned command data through a protected queue and wakes the backend
+  with `uv_async_send()`. Notifications coalesce: drain the queue rather than
+  interpreting each wakeup as one command.
+- The backend delivers results/events through queued Qt signals or
+  `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` targeting a GUI-owned
+  object. Messages carry owned native data and request/invocation IDs, never
+  `JSValue`, GUI objects, or borrowed cross-thread storage.
+- Define cancellation, receiver lifetime, queue limits, and output batching so
+  process logs and streaming results cannot overwhelm either loop.
+
+Do not pump one event loop from the other. All QuickJS access and retained JS
+value destruction happen on the backend thread. Libuv enables concurrent I/O,
+not parallel JavaScript: CPU-bound scripts still block that thread. Use QuickJS
+interruption limits; separate runtimes/threads or processes can provide stronger
+isolation later. Contexts in one runtime are not execution-isolation boundaries.
+
+### Scheduler and invocation hosting
+
+Introduce a Qt-independent backend loop below the JavaScript layer. Initially
+keep `javascript::Scheduler` as an adapter borrowing it, preserving registration
+and cleanup APIs where practical. Replace condition-variable wakeups with
+`uv_async_t`, deadline scanning with `uv_timer_t`, and worker readiness
+notifications with a protected ready queue. Keep application-level callback
+ownership and cleanup bookkeeping. Decide explicitly whether to preserve the
+current readiness-timestamp/ID ordering; libuv does not provide that contract.
+
+The permanent host runs libuv continuously and tracks each invocation's completion
+Promise. Native completions execute on the backend thread, with QuickJS microtask
+checkpoints after JS execution/completions, and completed invocations are reported
+asynchronously. Replace the blocking per-invocation `runNext()` driver; do not
+nest `uv_run()` to await a Promise. `UV_RUN_ONCE` may dispatch multiple callbacks
+and is not equivalent to executing exactly one scheduler callback. Distinguish
+an idle backend from a stalled invocation: a persistent command receiver keeps
+the backend alive even when a script cannot make progress.
+
+### Fetch transport and login listener
+
+Use libcurl's multi socket API, mapping its socket-interest callbacks to libuv
+poll handles and its timeout callback to a libuv timer. Socket readiness and timer
+expiry drive libcurl; inspect completion messages and deliver native results to
+QuickJS on the backend thread. Libuv supplies event notification, not HTTP/TLS.
+Do not put blocking HTTP requests into `uv_queue_work()` or retain a thread per
+fetch request.
+
+Keep `fetch.js`, its native module contract, native validation, and memory limits.
+Preserve the existing no-redirects/cookies/retries policy unless deliberately
+changed. Use libcurl pause/resume for streaming backpressure, with bounded native
+buffers and explicit cancellation/resource ownership.
+
+The OAuth callback listener is separate from fetch. Run cpp-httplib on a dedicated
+thread, bind only to loopback, validate the callback path and OAuth `state`, and
+return a small completion page. Deliver the authorization code/error to the
+backend through its message queue. Stop the listener after success, cancellation,
+or timeout. Use authorization-code flow with PKCE; prefer an ephemeral port if
+the provider allows it, otherwise use the registered fixed port.
+
+### Shutdown and migration order
+
+Stop accepting commands, cancel invocations/native operations, and stop/join
+remaining workers and the login listener. Close libuv handles and keep driving
+the loop until close callbacks finish; handle storage must survive those
+callbacks. Release retained JS values before destroying their contexts/runtime,
+then close the loop, join the backend thread, and destroy the GUI bridge. Never
+let C++ exceptions escape libuv's C callbacks. Make shutdown explicit rather than
+assuming the current synchronous `clear()` semantics cover asynchronous closure.
+
+Implement in this order:
+
+1. Add libuv/libcurl dependencies.
+2. Adapt the scheduler and timers to libuv.
+3. Replace fetch's cpp-httplib workers with libcurl multi integration.
+4. Introduce asynchronous invocation hosting and microtask checkpoints.
+
+Later process spawning/pipes use `uv_spawn`/`uv_pipe`. Blocking database or native
+operations belong on bounded workers, not the backend loop.

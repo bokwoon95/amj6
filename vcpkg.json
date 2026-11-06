@@ -9,7 +9,13 @@
       "features": ["openssl"]
     },
     "cpptrace",
+    {
+      "name": "curl",
+      "default-features": false,
+      "features": ["openssl"]
+    },
     "gtest",
+    "libuv",
     "openssl",
     "quickjs-ng"
   ]
