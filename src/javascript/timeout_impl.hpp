@@ -17,7 +17,7 @@ struct TimeoutTimer;
 // thread, which must also run the loop and own the context. Keep this object at
 // a stable address; do not modify its fields after construction.
 //
-// afterCallback runs after every timer invocation, including JS failure. It must
+// callbackDidRun runs after every timer invocation, including JS failure. It must
 // consume any pending exception, apply the host's error policy, and drain QuickJS
 // jobs (handling their errors too). It may call shutdown(), but must not destroy
 // this object or the context, run a nested event loop, or throw. A throwing hook
@@ -33,7 +33,7 @@ struct TimeoutTimer;
 struct Timeout {
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
-    std::function<void(JSContext*)> afterCallback = {};
+    std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
     std::map<int32_t, TimeoutTimer*> registry = {}; // Public timer ID -> native timer.
@@ -41,12 +41,16 @@ struct Timeout {
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
     // run the borrowed loop; the caller must supply an initialized loop.
-    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> afterCallback);
+    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;
     Timeout(Timeout&&) = delete;
     Timeout& operator=(Timeout&&) = delete;
+
+    // TODO:
+    // createTimeoutTimer()
+    // destroyTimeoutTimer()
 
     // Idempotent; permanently rejects new timers. Does not execute JS callbacks
     // or alter a pending JS exception. Wrong-thread use terminates the process.
