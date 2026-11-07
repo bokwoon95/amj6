@@ -145,7 +145,7 @@ endif()
 
 ## == src/javascript == ##
 
-# File-by-file dependency order: javascript -> text -> URL -> scheduler -> timeout -> fetch.
+# File-by-file dependency order: javascript -> text -> URL -> microtask -> scheduler -> timeout -> fetch.
 add_library(amj_javascript STATIC
     src/javascript/javascript.hpp
     src/javascript/javascript.cpp
@@ -154,6 +154,9 @@ add_library(amj_javascript STATIC
     src/javascript/url_impl.cpp
     src/javascript/url.js
     src/javascript/url_impl.d.ts
+    src/javascript/microtask.hpp
+    src/javascript/microtask.cpp
+    src/javascript/microtask.d.ts
     src/javascript/scheduler.cpp
     src/javascript/timeout_impl.cpp
     src/javascript/timeout_impl.d.ts
@@ -166,7 +169,7 @@ list(APPEND amj_libraries amj_javascript)
 target_link_libraries(amj_javascript PUBLIC amj_errors qjs PRIVATE Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
 if(BUILD_TESTING)
     list(APPEND amj_test_libraries amj_javascript)
-    list(APPEND amj_test_sources src/javascript/text_test.cpp)
+    list(APPEND amj_test_sources src/javascript/text_test.cpp src/javascript/microtask_test.cpp)
     set_property(SOURCE src/javascript/text_test.cpp APPEND PROPERTY COMPILE_DEFINITIONS "AMJ_TEXT_SOURCE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/src/javascript/text.js\"")
 endif()
 # Keep the JS modules alongside the build without evaluating them globally.
@@ -175,6 +178,7 @@ configure_file(src/javascript/text.js javascript/text.js COPYONLY)
 configure_file(src/javascript/fetch.js javascript/fetch.js COPYONLY)
 configure_file(src/javascript/timeout.js javascript/timeout.js COPYONLY)
 configure_file(src/javascript/global.d.ts javascript/global.d.ts COPYONLY)
+configure_file(src/javascript/microtask.d.ts javascript/microtask.d.ts COPYONLY)
 configure_file(src/javascript/url_impl.d.ts javascript/url_impl.d.ts COPYONLY)
 configure_file(src/javascript/timeout_impl.d.ts javascript/timeout_impl.d.ts COPYONLY)
 configure_file(src/javascript/fetch_impl.d.ts javascript/fetch_impl.d.ts COPYONLY)

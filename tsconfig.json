@@ -21,6 +21,7 @@
   "files": [
     "src/javascript/global.d.ts",
     "src/javascript/url_impl.d.ts",
+    "src/javascript/microtask.d.ts",
     "src/javascript/timeout_impl.d.ts",
     "src/javascript/fetch_impl.d.ts"
   ],

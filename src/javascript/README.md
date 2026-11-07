@@ -8,20 +8,18 @@ global object. The host chooses which target receives those exports.
 This is the planned implementation order, not a list of completed modules:
 
 1. text
-2. base64
-3. performance
-4. url
-5. event
-6. microtask
-7. console
-8. timeout
-9. abort
-10. blob
-11. file
-12. formdata
-13. crypto
-14. fetch
-15. websocket
+2. url
+3. event
+4. microtask
+5. console
+6. timeout
+7. abort
+8. blob
+9. file
+10. formdata
+11. crypto
+12. fetch
+13. websocket
 
 Scope:
 
@@ -42,6 +40,7 @@ Scope:
 | `amj:text`         | `text.js`               | `TextEncoder`, `TextDecoder`                                         |
 | `amj:url_impl`     | `url_impl.hpp/.cpp`     | `urlParse`, `urlWithComponent`, `queryStringParse`, `queryStringify` |
 | `amj:url`          | `url.js`                | `URL`, `URLSearchParams`                                             |
+| `amj:microtask`    | `microtask.hpp/.cpp`     | `queueMicrotask`                                                     |
 | `amj:timeout_impl` | `timeout_impl.hpp/.cpp` | `timeoutSet`, `timeoutClear`                                         |
 | `amj:timeout`      | `timeout.js`            | `setTimeout`, `clearTimeout`                                         |
 | `amj:fetch_impl`   | `fetch_impl.hpp/.cpp`   | `fetchImpl`                                                          |
@@ -53,6 +52,16 @@ direct QuickJS callback, without magic dispatch or an exported wrapper object.
 `urlParse` accepts an omitted/undefined base; invalid URLs and rejected component
 updates return null. `url.js` implements coercion, iteration, and live query
 synchronization.
+
+`createMicrotaskModule(jsContext)` registers `amj:microtask` directly, without a
+JS facade. `queueMicrotask(callback)` validates and retains the callable through
+QuickJS's job queue, returning undefined without invoking it. At microtask
+checkpoints, the host drains `JS_ExecutePendingJob()` until no jobs remain. A
+callback failure returns a negative status with the exception in the returned
+context; report/consume that exception and continue draining the remaining jobs.
+Keep job contexts alive through execution or runtime teardown. No libuv handles
+are needed. `microtask.d.ts` declares the native public API, and `global.d.ts`
+provides its optional host-installed global type.
 
 `FetchImpl::createModule(jsContext, scheduler)` registers `amj:fetch_impl`.
 `fetchImpl.start/read/close` belong to one HTTP owner. `fetch.js` imports that
@@ -108,7 +117,7 @@ and manage QuickJS value and atom references normally. Decide explicitly whether
 existing target properties may be overwritten. Copying exports copies values,
 not live bindings; these API exports are not subsequently reassigned.
 
-CMake copies the JS facades, `*_impl.d.ts`, and `global.d.ts` into the build's
+CMake copies the JS facades, `*_impl.d.ts`, `microtask.d.ts`, and `global.d.ts` into the build's
 `javascript/` directory. Keep these files together when distributing them.
 
 ## Types and dependency direction
@@ -149,7 +158,7 @@ synchronized with the corresponding headers and implementation.
 ## Static type checking
 
 JS uses JSDoc and `// @ts-check`, without transpilation. The root `tsconfig.json`
-references `global.d.ts` and the three C++ module declarations; `paths` maps public
+references `global.d.ts` and the C++ module declarations; `paths` maps public
 `amj:*` names to JS implementations. No browser DOM or Node APIs are assumed.
 One project checks all JS files, including the implementations, against the
 host-provided globals. It retains strict checking, checked indexed access, and
@@ -162,7 +171,7 @@ tsc --project tsconfig.json
 For future user-script directories, generate a tsconfig with `allowJs`,
 `checkJs`, `noEmit`, `lib: ["ES2023"]`, `types: []`, and a `files` list pointing
 to installed `global.d.ts`, `url_impl.d.ts`, `fetch_impl.d.ts`, and
-`timeout_impl.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:timeout`,
+`timeout_impl.d.ts`, and `microtask.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:timeout`,
 and `amj:fetch`, pointing to the installed JS files. Paths are relative to the config
 or can be generated as absolute installation paths. Editor definitions for globals
 lead to `global.d.ts`; following its imported member leads to the JS export.
