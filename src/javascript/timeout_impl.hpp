@@ -36,6 +36,7 @@ struct Timeout {
         JSValue callback = JS_UNDEFINED;
     };
 
+    JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};

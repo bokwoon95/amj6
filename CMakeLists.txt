@@ -23,9 +23,6 @@ endif()
 # detection and compilation use the same SDK.
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_OSX_SYSROOT)
     execute_process(COMMAND xcrun --sdk macosx --show-sdk-path OUTPUT_VARIABLE amj_macos_sdk OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-    if(NOT amj_sdk_result EQUAL 0)
-        message(FATAL_ERROR "Could not locate the macOS SDK; check xcode-select")
-    endif()
     set(CMAKE_OSX_SYSROOT "${amj_macos_sdk}" CACHE STRING "macOS SDK" FORCE)
 endif()
 

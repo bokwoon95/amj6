@@ -39,6 +39,7 @@ Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSC
     if (jsContext == nullptr || uvLoop == nullptr || callbackDidRun == nullptr) {
         throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
     }
+    this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
     this->uvLoop = uvLoop;
     this->callbackDidRun = std::move(callbackDidRun);
@@ -61,7 +62,7 @@ void Timeout::shutdown() {
             delete uvTimerHandle;
             delete handleData;
         });
-        JS_FreeValue(jsContext, entry.second.callback);
+        JS_FreeValueRT(jsRuntime, entry.second.callback);
     }
     timerMap.clear();
 }
@@ -238,12 +239,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
     }
 }
 
-JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
+JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeout> timeout) {
     try {
-        if (this_thread::get_id() != timeout.ownerThreadID) {
+        if (this_thread::get_id() != timeout->ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != timeout.jsContext || timeout.shuttingDown) {
+        if (jsContext != timeout->jsContext || timeout->shuttingDown) {
             JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
             return nullptr;
         }
@@ -275,8 +276,19 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (!JS_IsRegisteredClass(jsRuntime, timeoutClassID)) {
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
-                .finalizer = nullptr,
-                .gc_mark = nullptr,
+                .finalizer = [](JSRuntime* /* jsRuntime */, JSValue jsValue) {
+                    Timeout* timeout = static_cast<Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
+                    delete timeout;
+                },
+                .gc_mark = [](JSRuntime* jsRuntime, JSValueConst jsValue, JS_MarkFunc* markFunc) {
+                    Timeout* timeout = static_cast<Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
+                    if (timeout == nullptr) {
+                        return;
+                    }
+                    for (const std::pair<const int32_t, Timeout::Timer>& entry : timeout->timerMap) {
+                        JS_MarkValue(jsRuntime, entry.second.callback, markFunc);
+                    }
+                },
                 .call = nullptr,
                 .exotic = nullptr,
             };
@@ -292,7 +304,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        JS_SetOpaque(modulePrivateValue.get(), &timeout);
+        JS_SetOpaque(modulePrivateValue.get(), timeout.release());
 
         // Define the function entries to register.
         struct FunctionEntry {
