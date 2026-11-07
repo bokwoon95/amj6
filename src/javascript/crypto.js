@@ -3,6 +3,32 @@
 // No globals are modified. See crypto.d.ts for the complete supported surface.
 import { cryptoDigest, cryptoGetRandomValues } from "amj:crypto_impl";
 
+/** @type {import("amj:crypto").Crypto} */
+export const crypto = {
+  getRandomValues(array) {
+    if (arguments.length === 0) {
+      throw new TypeError("getRandomValues requires an integer typed array");
+    }
+    return cryptoGetRandomValues(array);
+  },
+
+  randomUUID() {
+    const bytes = cryptoGetRandomValues(new Uint8Array(16));
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    view.setUint8(6, (view.getUint8(6) & 0x0f) | 0x40);
+    view.setUint8(8, (view.getUint8(8) & 0x3f) | 0x80);
+    let hex = "";
+    for (const byte of bytes) {
+      hex += byte.toString(16).padStart(2, "0");
+    }
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  },
+
+  get subtle() {
+    return subtle;
+  },
+};
+
 /** @type {import("amj:crypto").SubtleCrypto} */
 const subtle = {
   async digest(algorithm, data) {
@@ -56,31 +82,5 @@ const subtle = {
         }
       });
     });
-  },
-};
-
-/** @type {import("amj:crypto").Crypto} */
-export const crypto = {
-  getRandomValues(array) {
-    if (arguments.length === 0) {
-      throw new TypeError("getRandomValues requires an integer typed array");
-    }
-    return cryptoGetRandomValues(array);
-  },
-
-  randomUUID() {
-    const bytes = cryptoGetRandomValues(new Uint8Array(16));
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    view.setUint8(6, (view.getUint8(6) & 0x0f) | 0x40);
-    view.setUint8(8, (view.getUint8(8) & 0x3f) | 0x80);
-    let hex = "";
-    for (const byte of bytes) {
-      hex += byte.toString(16).padStart(2, "0");
-    }
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  },
-
-  get subtle() {
-    return subtle;
   },
 };
