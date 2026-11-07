@@ -58,15 +58,6 @@ struct FetchState {
     FetchState& operator=(FetchState&&) = delete;
 };
 
-struct FetchClient;
-
-// Owned by the opaque JS object. The client outlives all such objects.
-// A null easy handle means closed; shutdown clients reject all further access.
-struct FetchResponse {
-    FetchClient* fetchClient = nullptr;
-    CURL* curlEasyHandle = nullptr;
-};
-
 // Host-owned, one per context/loop pair, at a stable address. Borrows the context
 // and initialized loop. All use/destruction requires their owner thread.
 //
@@ -108,6 +99,13 @@ struct FetchClient {
     void scheduleDelivery();
     void deliver();
     void close(CURL* curlEasyHandle, bool settle);
+};
+
+// Owned by the opaque JS object. The client outlives all such objects.
+// A null easy handle means closed; shutdown clients reject all further access.
+struct FetchResponse {
+    FetchClient* fetchClient = nullptr;
+    CURL* curlEasyHandle = nullptr;
 };
 
 // Registers amj:fetch_impl, exporting fetchClient with send(fetchRequest).
