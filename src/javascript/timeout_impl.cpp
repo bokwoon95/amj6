@@ -245,12 +245,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
 
 JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeout> timeout) {
     try {
-        if (this_thread::get_id() != timeout->ownerThreadID) {
-            std::terminate();
-        }
         if (timeout == nullptr) {
             JS_ThrowInternalError(jsContext, "createTimeoutImplModule: timeout is nullptr");
             return nullptr;
+        }
+        if (this_thread::get_id() != timeout->ownerThreadID) {
+            std::terminate();
         }
         if (jsContext != timeout->jsContext || timeout->shuttingDown) {
             JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
