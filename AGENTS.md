@@ -14,12 +14,14 @@
 - Always run ./scripts/lint.ps1 -changed -quiet when source files were added or changed.
 - Use ./scripts/build.ps1 -quiet to build the project quietly and not pollute the context window.
 - Write C++ like Go: prefer straightforward conditionals and loops, useful zero values, and structs/classes.
-- Write C++ that is NOT intimidating for a Go/Java programmer to read!! If code can be expressed CORRECTLY in slower but familiar Go/Java constructs OR faster but completely alien C++ constructs, pick the simple Go/Java constructs everytime!!
+- Write C++ that is NOT intimidating for a Go/Java programmer to read!!
     - We are writing a networked desktop app, NOT a high performance number cruncher!! Correctness, readability, performance, in that order!! We are not competing against other C++ code, our comptetitors are programs written in Python or JavaScript so simply being written in C++ is already a huge performance win!!
     - DO NOT use member initializer lists. Always set each this->field manually like it was a dumb Java program.
     - Avoid using std::move() as a microoptimization if stupidly copying is not catastrophically slow. It's not about being imposing a small syntactic overhead, it's about imposing a _huge_ understanding overhead as a Go programmer would have to ask why std::move is even needed (when omitting it would be JUST as correct just with a little more allocations).
     - DO NOT use emplace variants unless required for correctness. Prefer explicit values with push_back, insert, or insert_or_assign, preserving overwrite semantics.
     - DO NOT use function-try-blocks; put try/catch inside the function body.
+    - However, use C++-specific concepts when they materially simplify ownership, lifetime reasoning, or correctness (and not merely for performance). Familiar syntax is not simpler if it obscures ownership.
+    - When removing a map entry to take ownership of its contents, prefer .extract() over .at() plus .erase(). Check that the returned node is nonempty before accessing it. Use .erase() when simply discarding an entry.
 - Use std types where possible.
 - Prefer adding minimal structs and fields.
 - DO NOT define macros. There is always a non-macro way to do something, or else just bite the bullet and repeat the code.

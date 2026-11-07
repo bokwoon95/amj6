@@ -137,7 +137,11 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
                 const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
-                const Timeout::Timer timer = handleData->timeout->timerMap.at(handleData->timerID);
+                const std::map<int32_t, Timeout::Timer>::node_type timerNode = handleData->timeout->timerMap.extract(handleData->timerID);
+                if (timerNode.empty()) {
+                    std::terminate(); // An active timer must have a registration.
+                }
+                const Timeout::Timer& timer = timerNode.mapped();
 
                 // Close uvTimerHandle and delete it and its HandleData after closure.
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
@@ -152,8 +156,6 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 JS_FreeValue(handleData->timeout->jsContext, result);
                 JS_FreeValue(handleData->timeout->jsContext, timer.callback);
 
-                handleData->timeout->timerMap.erase(handleData->timerID);
-
                 // Let the host report any JS exceptions and execute pending Promise jobs.
                 handleData->timeout->callbackDidRun(handleData->timeout->jsContext);
             } catch (...) {
@@ -162,14 +164,17 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         };
         status = uv_timer_start(uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
         if (status != 0) {
+            const std::map<int32_t, Timeout::Timer>::node_type timerNode = timeout.timerMap.extract(timerID);
+            if (timerNode.empty()) {
+                std::terminate(); // The initialized timer must have a registration.
+            }
             uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle.release()), [](uv_handle_t* uvHandle) {
                 const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
                 const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
                 delete uvTimerHandle;
                 delete handleData;
             });
-            JS_FreeValue(jsContext, timeout.timerMap.at(timerID).callback);
-            timeout.timerMap.erase(timerID);
+            JS_FreeValue(jsContext, timerNode.mapped().callback);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));
         }
         timeout.timerMap.at(timerID).uvTimerHandle = uvTimerHandle.release();
@@ -212,12 +217,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         const int32_t timerIDInt32 = static_cast<int32_t>(timerID);
 
-        // If no such timerID exists, return.
-        if (!timeout.timerMap.contains(timerIDInt32)) {
+        const std::map<int32_t, Timeout::Timer>::node_type timerNode = timeout.timerMap.extract(timerIDInt32);
+        if (timerNode.empty()) {
             return JS_UNDEFINED;
         }
 
-        const Timeout::Timer timer = timeout.timerMap.at(timerIDInt32);
+        const Timeout::Timer& timer = timerNode.mapped();
         uv_close(reinterpret_cast<uv_handle_t*>(timer.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
             const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
@@ -225,7 +230,6 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             delete handleData;
         });
         JS_FreeValue(jsContext, timer.callback);
-        timeout.timerMap.erase(timerIDInt32);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
@@ -243,6 +247,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
     try {
         if (this_thread::get_id() != timeout->ownerThreadID) {
             std::terminate();
+        }
+        if (timeout == nullptr) {
+            JS_ThrowInternalError(jsContext, "createTimeoutImplModule: timeout is nullptr");
+            return nullptr;
         }
         if (jsContext != timeout->jsContext || timeout->shuttingDown) {
             JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
@@ -277,11 +285,11 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
                 .finalizer = [](JSRuntime* /* jsRuntime */, JSValue jsValue) {
-                    Timeout* timeout = static_cast<Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
+                    const Timeout* timeout = static_cast<const Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
                     delete timeout;
                 },
                 .gc_mark = [](JSRuntime* jsRuntime, JSValueConst jsValue, JS_MarkFunc* markFunc) {
-                    Timeout* timeout = static_cast<Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
+                    const Timeout* timeout = static_cast<const Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
                     if (timeout == nullptr) {
                         return;
                     }
@@ -304,7 +312,13 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        JS_SetOpaque(modulePrivateValue.get(), timeout.release());
+        Timeout* timeoutPtr = timeout.release();
+        int status = JS_SetOpaque(modulePrivateValue.get(), timeoutPtr);
+        if (status < 0) {
+            delete timeoutPtr;
+            JS_ThrowInternalError(jsContext, "Could not attach Timeout");
+            return nullptr;
+        }
 
         // Define the function entries to register.
         struct FunctionEntry {
@@ -369,7 +383,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
             }
         }
 
-        const int status = JS_SetModulePrivateValue(jsContext, jsModuleDef, modulePrivateValue.release());
+        status = JS_SetModulePrivateValue(jsContext, jsModuleDef, modulePrivateValue.release());
         if (status < 0) {
             return nullptr;
         }
