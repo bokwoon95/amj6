@@ -12,7 +12,7 @@ type URL = import("amj:url").URL;
 declare var URLSearchParams: typeof import("amj:url").URLSearchParams;
 type URLSearchParams = import("amj:url").URLSearchParams;
 
-declare var queueMicrotask: typeof import("amj:microtask").queueMicrotask;
+declare var console: typeof import("amj:console").console;
 
 declare var Headers: typeof import("amj:fetch").Headers;
 type Headers = import("amj:fetch").Headers;

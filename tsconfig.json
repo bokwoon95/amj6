@@ -14,6 +14,7 @@
     "paths": {
       "amj:text": ["./src/javascript/text.js"],
       "amj:url": ["./src/javascript/url.js"],
+      "amj:console": ["./src/javascript/console.js"],
       "amj:fetch": ["./src/javascript/fetch.js"],
       "amj:timeout": ["./src/javascript/timeout.js"]
     }
@@ -21,7 +22,7 @@
   "files": [
     "src/javascript/global.d.ts",
     "src/javascript/url_impl.d.ts",
-    "src/javascript/microtask.d.ts",
+    "src/javascript/console_impl.d.ts",
     "src/javascript/timeout_impl.d.ts",
     "src/javascript/fetch_impl.d.ts"
   ],

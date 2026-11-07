@@ -10,16 +10,15 @@ This is the planned implementation order, not a list of completed modules:
 1. text
 2. url
 3. event
-4. microtask
-5. console
-6. timeout
-7. abort
-8. blob
-9. file
-10. formdata
-11. crypto
-12. fetch
-13. websocket
+4. console
+5. timeout
+6. abort
+7. blob
+8. file
+9. formdata
+10. crypto
+11. fetch
+12. websocket
 
 Scope:
 
@@ -40,7 +39,8 @@ Scope:
 | `amj:text`         | `text.js`               | `TextEncoder`, `TextDecoder`                                         |
 | `amj:url_impl`     | `url_impl.hpp/.cpp`     | `urlParse`, `urlWithComponent`, `queryStringParse`, `queryStringify` |
 | `amj:url`          | `url.js`                | `URL`, `URLSearchParams`                                             |
-| `amj:microtask`    | `microtask.hpp/.cpp`     | `queueMicrotask`                                                     |
+| `amj:console_impl` | `console_impl.hpp/.cpp` | `consoleWrite`                                                      |
+| `amj:console`      | `console.js`           | `console`                                                           |
 | `amj:timeout_impl` | `timeout_impl.hpp/.cpp` | `timeoutSet`, `timeoutClear`                                         |
 | `amj:timeout`      | `timeout.js`            | `setTimeout`, `clearTimeout`                                         |
 | `amj:fetch_impl`   | `fetch_impl.hpp/.cpp`   | `fetchImpl`                                                          |
@@ -53,15 +53,23 @@ direct QuickJS callback, without magic dispatch or an exported wrapper object.
 updates return null. `url.js` implements coercion, iteration, and live query
 synchronization.
 
-`createMicrotaskModule(jsContext)` registers `amj:microtask` directly, without a
-JS facade. `queueMicrotask(callback)` validates and retains the callable through
-QuickJS's job queue, returning undefined without invoking it. At microtask
-checkpoints, the host drains `JS_ExecutePendingJob()` until no jobs remain. A
-callback failure returns a negative status with the exception in the returned
-context; report/consume that exception and continue draining the remaining jobs.
-Keep job contexts alive through execution or runtime teardown. No libuv handles
-are needed. `microtask.d.ts` declares the native public API, and `global.d.ts`
-provides its optional host-installed global type.
+`createConsoleImplModule(jsContext, std::move(consoleSink))` takes ownership of a
+`std::unique_ptr<std::function<void(ConsoleData)>>` and registers `amj:console_impl`,
+exporting `consoleWrite(level, text)`. The callback is not copied. It validates the level and formatted text, then calls
+an owned native sink with a `ConsoleData`. Levels are `log`, `debug`, `info`,
+`warn`, and `error`; text is preserved without an added newline. The sink runs
+synchronously on the JS owner thread and must return promptly without throwing,
+executing JS, or destroying the context/runtime. It may enqueue owned messages
+for another thread. Its captures must contain native data only, with dependencies
+valid through carrier finalization. No libuv integration is required.
+`console.js` exports a text-only `console` with `log`, `debug`, `info`, `warn`, and
+`error`. It supports `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c` (style discarded),
+and `%%`, plus textual inspection of objects, arrays, errors, maps, and sets.
+Inspection limits nesting to four levels and entries to 100 per container,
+marks circular references, and describes ordinary property accessors without
+invoking them. No live object references reach the sink. Clear, groups, tables,
+counters, timers, and trace are not exposed yet; the native protocol currently
+supports text messages only.
 
 `FetchImpl::createModule(jsContext, scheduler)` registers `amj:fetch_impl`.
 `fetchImpl.start/read/close` belong to one HTTP owner. `fetch.js` imports that
@@ -104,7 +112,7 @@ its module-registration function. All native instances use the same context and 
 as their scheduler.
 
 The embedding host must supply a QuickJS module loader that maps `amj:text`,
-`amj:url`, `amj:timeout`, and `amj:fetch` to the installed JS files. Preserve the registered
+`amj:url`, `amj:console`, `amj:timeout`, and `amj:fetch` to the installed JS files. Preserve the registered
 `*_impl` names, and resolve relative JS imports against their file paths.
 There is not yet an application-level JS host/loader in this library; the
 module-name mappings in tsconfig configure TypeScript, not QuickJS execution.
@@ -117,7 +125,7 @@ and manage QuickJS value and atom references normally. Decide explicitly whether
 existing target properties may be overwritten. Copying exports copies values,
 not live bindings; these API exports are not subsequently reassigned.
 
-CMake copies the JS facades, `*_impl.d.ts`, `microtask.d.ts`, and `global.d.ts` into the build's
+CMake copies the JS facades, `*_impl.d.ts`, and `global.d.ts` into the build's
 `javascript/` directory. Keep these files together when distributing them.
 
 ## Types and dependency direction
@@ -170,8 +178,8 @@ tsc --project tsconfig.json
 
 For future user-script directories, generate a tsconfig with `allowJs`,
 `checkJs`, `noEmit`, `lib: ["ES2023"]`, `types: []`, and a `files` list pointing
-to installed `global.d.ts`, `url_impl.d.ts`, `fetch_impl.d.ts`, and
-`timeout_impl.d.ts`, and `microtask.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:timeout`,
+to installed `global.d.ts`, `url_impl.d.ts`, `console_impl.d.ts`, `fetch_impl.d.ts`,
+and `timeout_impl.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:console`, `amj:timeout`,
 and `amj:fetch`, pointing to the installed JS files. Paths are relative to the config
 or can be generated as absolute installation paths. Editor definitions for globals
 lead to `global.d.ts`; following its imported member leads to the JS export.
