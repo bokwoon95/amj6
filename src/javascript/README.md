@@ -13,12 +13,9 @@ This is the planned implementation order, not a list of completed modules:
 4. console
 5. timeout
 6. abort
-7. blob
-8. file
-9. formdata
-10. crypto
-11. fetch
-12. websocket
+7. crypto
+8. fetch
+9. websocket
 
 Scope:
 
@@ -39,10 +36,14 @@ Scope:
 | `amj:text`         | `text.js`               | `TextEncoder`, `TextDecoder`                                         |
 | `amj:url_impl`     | `url_impl.hpp/.cpp`     | `urlParse`, `urlWithComponent`, `queryStringParse`, `queryStringify` |
 | `amj:url`          | `url.js`                | `URL`, `URLSearchParams`                                             |
+| `amj:event`        | `event.js`              | `Event`, `CustomEvent`, `EventTarget`, `setEventErrorReporter`          |
 | `amj:console_impl` | `console_impl.hpp/.cpp` | `consoleWrite`                                                      |
 | `amj:console`      | `console.js`           | `console`                                                           |
 | `amj:timeout_impl` | `timeout_impl.hpp/.cpp` | `timeoutSet`, `timeoutClear`                                         |
 | `amj:timeout`      | `timeout.js`            | `setTimeout`, `clearTimeout`                                         |
+| `amj:abort`        | `abort.js`              | `AbortController`, `AbortSignal`                                     |
+| `amj:crypto_impl`  | `crypto_impl.hpp/.cpp`   | `cryptoGetRandomValues`, `cryptoDigest`                               |
+| `amj:crypto`       | `crypto.js`             | `crypto`                                                            |
 | `amj:fetch_impl`   | `fetch_impl.hpp/.cpp`   | `fetchImpl`                                                          |
 | `amj:fetch`        | `fetch.js`              | `Headers`, `fetch`                                                   |
 
@@ -70,6 +71,42 @@ marks circular references, and describes ordinary property accessors without
 invoking them. No live object references reach the sink. Clear, groups, tables,
 counters, timers, and trace are not exposed yet; the native protocol currently
 supports text messages only.
+
+`abort.js` builds cooperative cancellation on `event.js` and the timer facade.
+It exports `AbortController` and `AbortSignal`, including `aborted`, `reason`,
+`onabort`, `throwIfAborted()`, and static `abort()`, `any()`, and `timeout()`.
+Aborting is synchronous and idempotent; composed signals propagate through an
+internal dependency graph before events run, independently of event propagation
+stopping. Pending sources retain their dependent signals until abort, then links
+are detached. Timeout uses native timers, chaining delays above the int32 timer
+limit. Native work is canceled only when its owner subscribes and stops it.
+Default reasons are currently named `Error` objects (`AbortError` or
+`TimeoutError`), not `DOMException` instances. No native abort binding is needed.
+
+`createCryptoImplModule(jsContext, std::move(crypto))` owns a `Crypto` service and
+registers `amj:crypto_impl`. Construct it with the context, an initialized borrowed
+libuv loop, and a `callbackDidRun` hook that reports/consumes pending JS exceptions
+and drains QuickJS jobs after each delivered completion. All JS access and owner
+cleanup use that context's thread. The hook must not throw, destroy the service
+or context, or run a nested loop.
+
+`crypto.js` exports only `crypto.getRandomValues()`, `crypto.randomUUID()`, and
+`crypto.subtle.digest()`, explicitly declared in `crypto.d.ts`. Randomness uses
+synchronous `uv_random()` without a loop; integer typed arrays are filled in
+place, respecting view offsets and the 65,536-byte limit. UUIDs are version 4.
+Digest supports SHA-1, SHA-256, SHA-384, and SHA-512, case-insensitively. It copies
+the input slice before returning, hashes with OpenSSL on a libuv worker, and
+settles its Promise on the JS/loop thread. Buffer views, including DataView, are
+accepted; shared buffers are not. DOMException-style validation/operation errors
+currently use named Error objects. There are no key or other SubtleCrypto APIs.
+
+Keep a borrowed pointer if the host needs explicit `Crypto::shutdown()` after
+transferring ownership. Shutdown detaches queued work and releases pending JS
+callbacks without invoking them, leaving abandoned Promises unsettled. It does
+not cancel hashing or wait. Call shutdown before freeing the context; run the
+loop until all worker completions have finished before closing it. Detached
+completions only release native work storage. The JS carrier owns the service,
+marks retained callbacks for GC, and deletes it during finalization.
 
 `FetchImpl::createModule(jsContext, scheduler)` registers `amj:fetch_impl`.
 `fetchImpl.start/read/close` belong to one HTTP owner. `fetch.js` imports that
@@ -112,7 +149,8 @@ its module-registration function. All native instances use the same context and 
 as their scheduler.
 
 The embedding host must supply a QuickJS module loader that maps `amj:text`,
-`amj:url`, `amj:console`, `amj:timeout`, and `amj:fetch` to the installed JS files. Preserve the registered
+`amj:url`, `amj:event`, `amj:console`, `amj:timeout`, `amj:abort`, `amj:crypto`,
+and `amj:fetch` to the installed JS files. Preserve the registered
 `*_impl` names, and resolve relative JS imports against their file paths.
 There is not yet an application-level JS host/loader in this library; the
 module-name mappings in tsconfig configure TypeScript, not QuickJS execution.
@@ -125,7 +163,7 @@ and manage QuickJS value and atom references normally. Decide explicitly whether
 existing target properties may be overwritten. Copying exports copies values,
 not live bindings; these API exports are not subsequently reassigned.
 
-CMake copies the JS facades, `*_impl.d.ts`, and `global.d.ts` into the build's
+CMake copies the JS facades, `*_impl.d.ts`, `crypto.d.ts`, and `global.d.ts` into the build's
 `javascript/` directory. Keep these files together when distributing them.
 
 ## Types and dependency direction
@@ -160,6 +198,8 @@ C++ contract <- JS facade <- global.d.ts
 
 The `_impl` filename suffix also avoids shadowing inferred JS module types:
 `url.d.ts` beside `url.js` would take precedence when resolving imports.
+`crypto.d.ts` intentionally declares the public crypto subset rather than exposing
+unimplemented Web Crypto methods through broader inferred types.
 Native declarations are static contracts, not runtime validation; keep them
 synchronized with the corresponding headers and implementation.
 
@@ -178,9 +218,9 @@ tsc --project tsconfig.json
 
 For future user-script directories, generate a tsconfig with `allowJs`,
 `checkJs`, `noEmit`, `lib: ["ES2023"]`, `types: []`, and a `files` list pointing
-to installed `global.d.ts`, `url_impl.d.ts`, `console_impl.d.ts`, `fetch_impl.d.ts`,
-and `timeout_impl.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:console`, `amj:timeout`,
-and `amj:fetch`, pointing to the installed JS files. Paths are relative to the config
+to installed `global.d.ts`, `url_impl.d.ts`, `console_impl.d.ts`, `crypto_impl.d.ts`,
+`crypto.d.ts`, `fetch_impl.d.ts`, and `timeout_impl.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:event`, `amj:console`,
+`amj:timeout`, `amj:abort`, `amj:crypto`, and `amj:fetch`, pointing to the installed JS files. Paths are relative to the config
 or can be generated as absolute installation paths. Editor definitions for globals
 lead to `global.d.ts`; following its imported member leads to the JS export.
 Following implementation imports leads to the C++ module declarations.

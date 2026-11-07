@@ -145,7 +145,7 @@ endif()
 
 ## == src/javascript == ##
 
-# File-by-file dependency order: javascript -> text -> URL -> console -> scheduler -> timeout -> fetch.
+# File-by-file dependency order: javascript -> text -> URL -> event -> console -> scheduler -> timeout -> abort -> crypto -> fetch.
 add_library(amj_javascript STATIC
     src/javascript/javascript.hpp
     src/javascript/javascript.cpp
@@ -154,6 +154,7 @@ add_library(amj_javascript STATIC
     src/javascript/url_impl.cpp
     src/javascript/url.js
     src/javascript/url_impl.d.ts
+    src/javascript/event.js
     src/javascript/console_impl.hpp
     src/javascript/console_impl.cpp
     src/javascript/console_impl.d.ts
@@ -162,6 +163,12 @@ add_library(amj_javascript STATIC
     src/javascript/timeout_impl.cpp
     src/javascript/timeout_impl.d.ts
     src/javascript/timeout.js
+    src/javascript/abort.js
+    src/javascript/crypto_impl.hpp
+    src/javascript/crypto_impl.cpp
+    src/javascript/crypto_impl.d.ts
+    src/javascript/crypto.js
+    src/javascript/crypto.d.ts
     src/javascript/fetch_impl.cpp
     src/javascript/fetch.js
     src/javascript/fetch_impl.d.ts
@@ -176,6 +183,11 @@ endif()
 # Keep the JS modules alongside the build without evaluating them globally.
 configure_file(src/javascript/url.js javascript/url.js COPYONLY)
 configure_file(src/javascript/console.js javascript/console.js COPYONLY)
+configure_file(src/javascript/event.js javascript/event.js COPYONLY)
+configure_file(src/javascript/abort.js javascript/abort.js COPYONLY)
+configure_file(src/javascript/crypto.js javascript/crypto.js COPYONLY)
+configure_file(src/javascript/crypto.d.ts javascript/crypto.d.ts COPYONLY)
+configure_file(src/javascript/crypto_impl.d.ts javascript/crypto_impl.d.ts COPYONLY)
 configure_file(src/javascript/text.js javascript/text.js COPYONLY)
 configure_file(src/javascript/fetch.js javascript/fetch.js COPYONLY)
 configure_file(src/javascript/timeout.js javascript/timeout.js COPYONLY)

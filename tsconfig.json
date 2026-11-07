@@ -14,6 +14,9 @@
     "paths": {
       "amj:text": ["./src/javascript/text.js"],
       "amj:url": ["./src/javascript/url.js"],
+      "amj:event": ["./src/javascript/event.js"],
+      "amj:abort": ["./src/javascript/abort.js"],
+      "amj:crypto": ["./src/javascript/crypto.js"],
       "amj:console": ["./src/javascript/console.js"],
       "amj:fetch": ["./src/javascript/fetch.js"],
       "amj:timeout": ["./src/javascript/timeout.js"]
@@ -23,6 +26,8 @@
     "src/javascript/global.d.ts",
     "src/javascript/url_impl.d.ts",
     "src/javascript/console_impl.d.ts",
+    "src/javascript/crypto_impl.d.ts",
+    "src/javascript/crypto.d.ts",
     "src/javascript/timeout_impl.d.ts",
     "src/javascript/fetch_impl.d.ts"
   ],
