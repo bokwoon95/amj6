@@ -137,11 +137,11 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
                 const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
-                const std::map<int32_t, Timeout::Timer>::node_type timerNode = handleData->timeout->timerMap.extract(handleData->timerID);
-                if (timerNode.empty()) {
+                const std::map<int32_t, Timeout::Timer>::node_type mapNode = handleData->timeout->timerMap.extract(handleData->timerID);
+                if (mapNode.empty()) {
                     std::terminate(); // An active timer must have a registration.
                 }
-                const Timeout::Timer& timer = timerNode.mapped();
+                const Timeout::Timer& timer = mapNode.mapped();
 
                 // Close uvTimerHandle and delete it and its HandleData after closure.
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
@@ -164,8 +164,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         };
         status = uv_timer_start(uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
         if (status != 0) {
-            const std::map<int32_t, Timeout::Timer>::node_type timerNode = timeout.timerMap.extract(timerID);
-            if (timerNode.empty()) {
+            const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout.timerMap.extract(timerID);
+            if (mapNode.empty()) {
                 std::terminate(); // The initialized timer must have a registration.
             }
             uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle.release()), [](uv_handle_t* uvHandle) {
@@ -174,7 +174,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 delete uvTimerHandle;
                 delete handleData;
             });
-            JS_FreeValue(jsContext, timerNode.mapped().callback);
+            JS_FreeValue(jsContext, mapNode.mapped().callback);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));
         }
         timeout.timerMap.at(timerID).uvTimerHandle = uvTimerHandle.release();
@@ -217,12 +217,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         const int32_t timerIDInt32 = static_cast<int32_t>(timerID);
 
-        const std::map<int32_t, Timeout::Timer>::node_type timerNode = timeout.timerMap.extract(timerIDInt32);
-        if (timerNode.empty()) {
+        const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout.timerMap.extract(timerIDInt32);
+        if (mapNode.empty()) {
             return JS_UNDEFINED;
         }
+        const Timeout::Timer& timer = mapNode.mapped();
 
-        const Timeout::Timer& timer = timerNode.mapped();
         uv_close(reinterpret_cast<uv_handle_t*>(timer.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
             const HandleData* handleData = static_cast<HandleData*>(uvTimerHandle->data);
