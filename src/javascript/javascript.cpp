@@ -20,7 +20,7 @@
 namespace amj::javascript {
 namespace {
 
-JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth) {
+JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int depth) {
     if (depth > 128) {
         return JS_ThrowRangeError(jsContext, "JSON nesting exceeds 128 levels");
     }
@@ -52,7 +52,7 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
             return JS_EXCEPTION;
         }
         for (std::size_t index = 0; index < array->size(); index++) {
-            const JSValue element = convertJSON(jsContext, array->at(index), depth + 1);
+            const JSValue element = jsonValueToJSValue(jsContext, array->at(index), depth + 1);
             if (JS_IsException(element)) {
                 return JS_EXCEPTION;
             }
@@ -69,7 +69,7 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
             return JS_EXCEPTION;
         }
         for (const std::pair<const std::string, JSONValue>& field : *object) {
-            ScopedJSValue element(jsContext, convertJSON(jsContext, field.second, depth + 1));
+            ScopedJSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
             if (JS_IsException(element.get())) {
                 return JS_EXCEPTION;
             }
@@ -91,7 +91,7 @@ JSValue convertJSON(JSContext* jsContext, const JSONValue& jsonValue, int depth)
 } // namespace
 
 JSValue JSONValue::toJSValue(JSContext* jsContext) const try {
-    return convertJSON(jsContext, *this, 0);
+    return jsonValueToJSValue(jsContext, *this, 0);
 } catch (const std::bad_alloc&) {
     return JS_ThrowOutOfMemory(jsContext);
 } catch (const std::exception& exception) {
