@@ -1,8 +1,39 @@
 # JavaScript modules
 
-Dependency order: **text -> URL -> scheduler -> timeout -> fetch**. JavaScript
-facades export their public API; they do not install anything on the global object.
-The host chooses which target receives those exports.
+JavaScript facades export their public API; they do not install anything on the
+global object. The host chooses which target receives those exports.
+
+## Implementation order and scope
+
+This is the planned implementation order, not a list of completed modules:
+
+1. text
+2. base64
+3. performance
+4. url
+5. event
+6. microtask
+7. console
+8. timeout
+9. abort
+10. blob
+11. file
+12. formdata
+13. crypto
+14. fetch
+15. websocket
+
+Scope:
+
+- Blob/File omit `.stream()`.
+- Fetch retains a limited streaming `response.body` reader for SSE:
+  `getReader()`, `read()`, `cancel()`, and `releaseLock()`. No standalone WHATWG
+  Streams module or streaming uploads are planned. Streaming bodies still need
+  bounded buffering/backpressure, cancellation, reader locking, and error propagation.
+- Crypto implements only `crypto.getRandomValues()`, `crypto.randomUUID()`, and
+  `crypto.subtle.digest()`. Digest hashing runs on a native worker, with completion
+  delivered to the JS thread; this does not require a JS Worker API.
+- Structured cloning, compression streams, and the JS Worker API are out of scope.
 
 ## Modules and native/JS boundary
 

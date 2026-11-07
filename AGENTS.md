@@ -66,6 +66,7 @@
 ## JavaScript
 - JSDoc: Use () => Type, not { (): Type }, for plain function types.
 - JSDoc: Use Array<Type> and ReadonlyArray<Type>, never Type[] or readonly Type[].
+- Always brace conditional bodies and put them on separate lines, including in embedded JavaScript.
 
 ## Python
 - Use typed Python as much as possible.

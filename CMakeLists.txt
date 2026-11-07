@@ -164,6 +164,11 @@ add_library(amj_javascript STATIC
 )
 list(APPEND amj_libraries amj_javascript)
 target_link_libraries(amj_javascript PUBLIC amj_errors qjs PRIVATE Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+if(BUILD_TESTING)
+    list(APPEND amj_test_libraries amj_javascript)
+    list(APPEND amj_test_sources src/javascript/text_test.cpp)
+    set_property(SOURCE src/javascript/text_test.cpp APPEND PROPERTY COMPILE_DEFINITIONS "AMJ_TEXT_SOURCE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/src/javascript/text.js\"")
+endif()
 # Keep the JS modules alongside the build without evaluating them globally.
 configure_file(src/javascript/url.js javascript/url.js COPYONLY)
 configure_file(src/javascript/text.js javascript/text.js COPYONLY)
