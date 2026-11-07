@@ -1,25 +1,13 @@
 // @ts-check
-// Fetch over FetchImpl::{start,read,close}. JS owns Promises and API semantics.
+// Public fetch semantics over the native FetchClient/FetchResponse boundary.
 // Dependencies are module imports, never target/global lookups.
 
-import { fetchImpl } from "amj:fetch_impl";
+import { fetchClient } from "amj:fetch_impl";
 import { URL } from "amj:url";
 import { TextEncoder, TextDecoder } from "amj:text";
 
 /**
- * @typedef {import("amj:fetch_impl").FetchRequestHandle} FetchRequestHandle
- */
-/**
- * @typedef {import("amj:fetch_impl").FetchFailure} FetchFailure
- */
-/**
- * @typedef {import("amj:fetch_impl").FetchResponseMetadata} FetchResponseMetadata
- */
-/**
- * @template T
- * @typedef {object} Pending
- * @property {(value: T) => void} resolve
- * @property {(reason: unknown) => void} reject
+ * @typedef {import("amj:fetch_impl").FetchResponse} FetchResponse
  */
 /**
  * @typedef {{done: true, value: undefined} | {done: false, value: Uint8Array}} ReadResult
@@ -42,15 +30,12 @@ import { TextEncoder, TextDecoder } from "amj:text";
  * @property {Iterable<readonly [unknown, unknown]> | Record<string, unknown> | null} [headers]
  * @property {string | Uint8Array | null} [body]
  * @property {AbortSignalValue | null} [signal]
- * @property {"error"} [redirect]
+ * @property {"follow"} [redirect]
  * @property {undefined} [credentials]
  * @property {undefined} [cache]
  * @property {undefined} [integrity]
  * @property {undefined} [keepalive]
  * @property {undefined} [mode]
- */
-/**
- * @typedef {Error & {errorType: string, errorMessage: string}} FetchError
  */
 const bodyLimit = 33554432;
 /**
@@ -84,22 +69,6 @@ const normalizeValue = (value) => {
     throw new TypeError("Invalid header value");
   }
   return text.replace(/^[\t ]+|[\t ]+$/g, "");
-};
-/**
- * @param {FetchFailure} failure
- * @returns {FetchError}
- */
-const completionError = (failure) => {
-  let error;
-  if (failure.type === "LimitExceeded") {
-    error = new RangeError(failure.message);
-  } else {
-    error = new TypeError(failure.message);
-  }
-  return Object.assign(error, {
-    errorType: failure.type,
-    errorMessage: failure.message,
-  });
 };
 export class Headers {
   /**
@@ -260,17 +229,9 @@ export class Headers {
 }
 class RequestState {
   /**
-   * @type {FetchRequestHandle | null}
+   * @type {FetchResponse | null}
    */
-  request = null;
-  /**
-   * @type {Pending<FetchResponseMetadata> | null}
-   */
-  headers = null;
-  /**
-   * @type {Pending<ReadResult> | null}
-   */
-  reading = null;
+  fetchResponse = null;
   ended = false;
   failed = false;
   /**
@@ -332,11 +293,11 @@ class RequestState {
     }
   }
   dispose() {
-    const request = this.request;
-    this.request = null;
+    const fetchResponse = this.fetchResponse;
+    this.fetchResponse = null;
     try {
-      if (request !== null) {
-        fetchImpl.close(request);
+      if (fetchResponse !== null) {
+        fetchResponse.close();
       }
     } finally {
       const signal = this.signal;
@@ -364,16 +325,6 @@ class RequestState {
     this.ended = true;
     this.failed = true;
     this.reason = reason;
-    const headers = this.headers;
-    const reading = this.reading;
-    this.headers = null;
-    this.reading = null;
-    if (headers !== null) {
-      headers.reject(reason);
-    }
-    if (reading !== null) {
-      reading.reject(reason);
-    }
     this.dispose();
   }
   cancel() {
@@ -384,40 +335,11 @@ class RequestState {
       return;
     }
     this.ended = true;
-    const reading = this.reading;
-    this.reading = null;
-    if (reading !== null) {
-      reading.resolve({ value: undefined, done: true });
-    }
     this.dispose();
   }
   finish() {
     this.ended = true;
     this.dispose();
-  }
-  /**
-   * @param {FetchFailure | null} failure
-   * @param {FetchResponseMetadata | null} metadata
-   * @returns {void}
-   */
-  receiveHeaders(failure, metadata) {
-    const headers = this.headers;
-    this.headers = null;
-    if (headers === null) {
-      return;
-    }
-    if (failure !== null || metadata === null) {
-      let error;
-      if (failure !== null) {
-        error = completionError(failure);
-      } else {
-        error = new TypeError("Missing native response metadata");
-      }
-      headers.reject(error);
-      this.fail(error);
-    } else {
-      headers.resolve(metadata);
-    }
   }
   /**
    * @returns {Promise<ReadResult>}
@@ -429,41 +351,33 @@ class RequestState {
     if (this.ended) {
       return { value: undefined, done: true };
     }
-    if (this.reading !== null) {
-      throw new TypeError("Only one outstanding read is supported");
-    }
-    const request = this.request;
-    if (request === null) {
+    const fetchResponse = this.fetchResponse;
+    if (fetchResponse === null) {
       throw new TypeError("HTTP request is closed");
     }
-    return new Promise((resolve, reject) => {
-      this.reading = { resolve, reject };
-      try {
-        fetchImpl.read(request, (failure, chunk) => {
-          const reading = this.reading;
-          this.reading = null;
-          if (reading === null) {
-            return;
-          }
-          if (failure !== null) {
-            const error = completionError(failure);
-            reading.reject(error);
-            this.fail(error);
-          } else if (chunk === null) {
-            reading.resolve({ value: undefined, done: true });
-            this.finish();
-          } else if (chunk instanceof Uint8Array && chunk.length !== 0) {
-            reading.resolve({ value: chunk, done: false });
-          } else {
-            const error = new TypeError("Invalid native response chunk");
-            reading.reject(error);
-            this.fail(error);
-          }
-        });
-      } catch (error) {
-        this.fail(error);
+    try {
+      const bytes = await fetchResponse.read();
+      if (this.failed) {
+        throw this.reason;
       }
-    });
+      if (this.ended) {
+        return { value: undefined, done: true };
+      }
+      if (bytes === null) {
+        this.finish();
+        return { value: undefined, done: true };
+      }
+      return { value: bytes, done: false };
+    } catch (error) {
+      if (this.failed) {
+        throw this.reason;
+      }
+      if (this.ended) {
+        return { value: undefined, done: true };
+      }
+      this.fail(error);
+      throw error;
+    }
   }
 }
 class Reader {
@@ -583,18 +497,17 @@ class Response {
   #url;
   /**
    * @param {RequestState} state
-   * @param {FetchResponseMetadata} metadata
-   * @param {string} url
+   * @param {FetchResponse} fetchResponse
    * @param {string} method
    */
-  constructor(state, metadata, url, method) {
+  constructor(state, fetchResponse, method) {
     this.#state = state;
-    this.#status = metadata.status;
-    this.#headers = new Headers(metadata.headers);
+    this.#status = fetchResponse.status;
+    this.#headers = new Headers(fetchResponse.headers);
     immutable.add(this.#headers);
-    this.#url = url;
+    this.#url = fetchResponse.url;
     this.#body = new Body(state);
-    if (method === "HEAD" || [204, 205, 304].includes(metadata.status)) {
+    if (method === "HEAD" || [204, 205, 304].includes(this.#status)) {
       this.#body = null;
       state.finish();
     }
@@ -694,8 +607,8 @@ export async function fetch(input, init) {
   if (!/^[!#$%&'*+.^_`|~0-9A-Z-]+$/.test(method) || ["CONNECT", "TRACE", "TRACK"].includes(method)) {
     throw new TypeError("Invalid HTTP method");
   }
-  if (init.redirect !== undefined && init.redirect !== "error") {
-    throw new TypeError("Only redirect:error is supported");
+  if (init.redirect !== undefined && init.redirect !== "follow") {
+    throw new TypeError("Only redirect:follow is supported");
   }
   for (const name of /**
    * @type {const}
@@ -745,25 +658,22 @@ export async function fetch(input, init) {
   }
   const state = new RequestState();
   try {
-    /**
-     * @type {FetchResponseMetadata}
-     */
-    const metadata = await new Promise((resolve, reject) => {
-      state.headers = { resolve, reject };
-      try {
-        state.request = fetchImpl.start(url.href, method, Array.from(headers), body, (failure, metadata) =>
-          state.receiveHeaders(failure, metadata),
-        );
-        state.attachSignal(signal);
-      } catch (error) {
-        state.fail(error);
-      }
-    });
+    const fetchResponse = fetchClient.send({ url: url.href, method, headers: Array.from(headers), body });
+    state.fetchResponse = fetchResponse;
+    try {
+      state.attachSignal(signal);
+    } catch (error) {
+      state.fail(error);
+    }
+    await fetchResponse.ready;
     if (state.failed) {
       throw state.reason;
     }
-    return new Response(state, metadata, url.href, method);
+    return new Response(state, fetchResponse, method);
   } catch (error) {
+    if (state.failed) {
+      throw state.reason;
+    }
     state.fail(error);
     throw error;
   }

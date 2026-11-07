@@ -1,26 +1,32 @@
-// JavaScript representation of the boundary types and operations in fetch_impl.hpp.
+// Normalized native contract, not the public browser fetch surface.
 declare module "amj:fetch_impl" {
-  export interface FetchRequestHandle {
-    readonly __fetchRequestHandle: unique symbol;
+  export interface FetchRequest {
+    url: string;
+    method: string;
+    headers: Array<[string, string]>;
+    body: Uint8Array;
   }
-  export interface FetchFailure {
-    type: string;
-    message: string;
+
+  export interface FetchResponse {
+    /** Resolves after final response headers, including redirects; rejects on failure. */
+    readonly ready: Promise<void>;
+
+    /** Access before ready or after close throws. Headers are returned as a copy. */
+    readonly status: number;
+    readonly headers: Array<[string, string]>;
+    readonly url: string;
+
+    /** Await ready first. One outstanding read; nonempty bytes or null for EOF. */
+    read(): Promise<Uint8Array | null>;
+
+    /** Idempotent. Frees native state and rejects pending ready/read operations. */
+    close(): void;
   }
-  export interface FetchResponseMetadata {
-    status: number;
-    headers: [string, string][];
+
+  export interface FetchClient {
+    /** Copies normalized request fields and upload bytes before returning. */
+    send(fetchRequest: FetchRequest): FetchResponse;
   }
-  export interface FetchImpl {
-    start(
-      url: string,
-      method: string,
-      headerPairs: [string, string][],
-      bytes: Uint8Array,
-      onHeaders: (failure: FetchFailure | null, metadata: FetchResponseMetadata | null) => void,
-    ): FetchRequestHandle;
-    read(request: FetchRequestHandle, onRead: (failure: FetchFailure | null, chunk: Uint8Array | null) => void): void;
-    close(request: FetchRequestHandle): void;
-  }
-  export const fetchImpl: FetchImpl;
+
+  export const fetchClient: FetchClient;
 }

@@ -17,7 +17,7 @@ claim that every preceding module is finished or reviewed:
 
 URL and timeout are the hand-reviewed references for further module work. Do not
 assume the other modules are equally settled just because they already exist.
-Fetch is the next module being redesigned.
+Fetch now uses curl multi/libuv; websocket remains the next module to implement.
 
 ## Scope
 
@@ -26,8 +26,8 @@ Build the subset needed by provider scripts, not a complete browser runtime.
 - Fetch needs ordinary HTTP requests, text/JSON responses, and incremental body
   reads for SSE. Keep reader locking, cancellation, error propagation, and bounded
   unread buffering. No standalone WHATWG Streams module or streaming uploads.
-- Follow HTTP(S) redirects by default, resembling browser fetch. Do not preserve
-  the old no-redirect policy merely because the existing implementation has it.
+- Follow HTTP(S) redirects by default, resembling browser fetch. The subset does
+  not expose manual/error redirect modes, cookie storage, or automatic retries.
 - A response-header timeout ends when headers arrive. User/invocation cancellation
   remains effective while consuming the body. Do not impose a fixed total body
   timeout on potentially long-lived SSE connections.
@@ -67,8 +67,9 @@ arbitrary cancellation thread.
 
 ## Ownership decision
 
-Use **host-owned native objects, borrowed module bindings, and explicit shutdown**. Pass each module its own dependency, not an unrestricted
-pointer to the entire backend host. A module's JS carrier must not delete a
+Use **host-owned native objects, borrowed module bindings, and explicit shutdown**.
+Pass each module its own dependency, not an unrestricted pointer to the entire
+backend host. A module's JS carrier must not delete a
 host-owned object.
 
 Host-owned references to JS callbacks/Promise functions are external retained
@@ -80,9 +81,8 @@ QuickJS has no general “shut down all modules” operation. The host calls nat
 shutdown methods itself. Registering a borrowed dependency does not extend its
 lifetime; keep the native object alive through JS finalization.
 
-Console, timeout, and crypto use borrowed bindings. The console sink has no
-asynchronous work to shut down; keep it alive until JS teardown finishes.
-Legacy fetch still uses scheduler-owned cleanup and is awaiting redesign.
+Console, timeout, crypto, and fetch use borrowed bindings. The console sink has
+no asynchronous work to shut down; keep it alive until JS teardown finishes.
 
 ## Shutdown contract
 
@@ -96,7 +96,7 @@ on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
 2. **Call native shutdown methods while QuickJS is alive.** For example,
    `Timeout::shutdown()` closes its `uv_timer_t` handles and releases timer
    callbacks. `Crypto::shutdown()` releases JS callbacks and detaches worker
-   jobs; already-running hashing may continue without accessing JS. The future
+   jobs; already-running hashing may continue without accessing JS.
    `FetchClient::shutdown()` cancels curl transfers, releases retained JS values,
    and starts closing its libuv socket watchers/timer. Shutdown must be
    idempotent and must not execute JS or disturb pending JS exceptions.
@@ -111,7 +111,7 @@ on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
    `JSRuntime*`. Native objects borrowed by JS carriers must still exist because
    JS finalizers can run during this step.
 5. **Destroy the native C++ objects.** For example, reset the host's
-   `unique_ptr<Timeout>`, `unique_ptr<Crypto>`, and future
+   `unique_ptr<Timeout>`, `unique_ptr<Crypto>`, and
    `unique_ptr<FetchClient>`. They have already been shut down: their destructors
    must not access the freed `JSContext*` or `JSRuntime*`, including through a
    repeated `shutdown()` call.
@@ -124,42 +124,44 @@ canceling a fetch must settle pending header/read Promises. During host teardown
 release retained Promise functions without invoking them; abandoned Promises do
 not need to settle.
 
-## Fetch redesign
+## Fetch ownership and transport
 
-The agreed native boundary exports `fetchClient` from `amj:fetch_impl`.
-Its `send(fetchRequest)` returns an opaque `FetchResponse` with response fields,
-read operations, and explicit close. Use the full `FetchRequest`, `FetchResponse`,
-and `FetchClient` names rather than colliding with browser `Request`/`Response`.
-Variables use `fetchRequest`, `fetchResponse`, and `fetchClient`.
+Keep three responsibilities separate: `FetchRequest` is copied input,
+`FetchResponse` is the lightweight JS-owned handle, and `FetchState` is native
+operation storage owned by `FetchClient`. The response borrows the client and
+identifies its state by easy handle. The state has no client back-pointer.
+Do not merge the state into the response and recreate mutually referential
+client/response types.
 
-`FetchClient` owns the shared curl multi handle and its libuv integration, and
-borrows the initialized `uv_loop_t`. Each request owns a curl easy handle and
-its request-specific buffers/callbacks. The shared client exists for transport
-coordination and connection reuse, not because JS needs numeric request IDs.
-One client can drive all HTTP requests on its owner thread. The host controls
-whether contexts share it; it is not a process-global variable.
+Closing a response invalidates its own easy-handle key before destroying its
+client-owned state. This prevents stale JS objects from addressing a new request
+if curl reuses an address. Network completion alone does not erase the state:
+unread buffered bytes must remain available. Callers must consume or cancel
+bodies, preferably in `finally`; merely releasing a reader lock is not cancellation.
+JS finalization is fallback cleanup, not the host's shutdown mechanism. Finalizers
+mark state for deferred cleanup: delivery allocations can trigger GC, so a finalizer
+must not synchronously erase state being used by delivery or execute JS to settle
+Promises. After client shutdown, finalizers must not look up stale easy-handle keys.
 
-Curl implements HTTP, TLS, redirects, connection reuse, and supported HTTP/2
-multiplexing. Libuv watches curl's sockets and deadlines. Use curl multi's socket
-API with libuv poll handles and a timer, not blocking HTTP in `uv_queue_work()`
-and not a thread per request. Pause/resume receiving for bounded buffering.
+The client shares connections across operations, not numeric request IDs with JS.
+It is currently bound to one `JSContext*` and initialized `uv_loop_t`, not a
+process-global variable. Curl implements HTTP, TLS, redirects, connection reuse,
+and supported HTTP/2 multiplexing; libuv watches curl's sockets and deadlines.
+Do not replace this with blocking HTTP in `uv_queue_work()` or a thread per request.
+Keep cpp-httplib only where needed for a separate localhost OAuth callback server.
 
-Curl callbacks collect native results. Deliver JS completions after the curl
-operation unwinds, so JS cancellation or shutdown cannot destroy a transfer
-inside curl's callback stack. Finalize the exact asynchronous readiness/read
-contract before implementing the new declarations; the existing fetch boundary
-is not a compatibility requirement.
+Curl callbacks only collect native results. A separate libuv delivery timer settles
+native-operation Promises after curl unwinds; otherwise Promise settlement could
+reenter JS and cancel a transfer inside curl's callback stack. Delivery drops map
+references before host job checkpoints because those jobs may close responses or
+shut down the client. Pause receiving when buffers fill, and enqueue nothing when
+returning curl's pause result: curl redelivers that entire block on resume.
 
-### Legacy code still on disk
-
-Fetch currently uses `Scheduler` and cpp-httplib workers; it has not been migrated
-to the design above. Timer and digest implementations already use libuv, so the
-old scheduler's `runNext()` is not a universal driver for these modules.
-
-Until legacy fetch is removed, clear/destroy its scheduler and join its workers
-before freeing QuickJS. The new shutdown sequence does not magically detach
-legacy scheduler callbacks. Keep cpp-httplib only where needed for a separate
-localhost OAuth callback server, not as the new fetch transport.
+The public facade preserves the original JS abort reason, rather than exposing
+native close's generic rejection. Native readiness ends at the final response's
+headers, not at an informational/redirect header block. No fixed body deadline
+is imposed. `Scheduler` remains on disk but no longer drives fetch, timers, or
+digests; an invocation host must run libuv, not `Scheduler::runNext()`.
 
 ## Declaration files and checking
 

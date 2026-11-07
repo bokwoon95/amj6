@@ -1,70 +1,118 @@
 #pragma once
 
+#include <curl/curl.h>
+#include <curl/multi.h>
 #include <quickjs.h>
+#include <uv.h>
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <map>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace amj::javascript {
 
-class Scheduler;
-struct FetchImplState;
-
-// Plain completion data, converted to JS objects with the same field names.
-struct FetchFailure {
-    std::string type = "";
-    std::string message = "";
-};
-
-struct FetchResponseMetadata {
-    int status = 0;
+struct FetchRequest {
+    std::string url = "";
+    std::string method = "";
     std::vector<std::pair<std::string, std::string>> headers = {};
+    std::vector<uint8_t> body = {};
 };
 
-// Native HTTP operations used by fetch.js. JS owns Promises, abort reasons and
-// listeners, Error/Response objects, and public argument normalization. Native
-// code owns workers, bounded buffers, and one-shot scheduler completion callbacks.
-// All methods require the scheduler/context owner thread and matching JSContext.
-class FetchImpl {
-  public:
-    // url/method: normalized strings; headerPairs: array of two-string arrays;
-    // bytes: Uint8Array; onHeaders: function(failureOrNull, metadataOrNull).
-    // Returns an opaque JS request handle (FetchRequestHandle in fetch_impl.d.ts),
-    // or JS_EXCEPTION on synchronous failure.
-    // Later invokes onHeaders once through the scheduler with FetchFailure/null and
-    // FetchResponseMetadata/null. Header pairs become two-element JS arrays.
-    // No native Promise or JS Error is created. 4xx/5xx are successful responses.
-    JSValue start(JSContext* jsContext, JSValueConst url, JSValueConst method, JSValueConst headerPairs, JSValueConst bytes, JSValueConst onHeaders);
+// Client-owned operation storage. Curl callbacks borrow this object, not its
+// parent client. Its address remains stable until the easy handle is removed.
+struct FetchState {
+    JSRuntime* jsRuntime = nullptr;
+    CURL* curlEasyHandle = nullptr;
+    curl_slist* curlHeaders = nullptr;
+    FetchRequest fetchRequest = {};
+    int64_t status = 0;
+    std::string url = "";
+    std::vector<std::pair<std::string, std::string>> headers = {};
+    std::deque<std::vector<uint8_t>> chunks = {};
+    std::size_t bufferedBytes = 0;
+    std::size_t headerBytes = 0;
+    std::string failure = "";
+    JSValue readyResolve = JS_UNDEFINED;
+    JSValue readyReject = JS_UNDEFINED;
+    JSValue readResolve = JS_UNDEFINED;
+    JSValue readReject = JS_UNDEFINED;
+    bool addedToMulti = false;
+    bool headersReceived = false;
+    bool readyDelivered = false;
+    bool finished = false;
+    bool paused = false;
+    bool redirecting = false;
+    bool closeRequested = false; // JS finalizers defer curl cleanup to delivery.
 
-    // request: handle from this FetchImpl instance, after successful headers.
-    // onRead: function(failureOrNull, chunkOrNull). One outstanding read is allowed.
-    // Later invokes onRead once through the scheduler. chunk is Uint8Array; null
-    // with no failure means EOF. Returns undefined, or JS_EXCEPTION on failure.
-    JSValue read(JSContext* jsContext, JSValueConst request, JSValueConst onRead);
-
-    // Stops/joins the worker and unregisters pending callbacks. Idempotent for a
-    // closed handle. Drops completion functions without invoking them. Returns
-    // undefined, or JS_EXCEPTION on failure. JS settles its own cancelled Promises.
-    JSValue close(JSContext* jsContext, JSValueConst request);
-
-    // Registers amj:fetch_impl, exporting fetchImpl bound to this scheduler.
-    // Call once per context before loading fetch.js. Returns a context-owned
-    // module, or nullptr with a pending exception.
-    // The scheduler/context are borrowed. Clear/destroy the scheduler before the
-    // context. Cleanup invalidates the instance and joins workers without calling
-    // JS; use fresh registration/context after clear(). Callbacks hold weak references,
-    // so destroying scheduler callbacks cannot join workers under its mutex.
-    //
-    // HTTP(S) only, verified TLS, no credentials/redirects/retries/cookies. Limits:
-    // 64 requests, 64 KiB headers/URL, 32 MiB upload, 64 KiB chunks, 256 KiB queued
-    // body per request. Timeouts: 10s connect, 60s read, 30s write. DNS/connect/OS
-    // calls may delay cancellation/join: use off the UI thread.
-    static JSModuleDef* createModule(JSContext* jsContext, Scheduler& scheduler);
-
-  private:
-    std::shared_ptr<FetchImplState> fetchImplState = nullptr;
+    FetchState() = default;
+    ~FetchState();
+    FetchState(const FetchState&) = delete;
+    FetchState& operator=(const FetchState&) = delete;
+    FetchState(FetchState&&) = delete;
+    FetchState& operator=(FetchState&&) = delete;
 };
+
+struct FetchClient;
+
+// Owned by the opaque JS object. The client outlives all such objects.
+// A null easy handle means closed; shutdown clients reject all further access.
+struct FetchResponse {
+    FetchClient* fetchClient = nullptr;
+    CURL* curlEasyHandle = nullptr;
+};
+
+// Host-owned, one per context/loop pair, at a stable address. Borrows the context
+// and initialized loop. All use/destruction requires their owner thread.
+//
+// callbackDidRun reports/consumes JS exceptions and drains QuickJS jobs after
+// delivered completions. It may call shutdown(), but must not destroy this
+// object/context, nest the loop, or throw. Captures must be native-only.
+//
+// Explicitly shutdown while QuickJS is alive, drain native close callbacks, then
+// free the context/runtime before destroying this object. Repeated shutdown and
+// destruction after shutdown never access QuickJS. Detached libuv callbacks only
+// release native storage. No module carrier owns or GC-marks this object.
+struct FetchClient {
+    JSRuntime* jsRuntime = nullptr;
+    JSContext* jsContext = nullptr;
+    uv_loop_t* uvLoop = nullptr;
+    CURLM* curlMultiHandle = nullptr;
+    uv_timer_t* curlTimer = nullptr;
+    uv_timer_t* deliveryTimer = nullptr;
+    std::map<curl_socket_t, uv_poll_t*> socketMap = {};
+    std::map<CURL*, FetchState> fetchStates = {};
+    std::function<void(JSContext*)> callbackDidRun = {};
+    std::thread::id ownerThreadID = {};
+    JSClassID responseClassID = 0;
+    bool shuttingDown = false;
+
+    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
+    ~FetchClient();
+    FetchClient(const FetchClient&) = delete;
+    FetchClient& operator=(const FetchClient&) = delete;
+    FetchClient(FetchClient&&) = delete;
+    FetchClient& operator=(FetchClient&&) = delete;
+
+    // Idempotent. Releases JS references without settling abandoned Promises.
+    // First call requires live QuickJS; later calls only check the owner thread.
+    void shutdown();
+
+    // Internal driver operations; do not call from application code.
+    void drive(curl_socket_t socket, int events);
+    void scheduleDelivery();
+    void deliver();
+    void close(CURL* curlEasyHandle, bool settle);
+};
+
+// Registers amj:fetch_impl, exporting fetchClient with send(fetchRequest).
+// Borrows fetchClient even on failure. Call once per context before fetch.js.
+// Returns a context-owned module, or nullptr with a pending exception.
+JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient);
 
 } // namespace amj::javascript
