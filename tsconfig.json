@@ -14,12 +14,17 @@
     "paths": {
       "amj:text": ["./src/javascript/text.js"],
       "amj:url": ["./src/javascript/url.js"],
+      "amj:url_impl": ["./src/javascript/url_impl.d.ts"],
       "amj:event": ["./src/javascript/event.js"],
       "amj:abort": ["./src/javascript/abort.js"],
       "amj:crypto": ["./src/javascript/crypto.js"],
+      "amj:crypto_impl": ["./src/javascript/crypto_impl.d.ts"],
       "amj:console": ["./src/javascript/console.js"],
+      "amj:console_impl": ["./src/javascript/console_impl.d.ts"],
       "amj:fetch": ["./src/javascript/fetch.js"],
-      "amj:timeout": ["./src/javascript/timeout.js"]
+      "amj:fetch_impl": ["./src/javascript/fetch_impl.d.ts"],
+      "amj:timeout": ["./src/javascript/timeout.js"],
+      "amj:timeout_impl": ["./src/javascript/timeout_impl.d.ts"]
     }
   },
   "files": [
