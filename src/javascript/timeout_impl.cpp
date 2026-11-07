@@ -54,6 +54,9 @@ void Timeout::shutdown() {
     if (this_thread::get_id() != ownerThreadID) {
         std::terminate();
     }
+    if (shuttingDown) {
+        return; // Safe even after the context/runtime have been destroyed.
+    }
     shuttingDown = true;
     for (const std::pair<const int32_t, Timer>& entry : timerMap) {
         uv_close(reinterpret_cast<uv_handle_t*>(entry.second.uvTimerHandle), [](uv_handle_t* uvHandle) {
@@ -243,16 +246,12 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
     }
 }
 
-JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeout> timeout) {
+JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
     try {
-        if (timeout == nullptr) {
-            JS_ThrowInternalError(jsContext, "createTimeoutImplModule: timeout is nullptr");
-            return nullptr;
-        }
-        if (this_thread::get_id() != timeout->ownerThreadID) {
+        if (this_thread::get_id() != timeout.ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != timeout->jsContext || timeout->shuttingDown) {
+        if (jsContext != timeout.jsContext || timeout.shuttingDown) {
             JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
             return nullptr;
         }
@@ -284,19 +283,8 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
         if (!JS_IsRegisteredClass(jsRuntime, timeoutClassID)) {
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
-                .finalizer = [](JSRuntime* /* jsRuntime */, JSValue jsValue) {
-                    const Timeout* timeout = static_cast<const Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
-                    delete timeout;
-                },
-                .gc_mark = [](JSRuntime* jsRuntime, JSValueConst jsValue, JS_MarkFunc* markFunc) {
-                    const Timeout* timeout = static_cast<const Timeout*>(JS_GetOpaque(jsValue, JS_GetClassID(jsValue)));
-                    if (timeout == nullptr) {
-                        return;
-                    }
-                    for (const std::pair<const int32_t, Timeout::Timer>& entry : timeout->timerMap) {
-                        JS_MarkValue(jsRuntime, entry.second.callback, markFunc);
-                    }
-                },
+                .finalizer = nullptr,
+                .gc_mark = nullptr, // Callback references belong to the host-owned Timeout.
                 .call = nullptr,
                 .exotic = nullptr,
             };
@@ -312,10 +300,8 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, std::unique_ptr<Timeo
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        Timeout* timeoutPtr = timeout.release();
-        int status = JS_SetOpaque(modulePrivateValue.get(), timeoutPtr);
+        int status = JS_SetOpaque(modulePrivateValue.get(), &timeout);
         if (status < 0) {
-            delete timeoutPtr;
             JS_ThrowInternalError(jsContext, "Could not attach Timeout");
             return nullptr;
         }

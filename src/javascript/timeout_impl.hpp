@@ -24,10 +24,11 @@ namespace amj::javascript {
 // shutdown() releases pending timers' JS values and starts native handle closure;
 // an executing callback keeps its local JS references until it returns.
 // shutdown() does not run the loop or wait for close callbacks. Those callbacks only
-// delete native storage and no longer borrow this object or the context. Stop
-// calls through the JS module before destroying this object. The context must
-// remain alive through shutdown()/destruction. The host must finish native close
-// callbacks before closing/destroying the loop.
+// delete native storage and no longer borrow this object or the context.
+// The host must call shutdown() while the context/runtime are alive, stop JS
+// execution, and keep this object alive through context/runtime destruction.
+// After shutdown(), repeated shutdown()/destruction do not access QuickJS.
+// Finish native close callbacks before closing/destroying the loop.
 struct Timeout {
     // One setTimeout() registration.
     struct Timer {
@@ -42,7 +43,7 @@ struct Timeout {
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
-    std::map<int32_t, Timer> timerMap = {}; // Public timer ID -> timer registration.
+    std::map<int32_t, Timer> timerMap = {}; // Host-owned JS references; released on firing/cancel/shutdown.
     bool shuttingDown = false;
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
@@ -54,7 +55,8 @@ struct Timeout {
     Timeout(Timeout&&) = delete;
     Timeout& operator=(Timeout&&) = delete;
 
-    // Idempotent; permanently rejects new timers. Does not execute JS callbacks
+    // First call requires a live context/runtime; permanently rejects new timers.
+    // Later calls are safe after QuickJS destruction. Does not execute JS callbacks
     // or alter a pending JS exception. Wrong-thread use terminates the process.
     void shutdown();
 };
@@ -70,9 +72,10 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst thisValue, int argc, JSVal
 JSValue timeoutClear(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, Timeout& timeout);
 
 // Registers amj:timeout_impl, exporting timeoutSet and timeoutClear. Call once
-// per context before loading timeout.js. Borrows timeout; the owner must stop
-// calls through this module before destroying it. Returns a context-owned module,
-// or nullptr with a pending exception.
+// per context before loading timeout.js. Borrows timeout, including on failure;
+// never deletes it. The host shuts it down before freeing the context and keeps
+// it alive through runtime destruction. Returns a context-owned module, or
+// nullptr with a pending exception.
 JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout);
 
 } // namespace amj::javascript

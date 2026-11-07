@@ -5,12 +5,11 @@
 
 #include <functional>
 #include <map>
-#include <memory>
 #include <thread>
 
 namespace amj::javascript {
 
-// JS-owned digest service, constructed on the context/loop's owner thread.
+// Host-owned digest service, constructed on the context/loop's owner thread.
 // Neither the context nor the initialized libuv loop is owned or run here.
 // Keep this object at a stable address and do not modify its fields directly.
 //
@@ -24,14 +23,15 @@ namespace amj::javascript {
 // Promises are not settled. Work is not canceled. Keep driving the borrowed
 // loop until queued work/completions finish before closing/destroying the loop.
 // Detached completions only free native storage and no longer borrow this owner
-// or its context. Destruction uses runtime-based JS cleanup for finalizer safety.
+// or its context. Keep this object alive through context/runtime destruction.
+// After shutdown(), repeated shutdown()/destruction do not access QuickJS.
 struct Crypto {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
-    std::map<uv_work_t*, JSValue> pendingDigests = {}; // Work -> owned completion callback.
+    std::map<uv_work_t*, JSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
     Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
@@ -41,8 +41,9 @@ struct Crypto {
     Crypto(Crypto&&) = delete;
     Crypto& operator=(Crypto&&) = delete;
 
-    // Idempotent. Requires the owner thread and a live runtime. Does not run JS
-    // or alter pending exceptions. Permanently rejects new digest requests.
+    // Requires the owner thread; first call requires a live context/runtime.
+    // Later calls are safe after QuickJS destruction. Does not run JS or alter
+    // pending exceptions. Permanently rejects new digest requests.
     void shutdown();
 };
 
@@ -56,9 +57,10 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst thisValue, int 
 // on failure. Returns undefined, or JS_EXCEPTION if submission fails.
 JSValue cryptoDigest(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, Crypto& crypto);
 
-// Takes ownership and registers amj:crypto_impl. Call once per context before
-// loading crypto.js. JS carrier finalization deletes Crypto. Returns an
-// engine-managed module, or nullptr with a pending exception.
-JSModuleDef* createCryptoImplModule(JSContext* jsContext, std::unique_ptr<Crypto> crypto);
+// Registers amj:crypto_impl. Call once per context before loading crypto.js.
+// Borrows crypto, including on failure; never deletes it. The host shuts it down
+// before freeing the context and keeps it alive through runtime destruction.
+// Returns a context-owned module, or nullptr with a pending exception.
+JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto);
 
 } // namespace amj::javascript

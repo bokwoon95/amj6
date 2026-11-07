@@ -67,8 +67,7 @@ arbitrary cancellation thread.
 
 ## Ownership decision
 
-The agreed direction is **host-owned native objects, borrowed module bindings,
-and explicit shutdown**. Pass each module its own dependency, not an unrestricted
+Use **host-owned native objects, borrowed module bindings, and explicit shutdown**. Pass each module its own dependency, not an unrestricted
 pointer to the entire backend host. A module's JS carrier must not delete a
 host-owned object.
 
@@ -81,17 +80,13 @@ QuickJS has no general “shut down all modules” operation. The host calls nat
 shutdown methods itself. Registering a borrowed dependency does not extend its
 lifetime; keep the native object alive through JS finalization.
 
-### Migration status
-
-This ownership decision is not yet consistently implemented. Console and crypto
-still transfer ownership into JS carriers. Timeout's header declares a borrowed
-reference while its implementation takes `unique_ptr`; those are different C++
-overloads, not a working borrowed implementation. Fix these before relying on
-the shutdown contract below. Read the actual implementation as well as the header.
+Console, timeout, and crypto use borrowed bindings. The console sink has no
+asynchronous work to shut down; keep it alive until JS teardown finishes.
+Legacy fetch still uses scheduler-owned cleanup and is awaiting redesign.
 
 ## Shutdown contract
 
-This is the required contract for the host-owned implementation. All steps run
+This is the shutdown contract for the host-owned implementation. All steps run
 on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
 
 1. **Stop executing application JavaScript.** Stop accepting scripts/commands

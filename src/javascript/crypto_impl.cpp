@@ -125,6 +125,9 @@ void Crypto::shutdown() {
     if (this_thread::get_id() != ownerThreadID) {
         std::terminate();
     }
+    if (shuttingDown) {
+        return; // Safe even after the context/runtime have been destroyed.
+    }
     shuttingDown = true;
     std::map<uv_work_t*, JSValue> detached;
     detached.swap(pendingDigests);
@@ -293,16 +296,12 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
     }
 }
 
-JSModuleDef* createCryptoImplModule(JSContext* jsContext, std::unique_ptr<Crypto> crypto) {
+JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
     try {
-        if (crypto == nullptr) {
-            JS_ThrowTypeError(jsContext, "createCryptoImplModule requires Crypto");
-            return nullptr;
-        }
-        if (this_thread::get_id() != crypto->ownerThreadID) {
+        if (this_thread::get_id() != crypto.ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != crypto->jsContext || crypto->shuttingDown) {
+        if (jsContext != crypto.jsContext || crypto.shuttingDown) {
             JS_ThrowInternalError(jsContext, "createCryptoImplModule: wrong context or service is shut down");
             return nullptr;
         }
@@ -311,19 +310,8 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, std::unique_ptr<Crypto
         JS_NewClassID(jsRuntime, &cryptoClassID);
         const JSClassDef jsClassDef = {
             .class_name = "Crypto",
-            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) {
-                const Crypto* crypto = static_cast<const Crypto*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                delete crypto;
-            },
-            .gc_mark = [](JSRuntime* jsRuntime, JSValueConst value, JS_MarkFunc* markFunc) {
-                const Crypto* crypto = static_cast<const Crypto*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                if (crypto == nullptr) {
-                    return;
-                }
-                for (const std::pair<uv_work_t* const, JSValue>& entry : crypto->pendingDigests) {
-                    JS_MarkValue(jsRuntime, entry.second, markFunc);
-                }
-            },
+            .finalizer = nullptr,
+            .gc_mark = nullptr, // Callback references belong to the host-owned Crypto.
             .call = nullptr,
             .exotic = nullptr,
         };
@@ -336,10 +324,8 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, std::unique_ptr<Crypto
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        Crypto* cryptoPointer = crypto.release();
-        status = JS_SetOpaque(modulePrivateValue.get(), cryptoPointer);
+        status = JS_SetOpaque(modulePrivateValue.get(), &crypto);
         if (status < 0) {
-            delete cryptoPointer;
             JS_ThrowInternalError(jsContext, "Could not attach Crypto");
             return nullptr;
         }

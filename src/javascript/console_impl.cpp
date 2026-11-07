@@ -6,7 +6,6 @@
 
 #include <exception>
 #include <functional>
-#include <memory>
 #include <new>
 #include <optional>
 #include <string>
@@ -59,9 +58,9 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
     }
 }
 
-JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::unique_ptr<std::function<void(ConsoleData)>> consoleSink) {
+JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(ConsoleData)>& consoleSink) {
     try {
-        if (consoleSink == nullptr || !(*consoleSink)) {
+        if (!consoleSink) {
             JS_ThrowTypeError(jsContext, "createConsoleImplModule requires a consoleSink callback");
             return nullptr;
         }
@@ -73,10 +72,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::unique_ptr<std::
         JS_NewClassID(jsRuntime, &consoleClassID);
         const JSClassDef jsClassDef = {
             .class_name = "ConsoleSink",
-            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) {
-                const std::function<void(ConsoleData)>* consoleSink = static_cast<const std::function<void(ConsoleData)>*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                delete consoleSink;
-            },
+            .finalizer = nullptr,
             .gc_mark = nullptr,
             .call = nullptr,
             .exotic = nullptr,
@@ -90,10 +86,8 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::unique_ptr<std::
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        std::function<void(ConsoleData)>* consoleSinkPointer = consoleSink.release();
-        status = JS_SetOpaque(modulePrivateValue.get(), consoleSinkPointer);
+        status = JS_SetOpaque(modulePrivateValue.get(), &consoleSink);
         if (status < 0) {
-            delete consoleSinkPointer;
             JS_ThrowInternalError(jsContext, "Could not attach console sink");
             return nullptr;
         }
