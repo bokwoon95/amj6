@@ -498,10 +498,10 @@ class Reader {
     }
   }
   /**
-   * @param {unknown} [reason]
+   * @param {unknown} [_reason]
    * @returns {Promise<void>}
    */
-  async cancel(reason) {
+  async cancel(_reason) {
     if (this.#released) {
       throw new TypeError("Reader lock was released");
     }
@@ -549,10 +549,10 @@ class Body {
     return reader;
   }
   /**
-   * @param {unknown} [reason]
+   * @param {unknown} [_reason]
    * @returns {Promise<void>}
    */
-  async cancel(reason) {
+  async cancel(_reason) {
     if (this.locked) {
       throw new TypeError("Response body is locked");
     }
