@@ -1,11 +1,9 @@
-# JavaScript modules
+# JavaScript runtime modules
 
-JavaScript facades export their public API; they do not install anything on the
-global object. The host chooses which target receives those exports.
+## Implementation order
 
-## Implementation order and scope
-
-This is the planned implementation order, not a list of completed modules:
+Keep this order. It is the roadmap for implementing and reviewing modules, not a
+claim that every preceding module is finished or reviewed:
 
 1. text
 2. url
@@ -17,334 +15,170 @@ This is the planned implementation order, not a list of completed modules:
 8. fetch
 9. websocket
 
-Scope:
+URL and timeout are the hand-reviewed references for further module work. Do not
+assume the other modules are equally settled just because they already exist.
+Fetch is the next module being redesigned.
 
-- Blob/File omit `.stream()`.
-- Fetch retains a limited streaming `response.body` reader for SSE:
-  `getReader()`, `read()`, `cancel()`, and `releaseLock()`. No standalone WHATWG
-  Streams module or streaming uploads are planned. Streaming bodies still need
-  bounded buffering/backpressure, cancellation, reader locking, and error propagation.
-- Crypto implements only `crypto.getRandomValues()`, `crypto.randomUUID()`, and
-  `crypto.subtle.digest()`. Digest hashing runs on a native worker, with completion
-  delivered to the JS thread; this does not require a JS Worker API.
+## Scope
+
+Build the subset needed by provider scripts, not a complete browser runtime.
+
+- Fetch needs ordinary HTTP requests, text/JSON responses, and incremental body
+  reads for SSE. Keep reader locking, cancellation, error propagation, and bounded
+  unread buffering. No standalone WHATWG Streams module or streaming uploads.
+- Follow HTTP(S) redirects by default, resembling browser fetch. Do not preserve
+  the old no-redirect policy merely because the existing implementation has it.
+- A response-header timeout ends when headers arrive. User/invocation cancellation
+  remains effective while consuming the body. Do not impose a fixed total body
+  timeout on potentially long-lived SSE connections.
+- Chunk sizes are transport details, not response-size limits or SSE message
+  boundaries. Bound unread buffering without imposing a lifetime byte limit on
+  streaming responses.
+- Crypto is limited to random bytes, UUIDs, and SHA digests. No keys, signing,
+  encryption, or other SubtleCrypto operations.
+- Blob/File, if added, omit `.stream()`.
 - Structured cloning, compression streams, and the JS Worker API are out of scope.
+  Native worker jobs do not require a JS Worker API.
 
-## Modules and native/JS boundary
+## Host and module boundary
 
-| Module name        | Implementation          | Exports                                                              |
-| ------------------ | ----------------------- | -------------------------------------------------------------------- |
-| `amj:text`         | `text.js`               | `TextEncoder`, `TextDecoder`                                         |
-| `amj:url_impl`     | `url_impl.hpp/.cpp`     | `urlParse`, `urlWithComponent`, `queryStringParse`, `queryStringify` |
-| `amj:url`          | `url.js`                | `URL`, `URLSearchParams`                                             |
-| `amj:event`        | `event.js`              | `Event`, `CustomEvent`, `EventTarget`, `setEventErrorReporter`          |
-| `amj:console_impl` | `console_impl.hpp/.cpp` | `consoleWrite`                                                      |
-| `amj:console`      | `console.js`           | `console`                                                           |
-| `amj:timeout_impl` | `timeout_impl.hpp/.cpp` | `timeoutSet`, `timeoutClear`                                         |
-| `amj:timeout`      | `timeout.js`            | `setTimeout`, `clearTimeout`                                         |
-| `amj:abort`        | `abort.js`              | `AbortController`, `AbortSignal`                                     |
-| `amj:crypto_impl`  | `crypto_impl.hpp/.cpp`   | `cryptoGetRandomValues`, `cryptoDigest`                               |
-| `amj:crypto`       | `crypto.js`             | `crypto`                                                            |
-| `amj:fetch_impl`   | `fetch_impl.hpp/.cpp`   | `fetchImpl`                                                          |
-| `amj:fetch`        | `fetch.js`              | `Headers`, `fetch`                                                   |
+Facades export values; they do not install globals. The embedding host supplies
+module loading and chooses which exports to copy onto its global object. TypeScript
+path mappings and `global.d.ts` do not implement either operation. There is not
+currently an application-level JS invocation host/loader in this library.
 
-`createURLImplModule(jsContext)` registers `amj:url_impl` with four named functions:
-`urlParse`, `urlWithComponent`, `queryStringParse`, and `queryStringify`. Each is a
-direct QuickJS callback, without magic dispatch or an exported wrapper object.
-`urlParse` accepts an omitted/undefined base; invalid URLs and rejected component
-updates return null. `url.js` implements coercion, iteration, and live query
-synchronization.
+Keep the backend independent of Qt. The intended host has one backend thread
+owning `JSRuntime*`, its `JSContext*` objects, and an initialized `uv_loop_t`.
+The GUI thread communicates through owned native messages and a queue awakened
+with `uv_async_send()`. Never pass JS values or GUI objects across that boundary.
+Drain queued messages on wakeup: libuv notifications can coalesce.
 
-`createConsoleImplModule(jsContext, std::move(consoleSink))` takes ownership of a
-`std::unique_ptr<std::function<void(ConsoleData)>>` and registers `amj:console_impl`,
-exporting `consoleWrite(level, text)`. The callback is not copied. It validates the level and formatted text, then calls
-an owned native sink with a `ConsoleData`. Levels are `log`, `debug`, `info`,
-`warn`, and `error`; text is preserved without an added newline. The sink runs
-synchronously on the JS owner thread and must return promptly without throwing,
-executing JS, or destroying the context/runtime. It may enqueue owned messages
-for another thread. Its captures must contain native data only, with dependencies
-valid through carrier finalization. No libuv integration is required.
-`console.js` exports a text-only `console` with `log`, `debug`, `info`, `warn`, and
-`error`. It supports `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c` (style discarded),
-and `%%`, plus textual inspection of objects, arrays, errors, maps, and sets.
-Inspection limits nesting to four levels and entries to 100 per container,
-marks circular references, and describes ordinary property accessors without
-invoking them. No live object references reach the sink. Clear, groups, tables,
-counters, timers, and trace are not exposed yet; the native protocol currently
-supports text messages only.
+Do not nest `uv_run()` to await a JS Promise, or pump Qt and libuv from each
+other. The backend runs libuv and performs QuickJS job checkpoints after JS
+execution/completions. Network concurrency does not make JavaScript parallel;
+CPU-bound JS still blocks its owner thread.
 
-`abort.js` builds cooperative cancellation on `event.js` and the timer facade.
-It exports `AbortController` and `AbortSignal`, including `aborted`, `reason`,
-`onabort`, `throwIfAborted()`, and static `abort()`, `any()`, and `timeout()`.
-Aborting is synchronous and idempotent; composed signals propagate through an
-internal dependency graph before events run, independently of event propagation
-stopping. Pending sources retain their dependent signals until abort, then links
-are detached. Timeout uses native timers, chaining delays above the int32 timer
-limit. Native work is canceled only when its owner subscribes and stops it.
-Default reasons are currently named `Error` objects (`AbortError` or
-`TimeoutError`), not `DOMException` instances. No native abort binding is needed.
+The host must also provide a monotonic `performance.now()` for abort deadlines.
+Native `context::Context` does not automatically become a JS `AbortSignal`.
+The invocation host must create a JS `AbortController`, expose its signal on the
+invocation object, and forward native cancellation/deadlines onto the JS owner
+thread. A `std::stop_token` callback must not directly execute QuickJS from an
+arbitrary cancellation thread.
 
-`createCryptoImplModule(jsContext, std::move(crypto))` owns a `Crypto` service and
-registers `amj:crypto_impl`. Construct it with the context, an initialized borrowed
-libuv loop, and a `callbackDidRun` hook that reports/consumes pending JS exceptions
-and drains QuickJS jobs after each delivered completion. All JS access and owner
-cleanup use that context's thread. The hook must not throw, destroy the service
-or context, or run a nested loop.
+## Ownership decision
 
-`crypto.js` exports only `crypto.getRandomValues()`, `crypto.randomUUID()`, and
-`crypto.subtle.digest()`, explicitly declared in `crypto.d.ts`. Randomness uses
-synchronous `uv_random()` without a loop; integer typed arrays are filled in
-place, respecting view offsets and the 65,536-byte limit. UUIDs are version 4.
-Digest supports SHA-1, SHA-256, SHA-384, and SHA-512, case-insensitively. It copies
-the input slice before returning, hashes with OpenSSL on a libuv worker, and
-settles its Promise on the JS/loop thread. Buffer views, including DataView, are
-accepted; shared buffers are not. DOMException-style validation/operation errors
-currently use named Error objects. There are no key or other SubtleCrypto APIs.
+The agreed direction is **host-owned native objects, borrowed module bindings,
+and explicit shutdown**. Pass each module its own dependency, not an unrestricted
+pointer to the entire backend host. A module's JS carrier must not delete a
+host-owned object.
 
-Keep a borrowed pointer if the host needs explicit `Crypto::shutdown()` after
-transferring ownership. Shutdown detaches queued work and releases pending JS
-callbacks without invoking them, leaving abandoned Promises unsettled. It does
-not cancel hashing or wait. Call shutdown before freeing the context; run the
-loop until all worker completions have finished before closing it. Detached
-completions only release native work storage. The JS carrier owns the service,
-marks retained callbacks for GC, and deletes it during finalization.
+Host-owned references to JS callbacks/Promise functions are external retained
+references. Release them explicitly during shutdown. Do not keep a JS-owned
+carrier's cycle-marking arrangement after changing ownership: for a carrier that
+only borrows the host-owned object, use `.gc_mark = nullptr`.
 
-`FetchImpl::createModule(jsContext, scheduler)` registers `amj:fetch_impl`.
-`fetchImpl.start/read/close` belong to one HTTP owner. `fetch.js` imports that
-object and the URL/text classes. JS owns Promises, abort reasons, public argument
-normalization, Response objects, and body readers. Response and reader classes
-are internal, not public constructors.
+QuickJS has no general “shut down all modules” operation. The host calls native
+shutdown methods itself. Registering a borrowed dependency does not extend its
+lifetime; keep the native object alive through JS finalization.
 
-`createTimeoutImplModule(jsContext, timeout)` registers `amj:timeout_impl`,
-exporting normalized `timeoutSet(callback, delay)` and `timeoutClear(timerID)`
-functions. The enclosing host owns one `Timeout` per scheduler/context pair;
-its `Scheduler*` borrows the scheduler. Native functions accept `Timeout&`, and
-bindings and callbacks retain borrowed `Timeout*` pointers. Keep both objects
-at stable addresses: stop JS calls and clear all callbacks before destroying
-`Timeout`, and destroy the scheduler before freeing its JS context. The hidden
-JS object only carries a borrowed pointer; no native holder allocation or object
-finalizer is needed.
-The C++ header and `.d.ts` describe those same operations. `timeout.js` implements
-the public API: callback validation, numeric coercion, delay clamping/truncation,
-and forwarding up to 256 extra arguments via a closure. C++ defensively validates
-normalized input and rejects allocation if all positive int32 timer IDs are active.
-Cancellation only
-accepts IDs belonging to this state's timers, not unrelated scheduler callbacks.
-`Timeout` maps its positive int32 timer IDs to native int64 scheduler callback IDs.
-Timer IDs wrap from INT32_MAX to 1, skipping active IDs; scheduler IDs never enter
-JS. Clearing the scheduler preserves the timer-ID allocation counter. IDs may be
-reused after wraparound, so a stale timer ID can then refer to a newer timer.
-Registration and the scheduled lambda share a `TimeoutCallback` through `shared_ptr`.
-It retains the JS function through RAII; execution removes the
-timer ID before invoking JS, and cancellation or scheduler clearing releases both
-the callback and its ID. No active flag or separate cleanup registration is needed.
-After `scheduler.clear()`, the existing state and module remain usable. All use
-and destruction must happen on the owner thread. The context must outlive the
-scheduler and retained JS values; borrowed dependencies are guaranteed by the
-host's shutdown ordering, not by automatic lifetime extension.
+### Migration status
 
-Register each C++ module once per context before loading its consumers. Check
-for nullptr and a pending JS exception. Module definitions belong to the context,
-not the caller. Each implementation constructs its JS exports inside
-its module-registration function. All native instances use the same context and owner thread
-as their scheduler.
+This ownership decision is not yet consistently implemented. Console and crypto
+still transfer ownership into JS carriers. Timeout's header declares a borrowed
+reference while its implementation takes `unique_ptr`; those are different C++
+overloads, not a working borrowed implementation. Fix these before relying on
+the shutdown contract below. Read the actual implementation as well as the header.
 
-The embedding host must supply a QuickJS module loader that maps `amj:text`,
-`amj:url`, `amj:event`, `amj:console`, `amj:timeout`, `amj:abort`, `amj:crypto`,
-and `amj:fetch` to the installed JS files. Preserve the registered
-`*_impl` names, and resolve relative JS imports against their file paths.
-There is not yet an application-level JS host/loader in this library; the
-module-name mappings in tsconfig configure TypeScript, not QuickJS execution.
+## Shutdown contract
 
-After evaluating each public facade, the host can obtain
-its namespace with `JS_GetModuleNamespace`, enumerate own string exports, and
-copy their values onto its chosen target. No JS installers or hardcoded
-constructor-name lists are needed. Check evaluation/property-operation failures
-and manage QuickJS value and atom references normally. Decide explicitly whether
-existing target properties may be overwritten. Copying exports copies values,
-not live bindings; these API exports are not subsequently reassigned.
+This is the required contract for the host-owned implementation. All steps run
+on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
 
-CMake copies the JS facades, `*_impl.d.ts`, `crypto.d.ts`, and `global.d.ts` into the build's
-`javascript/` directory. Keep these files together when distributing them.
+1. **Stop executing application JavaScript.** Stop accepting scripts/commands
+   that run JS. Finish the current callback before beginning teardown. Do not
+   subsequently use `JS_Eval()`, `JS_Call()`, or `JS_ExecutePendingJob()` to run
+   application code. Native completion hooks must stop delivering JS too.
+2. **Call native shutdown methods while QuickJS is alive.** For example,
+   `Timeout::shutdown()` closes its `uv_timer_t` handles and releases timer
+   callbacks. `Crypto::shutdown()` releases JS callbacks and detaches worker
+   jobs; already-running hashing may continue without accessing JS. The future
+   `FetchClient::shutdown()` cancels curl transfers, releases retained JS values,
+   and starts closing its libuv socket watchers/timer. Shutdown must be
+   idempotent and must not execute JS or disturb pending JS exceptions.
+3. **Finish native asynchronous cleanup.** Keep driving the `uv_loop_t` with
+   `uv_run()` so `uv_close()` callbacks can free handle storage and outstanding
+   digest workers can deliver native-only completion cleanup. Close the host's
+   `uv_async_t` command receiver and other persistent handles too; otherwise
+   `UV_RUN_DEFAULT` may never return. Storage must remain valid until the last
+   callback using it finishes. Do not execute application JS during this drain.
+4. **Destroy QuickJS.** Release remaining host-owned JS values, call
+   `JS_FreeContext()` for every `JSContext*`, then `JS_FreeRuntime()` for the
+   `JSRuntime*`. Native objects borrowed by JS carriers must still exist because
+   JS finalizers can run during this step.
+5. **Destroy the native C++ objects.** For example, reset the host's
+   `unique_ptr<Timeout>`, `unique_ptr<Crypto>`, and future
+   `unique_ptr<FetchClient>`. They have already been shut down: their destructors
+   must not access the freed `JSContext*` or `JSRuntime*`, including through a
+   repeated `shutdown()` call.
+6. **Close the libuv loop.** Call `uv_loop_close()` on the `uv_loop_t*` and check
+   the result. `UV_EBUSY` means cleanup is incomplete; do not free the loop's
+   storage. Free dynamically allocated loop storage only after closure succeeds.
 
-## Types and dependency direction
+Ordinary cancellation and host teardown are different. During ordinary operation,
+canceling a fetch must settle pending header/read Promises. During host teardown,
+release retained Promise functions without invoking them; abandoned Promises do
+not need to settle.
 
-Each `*_impl.d.ts` describes only its C++ module's JS contract. It never imports
-the JS facade. C++ headers retain types only when native code uses them:
+## Fetch redesign
 
-- Fetch: `FetchFailure` and `FetchResponseMetadata` hold native completion data.
-  `FetchRequestHandle` is a TypeScript-only description of an opaque JS handle.
-- URL: `URLParts` and `URLComponent` are TypeScript-only types. Native code
-  builds JSONValue maps from Ada URLs and accepts component strings.
+The agreed native boundary exports `fetchClient` from `amj:fetch_impl`.
+Its `send(fetchRequest)` returns an opaque `FetchResponse` with response fields,
+read operations, and explicit close. Use the full `FetchRequest`, `FetchResponse`,
+and `FetchClient` names rather than colliding with browser `Request`/`Response`.
+Variables use `fetchRequest`, `fetchResponse`, and `fetchClient`.
 
-`javascript.hpp/.cpp` provides `JSONValue`, an in-memory tree of null, bool,
-finite double, string, array, and string-keyed map values. `JSONValue::toJSValue()` converts
-it directly to QuickJS values without JSON text serialization. Conversion owns
-partial-result cleanup, creates null-prototype objects, and rejects nesting
-beyond 128 levels. Map keys are emitted in sorted order.
+`FetchClient` owns the shared curl multi handle and its libuv integration, and
+borrows the initialized `uv_loop_t`. Each request owns a curl easy handle and
+its request-specific buffers/callbacks. The shared client exists for transport
+coordination and connection reuse, not because JS needs numeric request IDs.
+One client can drive all HTTP requests on its owner thread. The host controls
+whether contexts share it; it is not a process-global variable.
 
-C++ uses standard pairs/vectors; JS uses inline `[string, string]` tuple/array
-types rather than pair aliases. Internal `FetchImplState`, `FetchRequestState`,
-and `FetchHandle` are not part of the JS contract. The request handle's TypeScript
-brand is type-only; JS must not inspect its representation.
+Curl implements HTTP, TLS, redirects, connection reuse, and supported HTTP/2
+multiplexing. Libuv watches curl's sockets and deadlines. Use curl multi's socket
+API with libuv poll handles and a timer, not blocking HTTP in `uv_queue_work()`
+and not a thread per request. Pause/resume receiving for bounded buffering.
 
-Only `global.d.ts` declares the names installed globally by the host. It references
-public JS exports through `typeof import("amj:fetch")` and similar expressions,
-including `amj:timeout`. This does not duplicate class or function signatures and
-does not execute code. Dependency direction is:
+Curl callbacks collect native results. Deliver JS completions after the curl
+operation unwinds, so JS cancellation or shutdown cannot destroy a transfer
+inside curl's callback stack. Finalize the exact asynchronous readiness/read
+contract before implementing the new declarations; the existing fetch boundary
+is not a compatibility requirement.
 
-```text
-C++ contract <- JS facade <- global.d.ts
-```
+### Legacy code still on disk
 
-The `_impl` filename suffix also avoids shadowing inferred JS module types:
-`url.d.ts` beside `url.js` would take precedence when resolving imports.
-`crypto.d.ts` intentionally declares the public crypto subset rather than exposing
-unimplemented Web Crypto methods through broader inferred types.
-Native declarations are static contracts, not runtime validation; keep them
-synchronized with the corresponding headers and implementation.
+Fetch currently uses `Scheduler` and cpp-httplib workers; it has not been migrated
+to the design above. Timer and digest implementations already use libuv, so the
+old scheduler's `runNext()` is not a universal driver for these modules.
 
-## Static type checking
+Until legacy fetch is removed, clear/destroy its scheduler and join its workers
+before freeing QuickJS. The new shutdown sequence does not magically detach
+legacy scheduler callbacks. Keep cpp-httplib only where needed for a separate
+localhost OAuth callback server, not as the new fetch transport.
 
-JS uses JSDoc and `// @ts-check`, without transpilation. The root `tsconfig.json`
-references `global.d.ts` and the C++ module declarations; `paths` maps public
-`amj:*` names to JS implementations. No browser DOM or Node APIs are assumed.
-One project checks all JS files, including the implementations, against the
-host-provided globals. It retains strict checking, checked indexed access, and
-exact optional properties. Run from the repository root with TypeScript 5.2 or newer:
+## Declaration files and checking
+
+Keep `*_impl.d.ts` independent of public facades: it describes the native/JS
+boundary, not browser APIs. `global.d.ts` references public exports without
+installing them. Prefer inferred facade types unless an explicit declaration is
+needed to prevent advertising unsupported APIs, as with `crypto.d.ts`.
+
+Check JS and declarations from the repository root:
 
 ```sh
 tsc --project tsconfig.json
 ```
 
-For future user-script directories, generate a tsconfig with `allowJs`,
-`checkJs`, `noEmit`, `lib: ["ES2023"]`, `types: []`, and a `files` list pointing
-to installed `global.d.ts`, `url_impl.d.ts`, `console_impl.d.ts`, `crypto_impl.d.ts`,
-`crypto.d.ts`, `fetch_impl.d.ts`, and `timeout_impl.d.ts`. Add `paths` entries for `amj:text`, `amj:url`, `amj:event`, `amj:console`,
-`amj:timeout`, `amj:abort`, `amj:crypto`, and `amj:fetch`, pointing to the installed JS files. Paths are relative to the config
-or can be generated as absolute installation paths. Editor definitions for globals
-lead to `global.d.ts`; following its imported member leads to the JS export.
-Following implementation imports leads to the C++ module declarations.
-TypeScript cannot navigate into C++.
-
-## Scheduling and cleanup (current implementation)
-
-The outer owner loop drains all QuickJS jobs, checks its awaited Promise, then
-calls `scheduler.runNext()` to wait for and execute one native callback. Repeat.
-The scheduler does not execute the QuickJS job queue itself. Callback and cleanup
-registration accept `std::function<errors::Error()>` values, so callables must be
-copyable; pass named callables with `std::move` to avoid copying. Node extraction and map swaps keep callable
-movement and destruction outside the mutex, including registration failure paths.
-
-HTTP workers access native buffers only and call `markReady()`. Their request
-owners remain alive until explicit close or module cleanup. Scheduler callbacks
-hold weak request references, so removing them cannot join a worker under the
-scheduler mutex. Buffer locks are released before notifying the scheduler or
-calling JS. Completion callback exceptions propagate through `runNext()`.
-
-`fetchImpl.close(request)` joins the worker and drops pending completion functions
-without calling them. JS cancellation settles its pending Promises and closes
-the handle; scheduler teardown deliberately does not settle abandoned Promises
-or run JS. Callers should cancel/release readers in `finally`. Cancellation/join
-can block on native DNS/connect/OS calls: do not run this host loop on the UI thread.
-
-Clear/destroy the scheduler before freeing the JS context. `clear()` invalidates
-fetch owners, requiring fresh fetch registration/context, but timeout remains
-reusable while its borrowed objects remain alive. URL and text do not depend on
-scheduler lifetime.
-
-The fetch facade remains a subset: HTTP(S), no redirects/cookies/retries,
-string/Uint8Array uploads, `.text()`/`.json()`, and `body.getReader()` streaming.
-There are no public Request/Response constructors, cloning, full WHATWG streams,
-or body async iteration. Native HTTP validation and memory limits remain enforced
-in C++ even though public normalization and API behavior are implemented in JS.
-
-## Planned backend: libuv, libcurl, and Qt
-
-This is the migration target, not the implementation described above. Replace the
-homebrew event loop with libuv and replace fetch's blocking cpp-httplib transport
-with libcurl multi from the start of the transport migration. Retain cpp-httplib
-only for the lightweight localhost OAuth callback server.
-
-### Ownership and communication
-
-- The main thread runs Qt's event loop and owns the GUI/QML objects.
-- A backend thread runs an explicitly initialized `uv_loop_t` and owns QuickJS,
-  timers, asynchronous HTTP, and future process/pipe operations. Share this loop
-  across script invocations rather than creating one loop per script.
-- The backend library has no Qt dependency, so the daemon can run without Qt.
-  Keep the Qt bridge outside that library.
-- Qt sends owned command data through a protected queue and wakes the backend
-  with `uv_async_send()`. Notifications coalesce: drain the queue rather than
-  interpreting each wakeup as one command.
-- The backend delivers results/events through queued Qt signals or
-  `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` targeting a GUI-owned
-  object. Messages carry owned native data and request/invocation IDs, never
-  `JSValue`, GUI objects, or borrowed cross-thread storage.
-- Define cancellation, receiver lifetime, queue limits, and output batching so
-  process logs and streaming results cannot overwhelm either loop.
-
-Do not pump one event loop from the other. All QuickJS access and retained JS
-value destruction happen on the backend thread. Libuv enables concurrent I/O,
-not parallel JavaScript: CPU-bound scripts still block that thread. Use QuickJS
-interruption limits; separate runtimes/threads or processes can provide stronger
-isolation later. Contexts in one runtime are not execution-isolation boundaries.
-
-### Scheduler and invocation hosting
-
-Introduce a Qt-independent backend loop below the JavaScript layer. Initially
-keep `javascript::Scheduler` as an adapter borrowing it, preserving registration
-and cleanup APIs where practical. Replace condition-variable wakeups with
-`uv_async_t`, deadline scanning with `uv_timer_t`, and worker readiness
-notifications with a protected ready queue. Keep application-level callback
-ownership and cleanup bookkeeping. Decide explicitly whether to preserve the
-current readiness-timestamp/ID ordering; libuv does not provide that contract.
-
-The permanent host runs libuv continuously and tracks each invocation's completion
-Promise. Native completions execute on the backend thread, with QuickJS microtask
-checkpoints after JS execution/completions, and completed invocations are reported
-asynchronously. Replace the blocking per-invocation `runNext()` driver; do not
-nest `uv_run()` to await a Promise. `UV_RUN_ONCE` may dispatch multiple callbacks
-and is not equivalent to executing exactly one scheduler callback. Distinguish
-an idle backend from a stalled invocation: a persistent command receiver keeps
-the backend alive even when a script cannot make progress.
-
-### Fetch transport and login listener
-
-Use libcurl's multi socket API, mapping its socket-interest callbacks to libuv
-poll handles and its timeout callback to a libuv timer. Socket readiness and timer
-expiry drive libcurl; inspect completion messages and deliver native results to
-QuickJS on the backend thread. Libuv supplies event notification, not HTTP/TLS.
-Do not put blocking HTTP requests into `uv_queue_work()` or retain a thread per
-fetch request.
-
-Keep `fetch.js`, its native module contract, native validation, and memory limits.
-Preserve the existing no-redirects/cookies/retries policy unless deliberately
-changed. Use libcurl pause/resume for streaming backpressure, with bounded native
-buffers and explicit cancellation/resource ownership.
-
-The OAuth callback listener is separate from fetch. Run cpp-httplib on a dedicated
-thread, bind only to loopback, validate the callback path and OAuth `state`, and
-return a small completion page. Deliver the authorization code/error to the
-backend through its message queue. Stop the listener after success, cancellation,
-or timeout. Use authorization-code flow with PKCE; prefer an ephemeral port if
-the provider allows it, otherwise use the registered fixed port.
-
-### Shutdown and migration order
-
-Stop accepting commands, cancel invocations/native operations, and stop/join
-remaining workers and the login listener. Close libuv handles and keep driving
-the loop until close callbacks finish; handle storage must survive those
-callbacks. Release retained JS values before destroying their contexts/runtime,
-then close the loop, join the backend thread, and destroy the GUI bridge. Never
-let C++ exceptions escape libuv's C callbacks. Make shutdown explicit rather than
-assuming the current synchronous `clear()` semantics cover asynchronous closure.
-
-Implement in this order:
-
-1. Add libuv/libcurl dependencies.
-2. Adapt the scheduler and timers to libuv.
-3. Replace fetch's cpp-httplib workers with libcurl multi integration.
-4. Introduce asynchronous invocation hosting and microtask checkpoints.
-
-Later process spawning/pipes use `uv_spawn`/`uv_pipe`. Blocking database or native
-operations belong on bounded workers, not the backend loop.
+CMake copies runtime JS and declaration files into the build's `javascript/`
+directory. Update its distribution list and TypeScript module mappings when
+adding or removing modules; keep installed files together.
