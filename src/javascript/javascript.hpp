@@ -27,8 +27,16 @@ class ScopedJSValue {
     }
     ScopedJSValue(const ScopedJSValue&) = delete;
     ScopedJSValue& operator=(const ScopedJSValue&) = delete;
-    JSValue get() const {
+    // Borrows the stored value; does not transfer ownership.
+    JSValue& get() {
         return jsValue;
+    }
+    const JSValue& get() const {
+        return jsValue;
+    }
+    // Consumes an owned reference and releases the previously owned value.
+    void reset(JSValue jsValue) {
+        JS_FreeValue(jsContext, std::exchange(this->jsValue, jsValue));
     }
     JSValue release() {
         return std::exchange(jsValue, JS_UNDEFINED);
