@@ -98,7 +98,8 @@ on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
    callbacks. `Crypto::shutdown()` releases JS callbacks and detaches worker
    jobs; already-running hashing may continue without accessing JS.
    `FetchClient::shutdown()` cancels curl transfers, releases retained JS values,
-   and starts closing its libuv socket watchers/timer. Shutdown must be
+   and starts closing its libuv socket watchers, curl deadline timer, and delivery
+   `uv_async_t` handle. Shutdown must be
    idempotent and must not execute JS or disturb pending JS exceptions.
 3. **Finish native asynchronous cleanup.** Keep driving the `uv_loop_t` with
    `uv_run()` so `uv_close()` callbacks can free handle storage and outstanding
@@ -150,9 +151,13 @@ and supported HTTP/2 multiplexing; libuv watches curl's sockets and deadlines.
 Do not replace this with blocking HTTP in `uv_queue_work()` or a thread per request.
 Keep cpp-httplib only where needed for a separate localhost OAuth callback server.
 
-Curl callbacks only collect native results. A separate libuv delivery timer settles
-native-operation Promises after curl unwinds; otherwise Promise settlement could
-reenter JS and cancel a transfer inside curl's callback stack. Delivery drops map
+Curl callbacks only collect native results. A separate `uv_async_t` notification
+settles native-operation Promises after curl unwinds; otherwise Promise settlement
+could reenter JS and cancel a transfer inside curl's callback stack. Scheduling
+only signals the handle; the constructor wires its callback to delivery, avoiding
+circular helper dependencies. The handle is referenced while delivery is pending
+and unreferenced when that notification is consumed, so an idle client does not
+keep the loop running. Curl's deadline timer remains a `uv_timer_t`. Delivery drops map
 references before host job checkpoints because those jobs may close responses or
 shut down the client. Pause receiving when buffers fill, and enqueue nothing when
 returning curl's pause result: curl redelivers that entire block on resume.
