@@ -54,7 +54,7 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
         if (completionNode.empty()) {
             std::terminate();
         }
-        const ScopedJSValue completion(jsContext, completionNode.mapped());
+        const OwnedJSValue completion(jsContext, completionNode.mapped());
         digestWork->crypto = nullptr;
 
         JSValue outputValue = JS_EXCEPTION;
@@ -80,7 +80,7 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
         } catch (...) {
             JS_ThrowInternalError(jsContext, "cryptoDigest: unexpected native failure");
         }
-        const ScopedJSValue output(jsContext, outputValue);
+        const OwnedJSValue output(jsContext, outputValue);
         JSValue errorValue = JS_NULL;
         if (JS_IsException(output.get())) {
             errorValue = JS_GetException(jsContext);
@@ -89,13 +89,13 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
                 errorValue = JS_GetException(jsContext);
             }
         }
-        const ScopedJSValue error(jsContext, errorValue);
+        const OwnedJSValue error(jsContext, errorValue);
         std::array<JSValue, 2> arguments = {error.get(), JS_NULL};
         if (!JS_IsException(output.get())) {
             arguments.at(1) = output.get();
         }
         {
-            const ScopedJSValue result(jsContext, JS_Call(jsContext, completion.get(), JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
+            const OwnedJSValue result(jsContext, JS_Call(jsContext, completion.get(), JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
         }
         crypto->callbackDidRun(jsContext);
     } catch (...) {
@@ -145,7 +145,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
     try {
         const int arrayType = argc > 0 ? JS_GetTypedArrayType(argv[0]) : -1;
         if (arrayType < JS_TYPED_ARRAY_UINT8C || arrayType > JS_TYPED_ARRAY_BIG_UINT64) {
-            ScopedJSValue error(jsContext, JS_NewError(jsContext));
+            OwnedJSValue error(jsContext, JS_NewError(jsContext));
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -157,7 +157,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const ScopedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr));
+        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr));
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -172,7 +172,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
             return JS_ThrowTypeError(jsContext, "getRandomValues cannot modify an immutable buffer");
         }
         if (byteLength > 65536) {
-            ScopedJSValue error(jsContext, JS_NewError(jsContext));
+            OwnedJSValue error(jsContext, JS_NewError(jsContext));
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -239,7 +239,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const ScopedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr));
+        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr));
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -265,7 +265,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
         }
         digestWork->uvWork.data = digestWork.get();
-        ScopedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
+        OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&digestWork->uvWork, completion.get());
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
             DigestWork* digestWork = static_cast<DigestWork*>(uvWork->data);
@@ -320,7 +320,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        ScopedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID));
+        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -338,7 +338,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
             if (status < 0) {
                 return -1;
             }
-            const ScopedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

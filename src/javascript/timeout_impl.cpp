@@ -89,7 +89,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (!JS_IsFunction(jsContext, argv[0])) {
             return JS_ThrowTypeError(jsContext, "timeoutSet: arg0: callback not a function");
         }
-        ScopedJSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
+        OwnedJSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
 
         // Get delayMs number.
         if (!JS_IsNumber(argv[1])) {
@@ -296,7 +296,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         }
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
-        ScopedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
+        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -328,7 +328,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         // Create a new JS module.
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
             // Extract the modulePrivateValue from the jsContext.
-            const ScopedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

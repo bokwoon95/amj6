@@ -291,7 +291,7 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         std::size_t numBytes = 0;
         for (size_t index = 0; index < countSize; index++) {
             // Get entry array.
-            const ScopedJSValue entryJSValue(jsContext, JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
+            const OwnedJSValue entryJSValue(jsContext, JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
             if (JS_IsException(entryJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -307,7 +307,7 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get name string.
-            const ScopedJSValue nameJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
+            const OwnedJSValue nameJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
             if (JS_IsException(nameJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -323,7 +323,7 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get value string.
-            const ScopedJSValue valueJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
+            const OwnedJSValue valueJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
             if (JS_IsException(valueJSValue.get())) {
                 return JS_EXCEPTION;
             }

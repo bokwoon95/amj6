@@ -47,7 +47,7 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
         if (array->size() > std::numeric_limits<uint32_t>::max()) {
             return JS_ThrowRangeError(jsContext, "JSON array exceeds the JS array length limit");
         }
-        ScopedJSValue result(jsContext, JS_NewArray(jsContext));
+        OwnedJSValue result(jsContext, JS_NewArray(jsContext));
         if (JS_IsException(result.get())) {
             return JS_EXCEPTION;
         }
@@ -64,12 +64,12 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
     }
     const std::map<std::string, JSONValue>* object = std::get_if<std::map<std::string, JSONValue>>(&jsonValue.value);
     if (object != nullptr) {
-        ScopedJSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
+        OwnedJSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
         if (JS_IsException(result.get())) {
             return JS_EXCEPTION;
         }
         for (const std::pair<const std::string, JSONValue>& field : *object) {
-            ScopedJSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
+            OwnedJSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
             if (JS_IsException(element.get())) {
                 return JS_EXCEPTION;
             }

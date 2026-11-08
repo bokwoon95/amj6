@@ -16,17 +16,17 @@ namespace amj::javascript {
 // Owns one QuickJS reference and releases it on destruction unless release()
 // is called. Noncopyable. The context must outlive this wrapper. Use only on
 // the context's owner thread.
-class ScopedJSValue {
+class OwnedJSValue {
   public:
-    ScopedJSValue(JSContext* jsContext, JSValue jsValue) {
+    OwnedJSValue(JSContext* jsContext, JSValue jsValue) {
         this->jsContext = jsContext;
         this->jsValue = jsValue;
     }
-    ~ScopedJSValue() {
+    ~OwnedJSValue() {
         JS_FreeValue(jsContext, jsValue);
     }
-    ScopedJSValue(const ScopedJSValue&) = delete;
-    ScopedJSValue& operator=(const ScopedJSValue&) = delete;
+    OwnedJSValue(const OwnedJSValue&) = delete;
+    OwnedJSValue& operator=(const OwnedJSValue&) = delete;
     JSValue& get() {
         return jsValue;
     }

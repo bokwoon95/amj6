@@ -82,7 +82,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        ScopedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
+        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -93,7 +93,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         }
 
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:console_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            const ScopedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

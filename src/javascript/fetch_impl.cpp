@@ -45,7 +45,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     if (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject)) {
         return;
     }
-    ScopedJSValue argument(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
+    OwnedJSValue argument(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
     bool ok = !JS_IsException(argument.get());
     if (ok) {
         ok = setstringfield(fetchClient.jsContext, argument.get(), "name", "AbortError");
@@ -201,10 +201,10 @@ void deliver(FetchClient& fetchClient) {
                     argumentValue = JS_NULL;
                 }
             }
-            const ScopedJSValue resolve(jsContext, resolveValue);
-            const ScopedJSValue reject(jsContext, rejectValue);
+            const OwnedJSValue resolve(jsContext, resolveValue);
+            const OwnedJSValue reject(jsContext, rejectValue);
             if (failed) {
-                ScopedJSValue reason(jsContext, JS_NewError(jsContext));
+                OwnedJSValue reason(jsContext, JS_NewError(jsContext));
                 if (JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "TypeError") || !setstringfield(jsContext, reason.get(), "message", fetchState.failure)) {
                     argumentValue = JS_EXCEPTION;
                 } else {
@@ -215,9 +215,9 @@ void deliver(FetchClient& fetchClient) {
                 argumentValue = JS_GetException(jsContext);
                 failed = true;
             }
-            const ScopedJSValue argument(jsContext, argumentValue);
+            const OwnedJSValue argument(jsContext, argumentValue);
             const JSValue callback = failed ? reject.get() : resolve.get();
-            const ScopedJSValue result(jsContext, JS_Call(jsContext, callback, JS_UNDEFINED, 1, &argumentValue));
+            const OwnedJSValue result(jsContext, JS_Call(jsContext, callback, JS_UNDEFINED, 1, &argumentValue));
         }
         // The checkpoint can close responses or shut down the whole client.
         // No map references or iterators survive across it.
@@ -477,7 +477,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        ScopedJSValue promise(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        OwnedJSValue promise(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
@@ -654,10 +654,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
         }
         FetchRequest fetchRequest;
-        const ScopedJSValue url(jsContext, JS_GetPropertyStr(jsContext, argv[0], "url"));
-        const ScopedJSValue method(jsContext, JS_GetPropertyStr(jsContext, argv[0], "method"));
-        const ScopedJSValue headers(jsContext, JS_GetPropertyStr(jsContext, argv[0], "headers"));
-        const ScopedJSValue body(jsContext, JS_GetPropertyStr(jsContext, argv[0], "body"));
+        const OwnedJSValue url(jsContext, JS_GetPropertyStr(jsContext, argv[0], "url"));
+        const OwnedJSValue method(jsContext, JS_GetPropertyStr(jsContext, argv[0], "method"));
+        const OwnedJSValue headers(jsContext, JS_GetPropertyStr(jsContext, argv[0], "headers"));
+        const OwnedJSValue body(jsContext, JS_GetPropertyStr(jsContext, argv[0], "body"));
         if (JS_IsException(url.get()) || JS_IsException(method.get()) || JS_IsException(headers.get()) || JS_IsException(body.get())) {
             return JS_EXCEPTION;
         }
@@ -699,7 +699,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
                 return JS_ThrowTypeError(jsContext, "URL credentials are not supported");
             }
         }
-        const ScopedJSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headers.get(), "length"));
+        const OwnedJSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headers.get(), "length"));
         uint32_t headerCount = 0;
         if (JS_IsException(headerCountValue.get()) || JS_ToUint32(jsContext, &headerCount, headerCountValue.get()) < 0) {
             return JS_EXCEPTION;
@@ -709,14 +709,14 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         std::size_t headerBytes = 0;
         for (uint32_t index = 0; index < headerCount; index++) {
-            const ScopedJSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headers.get(), index));
+            const OwnedJSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headers.get(), index));
             if (JS_IsException(pair.get())) {
                 return JS_EXCEPTION;
             }
             if (!JS_IsArray(pair.get())) {
                 return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
             }
-            const ScopedJSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
+            const OwnedJSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
             uint32_t pairLength = 0;
             if (JS_IsException(pairLengthValue.get()) || JS_ToUint32(jsContext, &pairLength, pairLengthValue.get()) < 0) {
                 return JS_EXCEPTION;
@@ -724,8 +724,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             if (pairLength != 2) {
                 return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
             }
-            const ScopedJSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
-            const ScopedJSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
+            const OwnedJSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
+            const OwnedJSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
             if (JS_IsException(name.get()) || JS_IsException(value.get())) {
                 return JS_EXCEPTION;
             }
@@ -758,7 +758,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const ScopedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
+        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -874,14 +874,14 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             throw std::runtime_error(curl_easy_strerror(methodStatus));
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        ScopedJSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        OwnedJSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(ready.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
         fetchState.readyResolve = resolvingFunctions.at(0);
         fetchState.readyReject = resolvingFunctions.at(1);
-        ScopedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchClient->responseClassID));
+        OwnedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchClient->responseClassID));
         if (JS_IsException(response.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
@@ -1113,7 +1113,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        ScopedJSValue client(jsContext, JS_NewObjectClass(jsContext, clientClassID));
+        OwnedJSValue client(jsContext, JS_NewObjectClass(jsContext, clientClassID));
         if (JS_IsException(client.get())) {
             return nullptr;
         }
@@ -1126,7 +1126,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (JS_IsException(send) || JS_DefinePropertyValueStr(jsContext, client.get(), "send", send, JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }
-        ScopedJSValue prototype(jsContext, JS_NewObject(jsContext));
+        OwnedJSValue prototype(jsContext, JS_NewObject(jsContext));
         if (JS_IsException(prototype.get())) {
             return nullptr;
         }
