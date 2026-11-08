@@ -34,7 +34,7 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-// Clean up curlEasyHandle and its fetchState, rejecting any pending ready or
+// Clean up a curlEasyHandle and its fetchState, rejecting any pending ready or
 // read promises with AbortError.
 void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
