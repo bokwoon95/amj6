@@ -66,19 +66,26 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     }
 }
 
-void drive(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) {
+// Wake curl due to socket activity or timeout, then notify the loop to check
+// for fetch results.
+void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) {
     if (fetchClient.shuttingDown) {
         return;
     }
+
+    // Have curl advance the transfers.
     int runningHandles = 0;
     const CURLMcode curlMultiCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventFlags, &runningHandles);
     if (curlMultiCode != CURLM_OK) {
+        // If curl fails to advance the transfers, mark all fetches as failed
+        // and unregister them from the curlMultiHandle.
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            if (fetchState.failure.empty()) {
-                fetchState.failure = curl_multi_strerror(curlMultiCode);
+            if (!fetchState.failure.empty()) {
+                fetchState.failure.append(": ");
             }
+            fetchState.failure.append(curl_multi_strerror(curlMultiCode));
             fetchState.finished = true;
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
@@ -89,27 +96,43 @@ void drive(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) {
             }
         }
     }
-    int remaining = 0;
-    while (const CURLMsg* message = curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &remaining)) {
-        if (message->msg != CURLMSG_DONE || !fetchClient.fetchStateMap.contains(message->easy_handle)) {
+
+    // Loop through all the completed transfers and mark their FetchState as
+    // finished (optionally recording any error message).
+    while (true) {
+        int msgsInQueue = 0;
+        const CURLMsg* curlMsg = curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
+        if (curlMsg == nullptr) {
+            break;
+        }
+        if (curlMsg->msg != CURLMSG_DONE) {
             continue;
         }
-        FetchState& fetchState = fetchClient.fetchStateMap.at(message->easy_handle);
-        fetchState.finished = true;
-        if (message->data.result != CURLE_OK && fetchState.failure.empty()) {
-            fetchState.failure = curl_easy_strerror(message->data.result);
+        if (!fetchClient.fetchStateMap.contains(curlMsg->easy_handle)) {
+            throw std::logic_error("Completed curl transfer has no FetchState");
         }
-        if (!fetchState.headersReceived && fetchState.failure.empty()) {
-            fetchState.failure = "HTTP response ended without final headers";
+        FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
+        fetchState.finished = true;
+        if (curlMsg->data.result != CURLE_OK) {
+            if (!fetchState.failure.empty()) {
+                fetchState.failure.append(": ");
+            }
+            fetchState.failure.append(curl_easy_strerror(curlMsg->data.result));
+        }
+        if (!fetchState.headersReceived) {
+            if (!fetchState.failure.empty()) {
+                fetchState.failure.append(": ");
+            }
+            fetchState.failure.append("HTTP response ended without final headers");
         }
     }
-    if (!fetchClient.shuttingDown) {
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-        const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
-        if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-            throw std::runtime_error(uv_strerror(status));
-        }
+
+    // Send a notification to check the fetchStateMap for results.
+    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
+    const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
+    if (status != 0) {
+        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
+        throw std::runtime_error(uv_strerror(status));
     }
 }
 
@@ -195,7 +218,7 @@ void deliver(FetchClient& fetchClient) {
                         }
                         // Unpause can synchronously invoke curl callbacks, but never JS.
                         // Inspect completions even if no further socket event arrives.
-                        drive(fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                        wakeupCurl(fetchClient, CURL_SOCKET_TIMEOUT, 0);
                     }
                 } else {
                     argumentValue = JS_NULL;
@@ -410,7 +433,7 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
                     curlEvents |= CURL_CSELECT_OUT;
                 }
                 // drive() may close this poll handle. Do not use pollData after it.
-                drive(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
+                wakeupCurl(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
             } catch (...) {
                 std::terminate();
             }
@@ -435,7 +458,7 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
             try {
                 FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
                 if (fetchClient != nullptr) {
-                    drive(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                    wakeupCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
                 }
             } catch (...) {
                 std::terminate();
