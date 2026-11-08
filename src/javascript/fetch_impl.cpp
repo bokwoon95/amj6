@@ -98,7 +98,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
         fetchState->headerBytes += length;
         const std::string_view line(bytes, length);
         if (line.starts_with("HTTP/")) {
-            fetchState->headers.clear();
+            fetchState->responseHeaders.clear();
             fetchState->redirecting = false;
             const std::size_t space = line.find(' ');
             if (space == std::string_view::npos || line.size() - space < 4) {
@@ -106,7 +106,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
                 return 0;
             }
             const std::string_view code = line.substr(space + 1, 3);
-            const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->status);
+            const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
             if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
                 fetchState->failure = "Invalid HTTP status code";
                 return 0;
@@ -114,11 +114,11 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
             return length;
         }
         if (line == "\r\n" || line == "\n") {
-            if (fetchState->status == 101) {
+            if (fetchState->statusCode == 101) {
                 fetchState->failure = "HTTP protocol upgrades are not supported";
                 return 0;
             }
-            if (fetchState->status >= 200 && !fetchState->redirecting) {
+            if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
                 fetchState->headersReceived = true;
             }
             return length;
@@ -155,10 +155,10 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
                 return 0;
             }
         }
-        if (name == "location" && !value.empty() && (fetchState->status == 301 || fetchState->status == 302 || fetchState->status == 303 || fetchState->status == 307 || fetchState->status == 308)) {
+        if (name == "location" && !value.empty() && (fetchState->statusCode == 301 || fetchState->statusCode == 302 || fetchState->statusCode == 303 || fetchState->statusCode == 307 || fetchState->statusCode == 308)) {
             fetchState->redirecting = true;
         }
-        fetchState->headers.push_back({name, std::string(value)});
+        fetchState->responseHeaders.push_back({name, std::string(value)});
         return length;
     } catch (...) {
         return 0; // Curl reports callback failure; no exception crosses its C ABI.
@@ -335,18 +335,18 @@ JSValue responseMethod(JSContext* jsContext, JSValueConst thisValue, int /* argc
             return promise.release();
         }
         if (magic == 2) {
-            return JS_NewInt64(jsContext, fetchState->status);
+            return JS_NewInt64(jsContext, fetchState->statusCode);
         }
         if (magic == 3) {
             std::vector<JSONValue> headers;
-            headers.reserve(fetchState->headers.size());
-            for (const std::pair<std::string, std::string>& header : fetchState->headers) {
+            headers.reserve(fetchState->responseHeaders.size());
+            for (const std::pair<std::string, std::string>& header : fetchState->responseHeaders) {
                 headers.push_back(std::vector<JSONValue>{header.first, header.second});
             }
             return JSONValue(headers).toJSValue(jsContext);
         }
         if (magic == 4) {
-            return JS_NewStringLen(jsContext, fetchState->url.data(), fetchState->url.size());
+            return JS_NewStringLen(jsContext, fetchState->responseURL.data(), fetchState->responseURL.size());
         }
         return JS_ThrowInternalError(jsContext, "Unknown FetchResponse operation");
     } catch (const std::bad_alloc&) {
@@ -536,20 +536,20 @@ JSValue sendRequest(JSContext* jsContext, JSValueConst /* thisValue */, int argc
             if (header.second.empty()) {
                 line = header.first + ";"; // Curl's syntax for an explicitly empty header.
             }
-            curl_slist* curlHeaders = curl_slist_append(fetchState.curlHeaders, line.c_str());
+            curl_slist* curlHeaders = curl_slist_append(fetchState.curlRequestHeaders, line.c_str());
             if (curlHeaders == nullptr) {
                 throw std::bad_alloc();
             }
-            fetchState.curlHeaders = curlHeaders;
+            fetchState.curlRequestHeaders = curlHeaders;
         }
         if (!hasContentType) {
             // POSTFIELDS otherwise invents application/x-www-form-urlencoded.
             // The JS facade supplies a content type for strings, but not bytes.
-            curl_slist* curlHeaders = curl_slist_append(fetchState.curlHeaders, "Content-Type:");
+            curl_slist* curlHeaders = curl_slist_append(fetchState.curlRequestHeaders, "Content-Type:");
             if (curlHeaders == nullptr) {
                 throw std::bad_alloc();
             }
-            fetchState.curlHeaders = curlHeaders;
+            fetchState.curlRequestHeaders = curlHeaders;
         }
         CURL* easy = fetchState.curlEasyHandle;
         const std::vector<CURLcode> optionResults = {
@@ -565,7 +565,7 @@ JSValue sendRequest(JSContext* jsContext, JSValueConst /* thisValue */, int argc
             curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L),
             curl_easy_setopt(easy, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L),
             curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, ""),
-            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, fetchState.curlHeaders),
+            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, fetchState.curlRequestHeaders),
             curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, receiveHeader),
             curl_easy_setopt(easy, CURLOPT_HEADERDATA, &fetchState),
             curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receiveBody),
@@ -651,7 +651,7 @@ FetchState::~FetchState() {
     if (curlEasyHandle != nullptr) {
         curl_easy_cleanup(curlEasyHandle);
     }
-    curl_slist_free_all(curlHeaders);
+    curl_slist_free_all(curlRequestHeaders);
     JS_FreeValueRT(jsRuntime, readyResolve);
     JS_FreeValueRT(jsRuntime, readyReject);
     JS_FreeValueRT(jsRuntime, readResolve);
@@ -882,7 +882,7 @@ void FetchClient::deliver() {
                         fetchState.failure = "Could not obtain response URL";
                         failed = true;
                     } else {
-                        fetchState.url = effectiveURL;
+                        fetchState.responseURL = effectiveURL;
                     }
                 } else {
                     failed = true;

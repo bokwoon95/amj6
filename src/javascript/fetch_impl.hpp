@@ -27,17 +27,17 @@ struct FetchRequest {
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
 struct FetchState {
-    JSRuntime* jsRuntime = nullptr;
-    CURL* curlEasyHandle = nullptr;
-    curl_slist* curlHeaders = nullptr;
     FetchRequest fetchRequest = {};
-    int64_t status = 0;
-    std::string url = "";
-    std::vector<std::pair<std::string, std::string>> headers = {};
+    curl_slist* curlRequestHeaders = nullptr;
+    CURL* curlEasyHandle = nullptr;
+    int64_t statusCode = 0;
+    std::string responseURL = "";
+    std::vector<std::pair<std::string, std::string>> responseHeaders = {};
     std::deque<std::vector<uint8_t>> chunks = {};
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
     std::string failure = "";
+    JSRuntime* jsRuntime = nullptr;
     JSValue readyResolve = JS_UNDEFINED;
     JSValue readyReject = JS_UNDEFINED;
     JSValue readResolve = JS_UNDEFINED;
