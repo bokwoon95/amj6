@@ -474,7 +474,7 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
                 std::terminate();
             }
         },
-                                          static_cast<uint64_t>(milliseconds), 0);
+            static_cast<uint64_t>(milliseconds), 0);
         return status == 0 ? 0 : -1;
     } catch (...) {
         return -1;
