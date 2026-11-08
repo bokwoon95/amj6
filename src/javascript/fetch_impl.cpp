@@ -64,21 +64,23 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     }
 }
 
-void drive(FetchClient& fetchClient, curl_socket_t socket, int events) {
+void drive(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) {
     if (fetchClient.shuttingDown) {
         return;
     }
-    int running = 0;
-    const CURLMcode status = curl_multi_socket_action(fetchClient.curlMultiHandle, socket, events, &running);
-    if (status != CURLM_OK) {
+    int runningHandles = 0;
+    const CURLMcode curlMultiCode = curl_multi_socket_action(fetchClient.curlMultiHandle, socket, eventFlags, &runningHandles);
+    if (curlMultiCode != CURLM_OK) {
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
+            CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
             if (fetchState.failure.empty()) {
-                fetchState.failure = curl_multi_strerror(status);
+                fetchState.failure = curl_multi_strerror(curlMultiCode);
             }
             fetchState.finished = true;
             if (fetchState.curlMultiHandle != nullptr) {
-                if (curl_multi_remove_handle(fetchState.curlMultiHandle, entry.first) != CURLM_OK) {
+                const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
+                if (curlMultiCode != CURLM_OK) {
                     std::terminate();
                 }
                 fetchState.curlMultiHandle = nullptr;
