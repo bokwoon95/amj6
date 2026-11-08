@@ -26,11 +26,11 @@ declare var fetch: typeof import("amj:fetch").fetch;
 declare var Headers: typeof import("amj:fetch").Headers;
 type Headers = import("amj:fetch").Headers;
 
-declare var TextEncoder: typeof import("amj:text").TextEncoder;
-type TextEncoder = import("amj:text").TextEncoder;
-
 declare var TextDecoder: typeof import("amj:text").TextDecoder;
 type TextDecoder = import("amj:text").TextDecoder;
+
+declare var TextEncoder: typeof import("amj:text").TextEncoder;
+type TextEncoder = import("amj:text").TextEncoder;
 
 declare var setTimeout: typeof import("amj:timeout").setTimeout;
 
