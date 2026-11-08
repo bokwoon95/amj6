@@ -19,6 +19,10 @@ URL and timeout are the hand-reviewed references for further module work. Do not
 assume the other modules are equally settled just because they already exist.
 Fetch now uses curl multi/libuv; websocket remains the next module to implement.
 
+## Review checkpoint
+
+Fetch is implemented but not fully hand-reviewed. Review is proceeding section by section through fetch_impl.hpp/.cpp. Resume at the beginning of deliver(): the key snapshot and per-iteration checks protect against same-thread JS reentrancy through callbackDidRun(), not concurrent access. Explain concrete types, calls, and ownership; don’t treat existing implementation choices as settled requirements.
+
 ## Scope
 
 Build the subset needed by provider scripts, not a complete browser runtime.
