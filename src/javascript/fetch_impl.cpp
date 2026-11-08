@@ -34,7 +34,7 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool settle) {
+void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool rejectPendingPromises) {
     JSContext* jsContext = fetchClient.jsContext;
     const std::map<CURL*, FetchState>::node_type stateNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
     if (stateNode.empty()) {
@@ -48,13 +48,11 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool settle) 
         }
         fetchState.addedToMulti = false;
     }
-    if (!settle || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
+    if (!rejectPendingPromises || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
         return;
     }
     const ScopedJSValue reason(jsContext, JS_NewError(jsContext));
-    const bool creationFailed = JS_IsException(reason.get())
-        || !setstringfield(jsContext, reason.get(), "name", "AbortError")
-        || !setstringfield(jsContext, reason.get(), "message", "FetchResponse is closed");
+    const bool creationFailed = JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "AbortError") || !setstringfield(jsContext, reason.get(), "message", "FetchResponse is closed");
     const ScopedJSValue exception(jsContext, creationFailed ? JS_GetException(jsContext) : JS_UNDEFINED);
     std::array<JSValue, 1> arguments = {creationFailed ? exception.get() : reason.get()};
     // Resolve/reject functions are native Promise functions, not user callbacks.
@@ -214,9 +212,7 @@ void deliver(FetchClient& fetchClient) {
             const ScopedJSValue reject(jsContext, rejectValue);
             if (failed) {
                 ScopedJSValue reason(jsContext, JS_NewError(jsContext));
-                if (JS_IsException(reason.get())
-                    || !setstringfield(jsContext, reason.get(), "name", "TypeError")
-                    || !setstringfield(jsContext, reason.get(), "message", fetchState.failure)) {
+                if (JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "TypeError") || !setstringfield(jsContext, reason.get(), "message", fetchState.failure)) {
                     argumentValue = JS_EXCEPTION;
                 } else {
                     argumentValue = reason.release();
