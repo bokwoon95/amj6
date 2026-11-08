@@ -274,7 +274,8 @@ void deliver(FetchClient& fetchClient) {
 }
 
 // Curl callbacks only mutate native state. Never invoke QuickJS from here.
-std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept { // NOLINT(misc-const-correctness): curl_write_callback requires char*.
+// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
+std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
@@ -356,7 +357,8 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
     }
 }
 
-std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept { // NOLINT(misc-const-correctness): curl_write_callback requires char*.
+// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
+std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {
