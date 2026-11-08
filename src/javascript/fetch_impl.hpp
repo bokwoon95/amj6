@@ -29,6 +29,7 @@ struct FetchRequest {
 struct FetchState {
     FetchRequest fetchRequest = {};
     curl_slist* curlRequestHeaders = nullptr;
+    CURLM* curlMultiHandle = nullptr; // Borrowed; non-null only while the easy handle is registered.
     CURL* curlEasyHandle = nullptr;
     int64_t statusCode = 0;
     std::string responseURL = "";
@@ -42,7 +43,6 @@ struct FetchState {
     JSValue readyReject = JS_UNDEFINED;
     JSValue readResolve = JS_UNDEFINED;
     JSValue readReject = JS_UNDEFINED;
-    bool addedToMulti = false;
     bool headersReceived = false;
     bool readyDelivered = false;
     bool finished = false;

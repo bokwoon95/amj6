@@ -40,14 +40,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool rejectPe
         return;
     }
 
-    FetchState& fetchState = mapNode.mapped();
-    if (fetchState.addedToMulti) {
-        const CURLMcode status = curl_multi_remove_handle(fetchClient.curlMultiHandle, curlEasyHandle);
-        if (status != CURLM_OK) {
-            std::terminate(); // Never destroy callback storage still owned by curl.
-        }
-        fetchState.addedToMulti = false;
-    }
+    const FetchState& fetchState = mapNode.mapped();
     if (!rejectPendingPromises || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
         return;
     }
@@ -94,11 +87,11 @@ void drive(FetchClient& fetchClient, curl_socket_t socket, int events) {
                 fetchState.failure = curl_multi_strerror(status);
             }
             fetchState.finished = true;
-            if (fetchState.addedToMulti) {
-                if (curl_multi_remove_handle(fetchClient.curlMultiHandle, entry.first) != CURLM_OK) {
+            if (fetchState.curlMultiHandle != nullptr) {
+                if (curl_multi_remove_handle(fetchState.curlMultiHandle, entry.first) != CURLM_OK) {
                     std::terminate();
                 }
-                fetchState.addedToMulti = false;
+                fetchState.curlMultiHandle = nullptr;
             }
         }
     }
@@ -115,11 +108,6 @@ void drive(FetchClient& fetchClient, curl_socket_t socket, int events) {
         if (!fetchState.headersReceived && fetchState.failure.empty()) {
             fetchState.failure = "HTTP response ended without final headers";
         }
-        const CURLMcode removeStatus = curl_multi_remove_handle(fetchClient.curlMultiHandle, message->easy_handle);
-        if (removeStatus != CURLM_OK) {
-            std::terminate();
-        }
-        fetchState.addedToMulti = false;
     }
     scheduleDelivery(fetchClient);
 }
@@ -197,11 +185,11 @@ void deliver(FetchClient& fetchClient) {
                         if (status != CURLE_OK) {
                             fetchState.failure = curl_easy_strerror(status);
                             fetchState.finished = true;
-                            if (fetchState.addedToMulti) {
-                                if (curl_multi_remove_handle(fetchClient.curlMultiHandle, selected) != CURLM_OK) {
+                            if (fetchState.curlMultiHandle != nullptr) {
+                                if (curl_multi_remove_handle(fetchState.curlMultiHandle, selected) != CURLM_OK) {
                                     std::terminate();
                                 }
-                                fetchState.addedToMulti = false;
+                                fetchState.curlMultiHandle = nullptr;
                             }
                         }
                         // Unpause can synchronously invoke curl callbacks, but never JS.
@@ -901,7 +889,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (addStatus != CURLM_OK) {
             return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(addStatus));
         }
-        fetchState.addedToMulti = true;
+        fetchState.curlMultiHandle = fetchClient->curlMultiHandle;
         return response.release();
     } catch (const std::bad_alloc&) {
         if (registeredHandle != nullptr) {
@@ -922,7 +910,12 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
 }
 
 FetchState::~FetchState() {
-    // The client removes this easy handle from the multi handle before erasing.
+    if (curlMultiHandle != nullptr) {
+        if (curl_multi_remove_handle(curlMultiHandle, curlEasyHandle) != CURLM_OK) {
+            std::terminate(); // Never destroy callback storage still registered with curl.
+        }
+        curlMultiHandle = nullptr;
+    }
     if (curlEasyHandle != nullptr) {
         curl_easy_cleanup(curlEasyHandle);
     }
