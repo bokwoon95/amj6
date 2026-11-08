@@ -64,17 +64,6 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     }
 }
 
-void scheduleDelivery(const FetchClient& fetchClient) {
-    if (!fetchClient.shuttingDown) {
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
-        const int status = uv_async_send(fetchClient.uvAsyncHandle);
-        if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
-            throw std::runtime_error(uv_strerror(status));
-        }
-    }
-}
-
 void drive(FetchClient& fetchClient, curl_socket_t socket, int events) {
     if (fetchClient.shuttingDown) {
         return;
@@ -110,7 +99,14 @@ void drive(FetchClient& fetchClient, curl_socket_t socket, int events) {
             fetchState.failure = "HTTP response ended without final headers";
         }
     }
-    scheduleDelivery(fetchClient);
+    if (!fetchClient.shuttingDown) {
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+        const int status = uv_async_send(fetchClient.uvAsyncHandle);
+        if (status != 0) {
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+            throw std::runtime_error(uv_strerror(status));
+        }
+    }
 }
 
 void deliver(FetchClient& fetchClient) {
@@ -224,7 +220,12 @@ void deliver(FetchClient& fetchClient) {
         fetchClient.callbackDidRun(jsContext);
     }
     if (didDeliver && !fetchClient.shuttingDown) {
-        scheduleDelivery(fetchClient);
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+        const int status = uv_async_send(fetchClient.uvAsyncHandle);
+        if (status != 0) {
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+            throw std::runtime_error(uv_strerror(status));
+        }
     }
 }
 
@@ -478,7 +479,14 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         }
         fetchState.readResolve = resolvingFunctions.at(0);
         fetchState.readReject = resolvingFunctions.at(1);
-        scheduleDelivery(*fetchClient);
+        if (!fetchClient->shuttingDown) {
+            uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle));
+            const int status = uv_async_send(fetchClient->uvAsyncHandle);
+            if (status != 0) {
+                uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle));
+                throw std::runtime_error(uv_strerror(status));
+            }
+        }
         return promise.release();
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
@@ -505,7 +513,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         CURL* curlEasyHandle = fetchResponse->curlEasyHandle;
         fetchResponse->curlEasyHandle = nullptr;
         if (!fetchClient->shuttingDown && curlEasyHandle != nullptr) {
-            close(*fetchClient, curlEasyHandle);
+            closeResponse(*fetchClient, curlEasyHandle);
             if (JS_HasException(jsContext)) {
                 return JS_EXCEPTION;
             }
@@ -1079,7 +1087,14 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                             // FetchState that delivery is currently accessing, and do
                             // not settle Promises from inside a QuickJS finalizer.
                             fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle).closeRequested = true;
-                            scheduleDelivery(*fetchClient);
+                            if (!fetchClient->shuttingDown) {
+                                uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle));
+                                const int status = uv_async_send(fetchClient->uvAsyncHandle);
+                                if (status != 0) {
+                                    uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle));
+                                    throw std::runtime_error(uv_strerror(status));
+                                }
+                            }
                         }
                     }
                 } catch (...) {
