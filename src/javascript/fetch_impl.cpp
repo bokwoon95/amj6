@@ -34,35 +34,29 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-struct SocketData {
+struct PollHandleData {
     FetchClient* fetchClient = nullptr;
     curl_socket_t socket = CURL_SOCKET_BAD;
 };
 
-struct TimerData {
-    FetchClient* fetchClient = nullptr;
-};
-
-void closeTimer(uv_timer_t* uvTimer) {
-    if (uvTimer == nullptr) {
+void closeTimer(uv_timer_t* uvTimerHandle) {
+    if (uvTimerHandle == nullptr) {
         return;
     }
-    TimerData* timerData = static_cast<TimerData*>(uvTimer->data);
-    timerData->fetchClient = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(uvTimer), [](uv_handle_t* uvHandle) {
-        const uv_timer_t* uvTimer = reinterpret_cast<uv_timer_t*>(uvHandle);
-        delete static_cast<TimerData*>(uvTimer->data);
-        delete uvTimer;
+    uvTimerHandle->data = nullptr;
+    uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
+        const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
+        delete uvTimerHandle;
     });
 }
 
-void closeSocket(uv_poll_t* uvPoll) {
-    SocketData* socketData = static_cast<SocketData*>(uvPoll->data);
-    socketData->fetchClient = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(uvPoll), [](uv_handle_t* uvHandle) {
-        const uv_poll_t* uvPoll = reinterpret_cast<uv_poll_t*>(uvHandle);
-        delete static_cast<SocketData*>(uvPoll->data);
-        delete uvPoll;
+void closeSocket(uv_poll_t* uvPollHandle) {
+    PollHandleData* pollHandleData = static_cast<PollHandleData*>(uvPollHandle->data);
+    pollHandleData->fetchClient = nullptr;
+    uv_close(reinterpret_cast<uv_handle_t*>(uvPollHandle), [](uv_handle_t* uvHandle) {
+        const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
+        delete static_cast<PollHandleData*>(uvPollHandle->data);
+        delete uvPollHandle;
     });
 }
 
@@ -399,18 +393,18 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
             return 0;
         }
         if (!fetchClient->socketMap.contains(socket)) {
-            std::unique_ptr<uv_poll_t> uvPoll = std::make_unique<uv_poll_t>();
-            std::unique_ptr<SocketData> socketData = std::make_unique<SocketData>();
-            socketData->fetchClient = fetchClient;
-            socketData->socket = socket;
+            std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
+            std::unique_ptr<PollHandleData> pollHandleData = std::make_unique<PollHandleData>();
+            pollHandleData->fetchClient = fetchClient;
+            pollHandleData->socket = socket;
             fetchClient->socketMap.insert_or_assign(socket, nullptr);
-            const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPoll.get(), socket);
+            const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
             if (status != 0) {
                 fetchClient->socketMap.erase(socket);
                 return -1;
             }
-            uvPoll->data = socketData.release();
-            fetchClient->socketMap.at(socket) = uvPoll.release();
+            uvPollHandle->data = pollHandleData.release();
+            fetchClient->socketMap.at(socket) = uvPollHandle.release();
         }
         unsigned int events = 0;
         if (action == CURL_POLL_IN || action == CURL_POLL_INOUT) {
@@ -419,14 +413,14 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
         if (action == CURL_POLL_OUT || action == CURL_POLL_INOUT) {
             events |= UV_WRITABLE;
         }
-        uv_poll_t* uvPoll = fetchClient->socketMap.at(socket);
+        uv_poll_t* uvPollHandle = fetchClient->socketMap.at(socket);
         if (events == 0) {
-            return uv_poll_stop(uvPoll) == 0 ? 0 : -1;
+            return uv_poll_stop(uvPollHandle) == 0 ? 0 : -1;
         }
-        const int status = uv_poll_start(uvPoll, static_cast<int>(events), [](uv_poll_t* uvPoll, int status, int events) noexcept {
+        const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
             try {
-                const SocketData* socketData = static_cast<SocketData*>(uvPoll->data);
-                if (socketData->fetchClient == nullptr) {
+                const PollHandleData* pollHandleData = static_cast<PollHandleData*>(uvPollHandle->data);
+                if (pollHandleData->fetchClient == nullptr) {
                     return;
                 }
                 unsigned int curlEvents = 0;
@@ -439,8 +433,8 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
                 if ((static_cast<unsigned int>(events) & UV_WRITABLE) != 0) {
                     curlEvents |= CURL_CSELECT_OUT;
                 }
-                // drive() may close this poll handle. Do not use socketData after it.
-                drive(*socketData->fetchClient, socketData->socket, static_cast<int>(curlEvents));
+                // drive() may close this poll handle. Do not use pollHandleData after it.
+                drive(*pollHandleData->fetchClient, pollHandleData->socket, static_cast<int>(curlEvents));
             } catch (...) {
                 std::terminate();
             }
@@ -461,11 +455,11 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
             return uv_timer_stop(fetchClient->curlTimer) == 0 ? 0 : -1;
         }
         uv_update_time(fetchClient->uvLoop);
-        const int status = uv_timer_start(fetchClient->curlTimer, [](uv_timer_t* uvTimer) noexcept {
+        const int status = uv_timer_start(fetchClient->curlTimer, [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const TimerData* timerData = static_cast<TimerData*>(uvTimer->data);
-                if (timerData->fetchClient != nullptr) {
-                    drive(*timerData->fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
+                if (fetchClient != nullptr) {
+                    drive(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
                 }
             } catch (...) {
                 std::terminate();
@@ -978,15 +972,13 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             throw std::bad_alloc();
         }
         {
-            std::unique_ptr<uv_timer_t> uvTimer = std::make_unique<uv_timer_t>();
-            std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
-            timerData->fetchClient = this;
-            const int status = uv_timer_init(uvLoop, uvTimer.get());
+            std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
+            const int status = uv_timer_init(uvLoop, uvTimerHandle.get());
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvTimer->data = timerData.release();
-            curlTimer = uvTimer.release();
+            uvTimerHandle->data = this;
+            curlTimer = uvTimerHandle.release();
         }
         {
             std::unique_ptr<uv_async_t> uvAsync = std::make_unique<uv_async_t>();
