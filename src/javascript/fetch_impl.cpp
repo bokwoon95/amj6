@@ -106,10 +106,10 @@ void scheduleDelivery(const FetchClient& fetchClient) {
     if (fetchClient.shuttingDown) {
         return;
     }
-    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.deliveryAsyncHandle));
-    const int status = uv_async_send(fetchClient.deliveryAsyncHandle);
+    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+    const int status = uv_async_send(fetchClient.uvAsyncHandle);
     if (status != 0) {
-        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.deliveryAsyncHandle));
+        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
         throw std::runtime_error(uv_strerror(status));
     }
 }
@@ -452,10 +452,10 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
             return 0;
         }
         if (milliseconds < 0) {
-            return uv_timer_stop(fetchClient->curlTimerHandle) == 0 ? 0 : -1;
+            return uv_timer_stop(fetchClient->uvTimeoutHandle) == 0 ? 0 : -1;
         }
         uv_update_time(fetchClient->uvLoop);
-        const int status = uv_timer_start(fetchClient->curlTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
+        const int status = uv_timer_start(fetchClient->uvTimeoutHandle, [](uv_timer_t* uvTimerHandle) noexcept {
             try {
                 FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
                 if (fetchClient != nullptr) {
@@ -978,7 +978,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
                 throw std::runtime_error(uv_strerror(status));
             }
             uvTimerHandle->data = this;
-            curlTimerHandle = uvTimerHandle.release();
+            uvTimeoutHandle = uvTimerHandle.release();
         }
         {
             std::unique_ptr<uv_async_t> uvAsync = std::make_unique<uv_async_t>();
@@ -1001,8 +1001,8 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
                 throw std::runtime_error(uv_strerror(status));
             }
             uvAsync->data = this;
-            deliveryAsyncHandle = uvAsync.release();
-            uv_unref(reinterpret_cast<uv_handle_t*>(deliveryAsyncHandle));
+            uvAsyncHandle = uvAsync.release();
+            uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
         }
         const std::vector<CURLMcode> optionResults = {
             curl_multi_setopt(curlMultiHandle, CURLMOPT_SOCKETFUNCTION, socketInterest),
@@ -1046,14 +1046,14 @@ void FetchClient::shutdown() {
         closePollHandle(entry.second);
     }
     socketMap.clear();
-    closeTimerHandle(curlTimerHandle);
-    curlTimerHandle = nullptr;
-    if (deliveryAsyncHandle != nullptr) {
-        deliveryAsyncHandle->data = nullptr;
-        uv_close(reinterpret_cast<uv_handle_t*>(deliveryAsyncHandle), [](uv_handle_t* uvHandle) {
+    closeTimerHandle(uvTimeoutHandle);
+    uvTimeoutHandle = nullptr;
+    if (uvAsyncHandle != nullptr) {
+        uvAsyncHandle->data = nullptr;
+        uv_close(reinterpret_cast<uv_handle_t*>(uvAsyncHandle), [](uv_handle_t* uvHandle) {
             delete reinterpret_cast<uv_async_t*>(uvHandle);
         });
-        deliveryAsyncHandle = nullptr;
+        uvAsyncHandle = nullptr;
     }
 }
 
