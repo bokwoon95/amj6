@@ -34,7 +34,7 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
+void close(FetchClient& fetchClient, CURL* curlEasyHandle) {
     const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
     if (mapNode.empty()) {
         return;
@@ -143,7 +143,7 @@ void deliver(FetchClient& fetchClient) {
         }
         didDeliver = true;
         if (shouldCloseResponse) {
-            closeResponse(fetchClient, selected);
+            close(fetchClient, selected);
             fetchClient.callbackDidRun(jsContext);
             continue;
         }
@@ -504,7 +504,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         CURL* curlEasyHandle = fetchResponse->curlEasyHandle;
         fetchResponse->curlEasyHandle = nullptr;
         if (!fetchClient->shuttingDown && curlEasyHandle != nullptr) {
-            closeResponse(*fetchClient, curlEasyHandle);
+            close(*fetchClient, curlEasyHandle);
             if (JS_HasException(jsContext)) {
                 return JS_EXCEPTION;
             }
