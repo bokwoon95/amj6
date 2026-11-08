@@ -35,12 +35,12 @@ namespace this_thread = std::this_thread;
 namespace {
 
 void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool rejectPendingPromises) {
-    JSContext* jsContext = fetchClient.jsContext;
-    const std::map<CURL*, FetchState>::node_type stateNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
-    if (stateNode.empty()) {
+    const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
+    if (mapNode.empty()) {
         return;
     }
-    FetchState& fetchState = stateNode.mapped();
+
+    FetchState& fetchState = mapNode.mapped();
     if (fetchState.addedToMulti) {
         const CURLMcode status = curl_multi_remove_handle(fetchClient.curlMultiHandle, curlEasyHandle);
         if (status != CURLM_OK) {
@@ -51,17 +51,21 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool rejectPe
     if (!rejectPendingPromises || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
         return;
     }
-    const ScopedJSValue reason(jsContext, JS_NewError(jsContext));
-    const bool creationFailed = JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "AbortError") || !setstringfield(jsContext, reason.get(), "message", "FetchResponse is closed");
-    const ScopedJSValue exception(jsContext, creationFailed ? JS_GetException(jsContext) : JS_UNDEFINED);
+
+    const ScopedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
+    const bool creationFailed =
+        JS_IsException(reason.get()) ||
+        !setstringfield(fetchClient.jsContext, reason.get(), "name", "AbortError") ||
+        !setstringfield(fetchClient.jsContext, reason.get(), "message", "FetchResponse is closed");
+    const ScopedJSValue exception(fetchClient.jsContext, creationFailed ? JS_GetException(fetchClient.jsContext) : JS_UNDEFINED);
     std::array<JSValue, 1> arguments = {creationFailed ? exception.get() : reason.get()};
     // Resolve/reject functions are native Promise functions, not user callbacks.
     // Promise continuations run at the host's next job checkpoint.
     if (!JS_IsUndefined(fetchState.readyReject)) {
-        const ScopedJSValue result(jsContext, JS_Call(jsContext, fetchState.readyReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
+        const ScopedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, fetchState.readyReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
     }
     if (!JS_IsUndefined(fetchState.readReject)) {
-        const ScopedJSValue result(jsContext, JS_Call(jsContext, fetchState.readReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
+        const ScopedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, fetchState.readReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
     }
 }
 
