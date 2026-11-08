@@ -28,7 +28,7 @@ namespace {
 std::mutex timeoutClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-struct TimerHandleData {
+struct TimerData {
     Timeout* timeout = nullptr;
     int32_t timerID = 0;
 };
@@ -61,8 +61,8 @@ void Timeout::shutdown() {
     for (const std::pair<const int32_t, Timer>& entry : timerMap) {
         uv_close(reinterpret_cast<uv_handle_t*>(entry.second.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-            const TimerHandleData* timerHandleData = static_cast<TimerHandleData*>(uvTimerHandle->data);
-            delete timerHandleData;
+            const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+            delete timerData;
             delete uvTimerHandle;
         });
         JS_FreeValueRT(jsRuntime, entry.second.callback);
@@ -123,44 +123,44 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
 
         // Finish allocations before initializing the libuv handle.
         std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-        std::unique_ptr<TimerHandleData> timerHandleData = std::make_unique<TimerHandleData>();
-        timerHandleData->timeout = &timeout;
-        timerHandleData->timerID = timerID;
+        std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
+        timerData->timeout = &timeout;
+        timerData->timerID = timerID;
         timeout.timerMap.insert_or_assign(timerID, Timeout::Timer{});
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
         }
-        uvTimerHandle->data = timerHandleData.release();
+        uvTimerHandle->data = timerData.release();
         timeout.timerMap.at(timerID).callback = callback.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const TimerHandleData* timerHandleData = static_cast<TimerHandleData*>(uvTimerHandle->data);
-                const std::map<int32_t, Timeout::Timer>::node_type mapNode = timerHandleData->timeout->timerMap.extract(timerHandleData->timerID);
+                const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+                const std::map<int32_t, Timeout::Timer>::node_type mapNode = timerData->timeout->timerMap.extract(timerData->timerID);
                 if (mapNode.empty()) {
                     std::terminate(); // An active timer must have a registration.
                 }
                 const Timeout::Timer& timer = mapNode.mapped();
 
-                // Close uvTimerHandle and delete it and its HandleData after closure.
+                // Close uvTimerHandle and delete it and its TimerData after closure.
                 uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
                     const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-                    const TimerHandleData* timerHandleData = static_cast<TimerHandleData*>(uvTimerHandle->data);
-                    delete timerHandleData;
+                    const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+                    delete timerData;
                     delete uvTimerHandle;
                 });
 
                 // Call the callback and discard the result.
-                const JSValue result = JS_Call(timerHandleData->timeout->jsContext, timer.callback, JS_UNDEFINED, 0, nullptr);
-                JS_FreeValue(timerHandleData->timeout->jsContext, result);
-                JS_FreeValue(timerHandleData->timeout->jsContext, timer.callback);
+                const JSValue result = JS_Call(timerData->timeout->jsContext, timer.callback, JS_UNDEFINED, 0, nullptr);
+                JS_FreeValue(timerData->timeout->jsContext, result);
+                JS_FreeValue(timerData->timeout->jsContext, timer.callback);
 
                 // Let the host report any JS exceptions and execute pending Promise jobs.
-                timerHandleData->timeout->callbackDidRun(timerHandleData->timeout->jsContext);
+                timerData->timeout->callbackDidRun(timerData->timeout->jsContext);
             } catch (...) {
                 std::terminate();
             }
@@ -173,8 +173,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             }
             uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle.release()), [](uv_handle_t* uvHandle) {
                 const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-                const TimerHandleData* timerHandleData = static_cast<TimerHandleData*>(uvTimerHandle->data);
-                delete timerHandleData;
+                const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+                delete timerData;
                 delete uvTimerHandle;
             });
             JS_FreeValue(jsContext, mapNode.mapped().callback);
@@ -228,8 +228,8 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
 
         uv_close(reinterpret_cast<uv_handle_t*>(timer.uvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-            const TimerHandleData* timerHandleData = static_cast<TimerHandleData*>(uvTimerHandle->data);
-            delete timerHandleData;
+            const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+            delete timerData;
             delete uvTimerHandle;
         });
         JS_FreeValue(jsContext, timer.callback);

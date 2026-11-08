@@ -74,8 +74,8 @@ struct FetchClient {
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
     CURLM* curlMultiHandle = nullptr;
-    uv_timer_t* curlTimer = nullptr;
-    uv_async_t* deliveryAsync = nullptr; // Referenced only while delivery is pending.
+    uv_timer_t* curlTimerHandle = nullptr;
+    uv_async_t* deliveryAsyncHandle = nullptr; // Referenced only while delivery is pending.
     std::map<curl_socket_t, uv_poll_t*> socketMap = {};
     std::map<CURL*, FetchState> fetchStates = {};
     std::function<void(JSContext*)> callbackDidRun = {};
