@@ -34,17 +34,15 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool rejectPendingPromises) {
+void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
     if (mapNode.empty()) {
         return;
     }
-
     const FetchState& fetchState = mapNode.mapped();
-    if (!rejectPendingPromises || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
+    if (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject)) {
         return;
     }
-
     const ScopedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
     const bool creationFailed =
         JS_IsException(reason.get()) ||
@@ -143,7 +141,7 @@ void deliver(FetchClient& fetchClient) {
         }
         didDeliver = true;
         if (shouldCloseResponse) {
-            closeResponse(fetchClient, selected, true);
+            closeResponse(fetchClient, selected);
             fetchClient.callbackDidRun(jsContext);
             continue;
         }
@@ -504,7 +502,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         CURL* curlEasyHandle = fetchResponse->curlEasyHandle;
         fetchResponse->curlEasyHandle = nullptr;
         if (!fetchClient->shuttingDown && curlEasyHandle != nullptr) {
-            closeResponse(*fetchClient, curlEasyHandle, true);
+            closeResponse(*fetchClient, curlEasyHandle);
             if (JS_HasException(jsContext)) {
                 return JS_EXCEPTION;
             }
@@ -863,14 +861,14 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
         ScopedJSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(ready.get())) {
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
         fetchState.readyResolve = resolvingFunctions.at(0);
         fetchState.readyReject = resolvingFunctions.at(1);
         ScopedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchClient->responseClassID));
         if (JS_IsException(response.get())) {
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
         std::unique_ptr<FetchResponse> fetchResponse = std::make_unique<FetchResponse>();
@@ -879,31 +877,33 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         FetchResponse* responsePointer = fetchResponse.release();
         if (JS_SetOpaque(response.get(), responsePointer) < 0) {
             delete responsePointer;
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
         if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready", ready.release(), JS_PROP_ENUMERABLE) < 0) {
-            return JS_EXCEPTION; // Response finalization closes the registered state.
+            fetchClient->fetchStateMap.erase(registeredHandle);
+            return JS_EXCEPTION;
         }
         const CURLMcode addStatus = curl_multi_add_handle(fetchClient->curlMultiHandle, easy);
         if (addStatus != CURLM_OK) {
+            fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(addStatus));
         }
         fetchState.curlMultiHandle = fetchClient->curlMultiHandle;
         return response.release();
     } catch (const std::bad_alloc&) {
         if (registeredHandle != nullptr) {
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
         }
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
         if (registeredHandle != nullptr) {
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
         }
         return JS_ThrowInternalError(jsContext, "FetchClient.send: %s", exception.what());
     } catch (...) {
         if (registeredHandle != nullptr) {
-            closeResponse(*fetchClient, registeredHandle, false);
+            fetchClient->fetchStateMap.erase(registeredHandle);
         }
         return JS_ThrowInternalError(jsContext, "FetchClient.send: unexpected native failure");
     }
@@ -1008,9 +1008,7 @@ void FetchClient::shutdown() {
         return;
     }
     shuttingDown = true;
-    while (!fetchStateMap.empty()) {
-        closeResponse(*this, fetchStateMap.begin()->first, false);
-    }
+    fetchStateMap.clear();
     if (curlMultiHandle != nullptr) {
         if (curl_multi_cleanup(curlMultiHandle) != CURLM_OK) {
             std::terminate();
