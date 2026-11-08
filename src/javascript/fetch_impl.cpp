@@ -34,7 +34,9 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-void close(FetchClient& fetchClient, CURL* curlEasyHandle) {
+// Clean up curlEasyHandle and its fetchState, rejecting any pending ready or
+// read promises with AbortError.
+void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
     if (mapNode.empty()) {
         return;
@@ -63,14 +65,13 @@ void close(FetchClient& fetchClient, CURL* curlEasyHandle) {
 }
 
 void scheduleDelivery(const FetchClient& fetchClient) {
-    if (fetchClient.shuttingDown) {
-        return;
-    }
-    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
-    const int status = uv_async_send(fetchClient.uvAsyncHandle);
-    if (status != 0) {
-        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
-        throw std::runtime_error(uv_strerror(status));
+    if (!fetchClient.shuttingDown) {
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+        const int status = uv_async_send(fetchClient.uvAsyncHandle);
+        if (status != 0) {
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle));
+            throw std::runtime_error(uv_strerror(status));
+        }
     }
 }
 
@@ -143,7 +144,7 @@ void deliver(FetchClient& fetchClient) {
         }
         didDeliver = true;
         if (shouldCloseResponse) {
-            close(fetchClient, selected);
+            closeResponse(fetchClient, selected);
             fetchClient.callbackDidRun(jsContext);
             continue;
         }
