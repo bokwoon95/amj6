@@ -34,22 +34,6 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-struct PollData {
-    FetchClient* fetchClient = nullptr;
-    curl_socket_t socket = CURL_SOCKET_BAD;
-};
-
-JSValue newFetchError(JSContext* jsContext, const char* name, std::string_view message) {
-    ScopedJSValue error(jsContext, JS_NewError(jsContext));
-    if (JS_IsException(error.get())) {
-        return JS_EXCEPTION;
-    }
-    if (!setstringfield(jsContext, error.get(), "name", name) || !setstringfield(jsContext, error.get(), "message", message)) {
-        return JS_EXCEPTION;
-    }
-    return error.release();
-}
-
 void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool settle) {
     JSContext* jsContext = fetchClient.jsContext;
     const std::map<CURL*, FetchState>::node_type stateNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
@@ -67,17 +51,19 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle, bool settle) 
     if (!settle || (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject))) {
         return;
     }
-    JSValue argument = newFetchError(jsContext, "AbortError", "FetchResponse is closed");
-    if (JS_IsException(argument)) {
-        argument = JS_GetException(jsContext);
-    }
-    const ScopedJSValue reason(jsContext, argument);
+    const ScopedJSValue reason(jsContext, JS_NewError(jsContext));
+    const bool creationFailed = JS_IsException(reason.get())
+        || !setstringfield(jsContext, reason.get(), "name", "AbortError")
+        || !setstringfield(jsContext, reason.get(), "message", "FetchResponse is closed");
+    const ScopedJSValue exception(jsContext, creationFailed ? JS_GetException(jsContext) : JS_UNDEFINED);
+    std::array<JSValue, 1> arguments = {creationFailed ? exception.get() : reason.get()};
     // Resolve/reject functions are native Promise functions, not user callbacks.
     // Promise continuations run at the host's next job checkpoint.
-    for (const JSValue reject : {fetchState.readyReject, fetchState.readReject}) {
-        if (!JS_IsUndefined(reject)) {
-            const ScopedJSValue result(jsContext, JS_Call(jsContext, reject, JS_UNDEFINED, 1, &argument));
-        }
+    if (!JS_IsUndefined(fetchState.readyReject)) {
+        const ScopedJSValue result(jsContext, JS_Call(jsContext, fetchState.readyReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
+    }
+    if (!JS_IsUndefined(fetchState.readReject)) {
+        const ScopedJSValue result(jsContext, JS_Call(jsContext, fetchState.readReject, JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
     }
 }
 
@@ -227,7 +213,14 @@ void deliver(FetchClient& fetchClient) {
             const ScopedJSValue resolve(jsContext, resolveValue);
             const ScopedJSValue reject(jsContext, rejectValue);
             if (failed) {
-                argumentValue = newFetchError(jsContext, "TypeError", fetchState.failure);
+                ScopedJSValue reason(jsContext, JS_NewError(jsContext));
+                if (JS_IsException(reason.get())
+                    || !setstringfield(jsContext, reason.get(), "name", "TypeError")
+                    || !setstringfield(jsContext, reason.get(), "message", fetchState.failure)) {
+                    argumentValue = JS_EXCEPTION;
+                } else {
+                    argumentValue = reason.release();
+                }
             }
             if (JS_IsException(argumentValue)) {
                 argumentValue = JS_GetException(jsContext);
@@ -357,6 +350,11 @@ std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* 
         return 0;
     }
 }
+
+struct PollData {
+    FetchClient* fetchClient = nullptr;
+    curl_socket_t socket = CURL_SOCKET_BAD;
+};
 
 int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action, void* userdata, void* /* socketData */) noexcept {
     try {
