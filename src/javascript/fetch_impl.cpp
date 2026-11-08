@@ -39,27 +39,6 @@ struct PollData {
     curl_socket_t socket = CURL_SOCKET_BAD;
 };
 
-void closeTimerHandle(uv_timer_t* uvTimerHandle) {
-    if (uvTimerHandle == nullptr) {
-        return;
-    }
-    uvTimerHandle->data = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
-        const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-        delete uvTimerHandle;
-    });
-}
-
-void closePollHandle(uv_poll_t* uvPollHandle) {
-    PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
-    pollData->fetchClient = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(uvPollHandle), [](uv_handle_t* uvHandle) {
-        const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
-        delete static_cast<PollData*>(uvPollHandle->data);
-        delete uvPollHandle;
-    });
-}
-
 JSValue newFetchError(JSContext* jsContext, const char* name, std::string_view message) {
     ScopedJSValue error(jsContext, JS_NewError(jsContext));
     if (JS_IsException(error.get())) {
@@ -385,7 +364,12 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
         if (action == CURL_POLL_REMOVE) {
             const std::map<curl_socket_t, uv_poll_t*>::node_type socketNode = fetchClient->pollHandleMap.extract(socket);
             if (!socketNode.empty()) {
-                closePollHandle(socketNode.mapped());
+                uv_close(reinterpret_cast<uv_handle_t*>(socketNode.mapped()), [](uv_handle_t* uvHandle) {
+                    const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
+                    const PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
+                    delete pollData;
+                    delete uvPollHandle;
+                });
             }
             return 0;
         }
@@ -1043,11 +1027,21 @@ void FetchClient::shutdown() {
         curlMultiHandle = nullptr;
     }
     for (const std::pair<const curl_socket_t, uv_poll_t*>& entry : pollHandleMap) {
-        closePollHandle(entry.second);
+        uv_close(reinterpret_cast<uv_handle_t*>(entry.second), [](uv_handle_t* uvHandle) {
+            const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
+            const PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
+            delete pollData;
+            delete uvPollHandle;
+        });
     }
     pollHandleMap.clear();
-    closeTimerHandle(uvTimeoutHandle);
-    uvTimeoutHandle = nullptr;
+    if (uvTimeoutHandle != nullptr) {
+        uv_close(reinterpret_cast<uv_handle_t*>(uvTimeoutHandle), [](uv_handle_t* uvHandle) {
+            const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
+            delete uvTimerHandle;
+        });
+        uvTimeoutHandle = nullptr;
+    }
     if (uvAsyncHandle != nullptr) {
         uvAsyncHandle->data = nullptr;
         uv_close(reinterpret_cast<uv_handle_t*>(uvAsyncHandle), [](uv_handle_t* uvHandle) {
