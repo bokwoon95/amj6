@@ -34,11 +34,6 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-constexpr std::size_t headerLimit = 65536;
-constexpr std::size_t uploadLimit = 33554432;
-constexpr std::size_t bufferLimit = 262144;
-constexpr std::size_t requestLimit = 64;
-
 struct SocketData {
     FetchClient* fetchClient = nullptr;
     curl_socket_t socket = CURL_SOCKET_BAD;
@@ -235,7 +230,7 @@ void deliver(FetchClient& fetchClient) {
                     argumentValue = JS_NewUint8ArrayCopy(jsContext, chunk.data(), chunk.size());
                     fetchState.bufferedBytes -= chunk.size();
                     fetchState.chunks.pop_front();
-                    if (fetchState.paused && fetchState.bufferedBytes <= bufferLimit / 2 && !fetchState.finished) {
+                    if (fetchState.paused && fetchState.bufferedBytes <= (256U << 10U /* 256 KiB */) / 2 && !fetchState.finished) {
                         fetchState.paused = false;
                         const CURLcode status = curl_easy_pause(selected, CURLPAUSE_CONT);
                         if (status != CURLE_OK) {
@@ -282,12 +277,12 @@ void deliver(FetchClient& fetchClient) {
 std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept { // NOLINT(misc-const-correctness): curl_write_callback requires char*.
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
-        if (size != 0 && count > headerLimit / size) {
+        if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
             fetchState->failure = "Response headers exceed 64 KiB";
             return 0;
         }
         const std::size_t length = size * count;
-        if (length > headerLimit - fetchState->headerBytes) {
+        if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
             fetchState->failure = "Response headers exceed 64 KiB";
             return 0;
         }
@@ -364,7 +359,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
 std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept { // NOLINT(misc-const-correctness): curl_write_callback requires char*.
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
-        if (size != 0 && count > bufferLimit / size) {
+        if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {
             fetchState->failure = "HTTP body block exceeds buffer capacity";
             return 0;
         }
@@ -375,7 +370,7 @@ std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* 
         if (length == 0) {
             return 0;
         }
-        if (length > bufferLimit - fetchState->bufferedBytes) {
+        if (length > (256U << 10U /* 256 KiB */) - fetchState->bufferedBytes) {
             fetchState->paused = true;
             return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl redelivers this block.
         }
@@ -697,7 +692,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         fetchRequest.url = urlText.value();
         fetchRequest.method = methodText.value();
-        if (fetchRequest.url.empty() || fetchRequest.url.size() > headerLimit || fetchRequest.url.find('\0') != std::string::npos) {
+        if (fetchRequest.url.empty() || fetchRequest.url.size() > (64U << 10U /* 64 KiB */) || fetchRequest.url.find('\0') != std::string::npos) {
             return JS_ThrowTypeError(jsContext, "Invalid or oversized HTTP URL");
         }
         if (fetchRequest.method.empty() || fetchRequest.method.size() > 64 || fetchRequest.method.find_first_not_of("!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != std::string::npos || fetchRequest.method == "CONNECT" || fetchRequest.method == "TRACE" || fetchRequest.method == "TRACK") {
@@ -730,7 +725,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (JS_IsException(headerCountValue.get()) || JS_ToUint32(jsContext, &headerCount, headerCountValue.get()) < 0) {
             return JS_EXCEPTION;
         }
-        if (headerCount > headerLimit / 4) {
+        if (headerCount > (64U << 10U /* 64 KiB */) / 4) {
             return JS_ThrowRangeError(jsContext, "Too many request headers");
         }
         std::size_t headerBytes = 0;
@@ -772,11 +767,11 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
                     return JS_ThrowTypeError(jsContext, "Invalid HTTP header value");
                 }
             }
-            if (nameText.value().size() > headerLimit - headerBytes) {
+            if (nameText.value().size() > (64U << 10U /* 64 KiB */) - headerBytes) {
                 return JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB");
             }
             headerBytes += nameText.value().size();
-            if (valueText.value().size() > headerLimit - headerBytes || headerLimit - headerBytes - valueText.value().size() < 4) {
+            if (valueText.value().size() > (64U << 10U /* 64 KiB */) - headerBytes || (64U << 10U /* 64 KiB */) - headerBytes - valueText.value().size() < 4) {
                 return JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB");
             }
             headerBytes += valueText.value().size() + 4;
@@ -796,7 +791,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (bytes == nullptr && JS_HasException(jsContext)) {
             return JS_EXCEPTION;
         }
-        if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > uploadLimit) {
+        if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > (32U << 20U /* 32 MiB */)) {
             return JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB");
         }
         if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
@@ -812,7 +807,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (fetchClient->shuttingDown) {
             return JS_ThrowInternalError(jsContext, "FetchClient is shut down");
         }
-        if (fetchClient->fetchStates.size() >= requestLimit) {
+        if (fetchClient->fetchStates.size() >= 64) {
             return JS_ThrowRangeError(jsContext, "Too many open FetchResponses");
         }
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curlEasyHandle(curl_easy_init(), curl_easy_cleanup);
