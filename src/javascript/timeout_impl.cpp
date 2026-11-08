@@ -28,7 +28,29 @@ namespace {
 std::mutex timeoutClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
+struct TimerData {
+    Timeout* timeout = nullptr; // Borrowed.
+    int32_t timerID = 0;
+};
+
 } // namespace
+
+Timeout::Timer::~Timer() {
+    close();
+}
+
+void Timeout::Timer::close() {
+    uv_timer_t* uvTimerHandle = std::exchange(ownedUvTimerHandle, nullptr);
+    if (uvTimerHandle == nullptr) {
+        return;
+    }
+    uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
+        const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
+        const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
+        delete timerData;
+        delete uvTimerHandle;
+    });
+}
 
 Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {
     if (jsContext == nullptr || uvLoop == nullptr || callbackDidRun == nullptr) {
@@ -109,27 +131,25 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
 
         // Finish allocations before initializing the libuv handle.
         std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-        std::unique_ptr<Timeout::TimerData> timerData = std::make_unique<Timeout::TimerData>();
+        std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
         timerData->timeout = &timeout;
         timerData->timerID = timerID;
-        timeout.timerMap.insert_or_assign(
-            timerID,
-            Timeout::Timer{
-                .callback = std::move(callback),
-            }
-        );
+        timeout.timerMap.try_emplace(timerID);
+        Timeout::Timer& timer = timeout.timerMap.at(timerID);
+        timer.callback = std::move(callback);
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
         }
-        timeout.timerMap.at(timerID).uvTimerHandle = OwnedUvHandle<uv_timer_t, Timeout::TimerData>(std::move(uvTimerHandle), std::move(timerData));
+        uvTimerHandle->data = timerData.release();
+        timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const Timeout::TimerData* timerData = static_cast<Timeout::TimerData*>(uvTimerHandle->data);
+                const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
                 Timeout* timeout = timerData->timeout;
                 const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData->timerID);
                 if (mapNode.empty()) {
@@ -138,7 +158,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 Timeout::Timer& timer = mapNode.mapped();
 
                 // Schedule closure before invoking JS; no TimerData access follows.
-                timer.uvTimerHandle.close();
+                timer.close();
 
                 // Call the callback and discard the result.
                 const JSValue result = JS_Call(timeout->jsContext, timer.callback.get(), JS_UNDEFINED, 0, nullptr);
@@ -151,7 +171,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 std::terminate();
             }
         };
-        status = uv_timer_start(timeout.timerMap.at(timerID).uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
+        status = uv_timer_start(timer.ownedUvTimerHandle, uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
         if (status != 0) {
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));

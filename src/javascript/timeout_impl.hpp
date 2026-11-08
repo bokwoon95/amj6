@@ -32,15 +32,13 @@ namespace amj::javascript {
 // After shutdown(), repeated shutdown()/destruction do not access QuickJS.
 // Finish native close callbacks before closing/destroying the loop.
 struct Timeout {
-    struct TimerData {
-        Timeout* timeout = nullptr;
-        int32_t timerID = 0;
-    };
-
     // One setTimeout() registration.
     struct Timer {
         OwnedJSValue callback = {};
-        OwnedUvHandle<uv_timer_t, TimerData> uvTimerHandle = {};
+        uv_timer_t* ownedUvTimerHandle = nullptr;
+
+        ~Timer();
+        void close();
     };
 
     JSRuntime* jsRuntime = nullptr;
@@ -48,7 +46,7 @@ struct Timeout {
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
-    int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
+    int32_t timerIDCounter = 0;             // Last allocated timer ID; allocation starts at 1.
     std::map<int32_t, Timer> timerMap = {}; // Host-owned JS references; released on firing/cancel/shutdown.
     bool shuttingDown = false;
 
