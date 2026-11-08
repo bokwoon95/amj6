@@ -40,6 +40,8 @@ struct FetchState {
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
     std::string errorMessage = "";
+    // TODO: consider making these back to plain JSValues but with an "owned"
+    // prefix. And add the jsContext back to the FetchState.
     OwnedJSValue readyResolve = {};
     OwnedJSValue readyReject = {};
     OwnedJSValue readResolve = {};
