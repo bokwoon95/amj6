@@ -57,10 +57,12 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
         argument.reset(JS_GetException(fetchClient.jsContext));
     }
     if (!JS_IsUndefined(fetchState.readyReject)) {
-        const ScopedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, fetchState.readyReject, JS_UNDEFINED, 1, &argument.get()));
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readyReject, JS_UNDEFINED, 1, &argument.get());
+        JS_FreeValue(fetchClient.jsContext, result);
     }
     if (!JS_IsUndefined(fetchState.readReject)) {
-        const ScopedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, fetchState.readReject, JS_UNDEFINED, 1, &argument.get()));
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readReject, JS_UNDEFINED, 1, &argument.get());
+        JS_FreeValue(fetchClient.jsContext, result);
     }
 }
 
