@@ -1,5 +1,7 @@
 #pragma once
 
+#include "javascript.hpp"
+
 #include <quickjs.h>
 #include <uv.h>
 
@@ -31,7 +33,7 @@ struct Crypto {
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
-    std::map<uv_work_t*, JSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
+    std::map<uv_work_t*, OwnedJSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
     Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);

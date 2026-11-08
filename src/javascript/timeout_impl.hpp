@@ -1,5 +1,7 @@
 #pragma once
 
+#include "javascript.hpp"
+
 #include <quickjs.h>
 #include <uv.h>
 
@@ -34,7 +36,7 @@ struct Timeout {
     struct Timer {
         // Libuv timer started with uv_timer_start() and closed with uv_close().
         uv_timer_t* uvTimerHandle = nullptr;
-        JSValue callback = JS_UNDEFINED;
+        OwnedJSValue callback = {};
     };
 
     JSRuntime* jsRuntime = nullptr;

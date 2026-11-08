@@ -50,11 +50,11 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
             std::terminate();
         }
         JSContext* jsContext = crypto->jsContext;
-        const std::map<uv_work_t*, JSValue>::node_type completionNode = crypto->pendingDigests.extract(uvWork);
+        const std::map<uv_work_t*, OwnedJSValue>::node_type completionNode = crypto->pendingDigests.extract(uvWork);
         if (completionNode.empty()) {
             std::terminate();
         }
-        const OwnedJSValue completion(jsContext, completionNode.mapped());
+        const OwnedJSValue& completion = completionNode.mapped();
         digestWork->crypto = nullptr;
 
         JSValue outputValue = JS_EXCEPTION;
@@ -129,15 +129,11 @@ void Crypto::shutdown() {
         return; // Safe even after the context/runtime have been destroyed.
     }
     shuttingDown = true;
-    std::map<uv_work_t*, JSValue> detached;
+    std::map<uv_work_t*, OwnedJSValue> detached;
     detached.swap(pendingDigests);
-    for (const std::pair<uv_work_t* const, JSValue>& entry : detached) {
+    for (const std::pair<uv_work_t* const, OwnedJSValue>& entry : detached) {
         DigestWork* digestWork = static_cast<DigestWork*>(entry.first->data);
         digestWork->crypto = nullptr;
-    }
-    JSRuntime* jsRuntime = this->jsRuntime;
-    for (const std::pair<uv_work_t* const, JSValue>& entry : detached) {
-        JS_FreeValueRT(jsRuntime, entry.second);
     }
 }
 
@@ -266,7 +262,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         digestWork->uvWork.data = digestWork.get();
         OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
-        crypto.pendingDigests.insert_or_assign(&digestWork->uvWork, completion.get());
+        crypto.pendingDigests.insert_or_assign(&digestWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
             DigestWork* digestWork = static_cast<DigestWork*>(uvWork->data);
             // The worker touches native storage only, never crypto/context/JS.
@@ -281,11 +277,10 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             crypto.pendingDigests.erase(&digestWork->uvWork);
             return JS_ThrowInternalError(jsContext, "cryptoDigest: uv_queue_work: %s", uv_strerror(status));
         }
-        // Ownership transfers only after successful submission. The map owns
-        // completion; digestDidFinish owns and deletes the work allocation.
+        // The map owns completion; after successful submission,
+        // digestDidFinish owns and deletes the work allocation.
         DigestWork* submittedWork = digestWork.release();
         submittedWork->crypto = &crypto;
-        crypto.pendingDigests.at(&submittedWork->uvWork) = completion.release();
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);

@@ -42,7 +42,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
         return;
     }
     const FetchState& fetchState = mapNode.mapped();
-    if (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject)) {
+    if (JS_IsUndefined(fetchState.readyReject.get()) && JS_IsUndefined(fetchState.readReject.get())) {
         return;
     }
     OwnedJSValue argument(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
@@ -56,12 +56,12 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     if (!ok) {
         argument.reset(JS_GetException(fetchClient.jsContext));
     }
-    if (!JS_IsUndefined(fetchState.readyReject)) {
-        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readyReject, JS_UNDEFINED, 1, &argument.get());
+    if (!JS_IsUndefined(fetchState.readyReject.get())) {
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readyReject.get(), JS_UNDEFINED, 1, &argument.get());
         JS_FreeValue(fetchClient.jsContext, result);
     }
-    if (!JS_IsUndefined(fetchState.readReject)) {
-        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readReject, JS_UNDEFINED, 1, &argument.get());
+    if (!JS_IsUndefined(fetchState.readReject.get())) {
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readReject.get(), JS_UNDEFINED, 1, &argument.get());
         JS_FreeValue(fetchClient.jsContext, result);
     }
 }
@@ -138,7 +138,7 @@ void deliver(FetchClient& fetchClient) {
                 shouldCloseResponse = true;
             } else if (!fetchState.readyDelivered && (fetchState.headersReceived || fetchState.finished)) {
                 deliverReady = true;
-            } else if (JS_IsUndefined(fetchState.readResolve) || (fetchState.failure.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
+            } else if (JS_IsUndefined(fetchState.readResolve.get()) || (fetchState.failure.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                 continue;
             }
         }
@@ -156,8 +156,8 @@ void deliver(FetchClient& fetchClient) {
             bool failed = false;
             if (deliverReady) {
                 fetchState.readyDelivered = true;
-                resolveValue = std::exchange(fetchState.readyResolve, JS_UNDEFINED);
-                rejectValue = std::exchange(fetchState.readyReject, JS_UNDEFINED);
+                resolveValue = fetchState.readyResolve.release();
+                rejectValue = fetchState.readyReject.release();
                 if (fetchState.headersReceived) {
                     char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
                     const CURLcode status = curl_easy_getinfo(selected, CURLINFO_EFFECTIVE_URL, &effectiveURL);
@@ -171,8 +171,8 @@ void deliver(FetchClient& fetchClient) {
                     failed = true;
                 }
             } else {
-                resolveValue = std::exchange(fetchState.readResolve, JS_UNDEFINED);
-                rejectValue = std::exchange(fetchState.readReject, JS_UNDEFINED);
+                resolveValue = fetchState.readResolve.release();
+                rejectValue = fetchState.readReject.release();
                 if (!fetchState.failure.empty()) {
                     failed = true;
                 } else if (!fetchState.chunks.empty()) {
@@ -473,7 +473,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (!fetchState.readyDelivered) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
-        if (!JS_IsUndefined(fetchState.readResolve)) {
+        if (!JS_IsUndefined(fetchState.readResolve.get())) {
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
@@ -481,8 +481,8 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
-        fetchState.readResolve = resolvingFunctions.at(0);
-        fetchState.readReject = resolvingFunctions.at(1);
+        fetchState.readResolve = OwnedJSValue(jsContext, resolvingFunctions.at(0));
+        fetchState.readReject = OwnedJSValue(jsContext, resolvingFunctions.at(1));
         if (!fetchClient->shuttingDown) {
             uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle));
             const int status = uv_async_send(fetchClient->uvAsyncHandle);
@@ -795,7 +795,6 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         fetchClient->fetchStateMap.try_emplace(curlEasyHandle.get());
         FetchState& fetchState = fetchClient->fetchStateMap.at(curlEasyHandle.get());
-        fetchState.jsRuntime = fetchClient->jsRuntime;
         fetchState.fetchRequest = std::move(fetchRequest);
         registeredHandle = curlEasyHandle.get();
         fetchState.curlEasyHandle = curlEasyHandle.release();
@@ -879,8 +878,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        fetchState.readyResolve = resolvingFunctions.at(0);
-        fetchState.readyReject = resolvingFunctions.at(1);
+        fetchState.readyResolve = OwnedJSValue(jsContext, resolvingFunctions.at(0));
+        fetchState.readyReject = OwnedJSValue(jsContext, resolvingFunctions.at(1));
         OwnedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchClient->responseClassID));
         if (JS_IsException(response.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
@@ -935,10 +934,6 @@ FetchState::~FetchState() {
         curl_easy_cleanup(curlEasyHandle);
     }
     curl_slist_free_all(curlRequestHeaders);
-    JS_FreeValueRT(jsRuntime, readyResolve);
-    JS_FreeValueRT(jsRuntime, readyReject);
-    JS_FreeValueRT(jsRuntime, readResolve);
-    JS_FreeValueRT(jsRuntime, readReject);
 }
 
 FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {

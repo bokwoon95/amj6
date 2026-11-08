@@ -1,5 +1,7 @@
 #pragma once
 
+#include "javascript.hpp"
+
 #include <curl/curl.h>
 #include <curl/multi.h>
 #include <quickjs.h>
@@ -38,11 +40,10 @@ struct FetchState {
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
     std::string failure = "";
-    JSRuntime* jsRuntime = nullptr;
-    JSValue readyResolve = JS_UNDEFINED;
-    JSValue readyReject = JS_UNDEFINED;
-    JSValue readResolve = JS_UNDEFINED;
-    JSValue readReject = JS_UNDEFINED;
+    OwnedJSValue readyResolve = {};
+    OwnedJSValue readyReject = {};
+    OwnedJSValue readResolve = {};
+    OwnedJSValue readReject = {};
     bool headersReceived = false;
     bool readyDelivered = false;
     bool finished = false;

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,20 +15,35 @@
 namespace amj::javascript {
 
 // Owns one QuickJS reference and releases it on destruction unless release()
-// is called. Noncopyable. The context must outlive this wrapper. jsContext is
-// not thread safe, ensure that only one caller is accessing the jsContext at
-// any one time.
+// is called. Noncopyable. A default-constructed wrapper is empty and has no
+// context. Otherwise, the context must outlive this wrapper. Serialize QuickJS
+// operations across the entire runtime.
 class OwnedJSValue {
   public:
+    OwnedJSValue() = default;
     OwnedJSValue(JSContext* jsContext, JSValue jsValue) {
         this->jsContext = jsContext;
         this->jsValue = jsValue;
     }
     ~OwnedJSValue() {
-        JS_FreeValue(jsContext, jsValue);
+        if (jsContext != nullptr) {
+            JS_FreeValue(jsContext, jsValue);
+        }
     }
     OwnedJSValue(const OwnedJSValue&) = delete;
     OwnedJSValue& operator=(const OwnedJSValue&) = delete;
+    OwnedJSValue(OwnedJSValue&& ownedJSValue) noexcept {
+        this->jsContext = ownedJSValue.jsContext;
+        this->jsValue = ownedJSValue.release();
+    }
+    OwnedJSValue& operator=(OwnedJSValue&& ownedJSValue) noexcept {
+        if (this != &ownedJSValue) {
+            const OwnedJSValue previous(this->jsContext, this->release());
+            this->jsContext = ownedJSValue.jsContext;
+            this->jsValue = ownedJSValue.release();
+        }
+        return *this;
+    }
     JSValue& get() {
         return jsValue;
     }
@@ -35,6 +51,9 @@ class OwnedJSValue {
         return jsValue;
     }
     void reset(JSValue jsValue) {
+        if (jsContext == nullptr) {
+            throw std::logic_error("Cannot reset an OwnedJSValue without a context; assign a context-bound wrapper instead");
+        }
         JS_FreeValue(jsContext, std::exchange(this->jsValue, jsValue));
     }
     JSValue release() {
