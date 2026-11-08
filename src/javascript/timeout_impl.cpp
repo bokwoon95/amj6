@@ -125,9 +125,12 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
         timerData->timeout = &timeout;
         timerData->timerID = timerID;
-        timeout.timerMap.insert_or_assign(timerID, Timeout::Timer{
-            .callback = std::move(callback),
-        });
+        timeout.timerMap.insert_or_assign(
+            timerID,
+            Timeout::Timer{
+                .callback = std::move(callback),
+            }
+        );
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
             timeout.timerMap.erase(timerID);
