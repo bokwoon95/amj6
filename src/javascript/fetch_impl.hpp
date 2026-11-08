@@ -29,10 +29,10 @@ struct FetchRequest {
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
 struct FetchState {
+    CURLM* curlMultiHandle = nullptr;
+    CURL* ownedCurlEasyHandle = nullptr;
+    curl_slist* ownedCurlRequestHeaders = nullptr;
     FetchRequest fetchRequest = {};
-    curl_slist* curlRequestHeaders = nullptr;
-    CURLM* curlMultiHandle = nullptr; // Borrowed; non-null only while the easy handle is registered.
-    CURL* curlEasyHandle = nullptr;
     int64_t statusCode = 0;
     std::string responseURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
@@ -71,13 +71,13 @@ struct FetchState {
 // destruction after shutdown never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
 struct FetchClient {
+    uv_loop_t* uvLoop = nullptr;
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
-    uv_loop_t* uvLoop = nullptr;
-    CURLM* curlMultiHandle = nullptr;
-    uv_timer_t* uvTimeoutHandle = nullptr;
-    uv_async_t* uvAsyncHandle = nullptr; // Referenced only while delivery is pending.
-    std::map<curl_socket_t, uv_poll_t*> pollHandleMap = {};
+    CURLM* ownedCurlMultiHandle = nullptr;
+    uv_timer_t* ownedUvTimeoutHandle = nullptr;
+    uv_async_t* ownedUvAsyncHandle = nullptr;
+    std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
     std::map<CURL*, FetchState> fetchStateMap = {};
     std::function<void(JSContext*)> callbackDidRun = {};
     std::thread::id ownerThreadID = {};
