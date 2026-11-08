@@ -32,9 +32,9 @@ type TextDecoder = import("amj:text").TextDecoder;
 declare var TextEncoder: typeof import("amj:text").TextEncoder;
 type TextEncoder = import("amj:text").TextEncoder;
 
-declare var setTimeout: typeof import("amj:timeout").setTimeout;
-
 declare var clearTimeout: typeof import("amj:timeout").clearTimeout;
+
+declare var setTimeout: typeof import("amj:timeout").setTimeout;
 
 declare var URL: typeof import("amj:url").URL;
 type URL = import("amj:url").URL;
