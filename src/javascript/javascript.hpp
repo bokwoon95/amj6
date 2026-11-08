@@ -1,13 +1,16 @@
 #pragma once
 
 #include <quickjs.h>
+#include <uv.h>
 
 #include <cstddef>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -63,6 +66,76 @@ class OwnedJSValue {
   private:
     JSContext* jsContext = nullptr;
     JSValue jsValue = JS_UNDEFINED;
+};
+
+// Owns an initialized libuv handle and its heap-allocated data. The handle must
+// have null data and must not already be closing when adopted. Do not separately
+// close the borrowed handle or replace its data. Use on the loop's owner thread.
+// close() and destruction schedule cleanup; keep driving the loop until its close
+// callbacks finish. U's destructor must not throw or depend on expired objects.
+template <typename T, typename U>
+class OwnedUvHandle {
+    static_assert(
+        std::is_same_v<T, uv_timer_t> || std::is_same_v<T, uv_async_t> || std::is_same_v<T, uv_poll_t>,
+        "OwnedUvHandle requires a supported libuv handle type"
+    );
+    static_assert(std::is_object_v<U> && !std::is_array_v<U>, "OwnedUvHandle data must be a single object");
+
+  public:
+    OwnedUvHandle() = default;
+    // Validation failures leave both arguments owned by the caller.
+    OwnedUvHandle(std::unique_ptr<T>&& handle, std::unique_ptr<U>&& data) {
+        if (handle == nullptr || data == nullptr) {
+            throw std::invalid_argument("OwnedUvHandle requires a handle and data");
+        }
+        if (handle->data != nullptr) {
+            throw std::invalid_argument("OwnedUvHandle requires null handle data");
+        }
+        if (uv_is_closing(reinterpret_cast<uv_handle_t*>(handle.get())) != 0) {
+            throw std::invalid_argument("OwnedUvHandle cannot adopt a closing handle");
+        }
+        handle->data = data.release();
+        this->uvHandle = handle.release();
+    }
+    ~OwnedUvHandle() {
+        close();
+    }
+    OwnedUvHandle(const OwnedUvHandle&) = delete;
+    OwnedUvHandle& operator=(const OwnedUvHandle&) = delete;
+    OwnedUvHandle(OwnedUvHandle&& ownedUvHandle) noexcept {
+        this->uvHandle = std::exchange(ownedUvHandle.uvHandle, nullptr);
+    }
+    OwnedUvHandle& operator=(OwnedUvHandle&& ownedUvHandle) noexcept {
+        if (this != &ownedUvHandle) {
+            close();
+            this->uvHandle = std::exchange(ownedUvHandle.uvHandle, nullptr);
+        }
+        return *this;
+    }
+    T* get() const {
+        return uvHandle;
+    }
+    U* getData() const {
+        if (uvHandle == nullptr) {
+            return nullptr;
+        }
+        return static_cast<U*>(uvHandle->data);
+    }
+    void close() noexcept {
+        T* handle = std::exchange(this->uvHandle, nullptr);
+        if (handle == nullptr) {
+            return;
+        }
+        uv_close(reinterpret_cast<uv_handle_t*>(handle), [](uv_handle_t* uvHandle) noexcept {
+            const T* handle = reinterpret_cast<T*>(uvHandle);
+            const U* data = static_cast<U*>(handle->data);
+            delete data;
+            delete handle;
+        });
+    }
+
+  private:
+    T* uvHandle = nullptr;
 };
 
 // An in-memory JSON tree, not serialized JSON text. Numbers must be finite.
