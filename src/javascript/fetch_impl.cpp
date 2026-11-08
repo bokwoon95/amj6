@@ -82,10 +82,10 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            if (!fetchState.failure.empty()) {
-                fetchState.failure.append(": ");
+            if (!fetchState.errorMessage.empty()) {
+                fetchState.errorMessage.append(": ");
             }
-            fetchState.failure.append(curl_multi_strerror(curlMultiCode));
+            fetchState.errorMessage.append(curl_multi_strerror(curlMultiCode));
             fetchState.finished = true;
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
@@ -114,16 +114,16 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
         fetchState.finished = true;
         if (curlMsg->data.result != CURLE_OK) {
-            if (!fetchState.failure.empty()) {
-                fetchState.failure.append(": ");
+            if (!fetchState.errorMessage.empty()) {
+                fetchState.errorMessage.append(": ");
             }
-            fetchState.failure.append(curl_easy_strerror(curlMsg->data.result));
+            fetchState.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
         if (!fetchState.headersReceived) {
-            if (!fetchState.failure.empty()) {
-                fetchState.failure.append(": ");
+            if (!fetchState.errorMessage.empty()) {
+                fetchState.errorMessage.append(": ");
             }
-            fetchState.failure.append("HTTP response ended without final headers");
+            fetchState.errorMessage.append("HTTP response ended without final headers");
         }
     }
 
@@ -161,7 +161,7 @@ void deliver(FetchClient& fetchClient) {
                 shouldCloseResponse = true;
             } else if (!fetchState.readyDelivered && (fetchState.headersReceived || fetchState.finished)) {
                 deliverReady = true;
-            } else if (JS_IsUndefined(fetchState.readResolve.get()) || (fetchState.failure.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
+            } else if (JS_IsUndefined(fetchState.readResolve.get()) || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                 continue;
             }
         }
@@ -185,7 +185,7 @@ void deliver(FetchClient& fetchClient) {
                     char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
                     const CURLcode status = curl_easy_getinfo(selected, CURLINFO_EFFECTIVE_URL, &effectiveURL);
                     if (status != CURLE_OK || effectiveURL == nullptr) {
-                        fetchState.failure = "Could not obtain response URL";
+                        fetchState.errorMessage = "Could not obtain response URL";
                         failed = true;
                     } else {
                         fetchState.responseURL = effectiveURL;
@@ -196,7 +196,7 @@ void deliver(FetchClient& fetchClient) {
             } else {
                 resolveValue = fetchState.readResolve.release();
                 rejectValue = fetchState.readReject.release();
-                if (!fetchState.failure.empty()) {
+                if (!fetchState.errorMessage.empty()) {
                     failed = true;
                 } else if (!fetchState.chunks.empty()) {
                     const std::vector<uint8_t>& chunk = fetchState.chunks.front();
@@ -207,7 +207,7 @@ void deliver(FetchClient& fetchClient) {
                         fetchState.paused = false;
                         const CURLcode status = curl_easy_pause(selected, CURLPAUSE_CONT);
                         if (status != CURLE_OK) {
-                            fetchState.failure = curl_easy_strerror(status);
+                            fetchState.errorMessage = curl_easy_strerror(status);
                             fetchState.finished = true;
                             if (fetchState.curlMultiHandle != nullptr) {
                                 if (curl_multi_remove_handle(fetchState.curlMultiHandle, selected) != CURLM_OK) {
@@ -228,7 +228,7 @@ void deliver(FetchClient& fetchClient) {
             const OwnedJSValue reject(jsContext, rejectValue);
             if (failed) {
                 OwnedJSValue reason(jsContext, JS_NewError(jsContext));
-                if (JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "TypeError") || !setstringfield(jsContext, reason.get(), "message", fetchState.failure)) {
+                if (JS_IsException(reason.get()) || !setstringfield(jsContext, reason.get(), "name", "TypeError") || !setstringfield(jsContext, reason.get(), "message", fetchState.errorMessage)) {
                     argumentValue = JS_EXCEPTION;
                 } else {
                     argumentValue = reason.release();
@@ -262,12 +262,12 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
-            fetchState->failure = "Response headers exceed 64 KiB";
+            fetchState->errorMessage = "Response headers exceed 64 KiB";
             return 0;
         }
         const std::size_t length = size * count;
         if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
-            fetchState->failure = "Response headers exceed 64 KiB";
+            fetchState->errorMessage = "Response headers exceed 64 KiB";
             return 0;
         }
         fetchState->headerBytes += length;
@@ -277,20 +277,20 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
             fetchState->redirecting = false;
             const std::size_t space = line.find(' ');
             if (space == std::string_view::npos || line.size() - space < 4) {
-                fetchState->failure = "Invalid HTTP status line";
+                fetchState->errorMessage = "Invalid HTTP status line";
                 return 0;
             }
             const std::string_view code = line.substr(space + 1, 3);
             const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
             if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
-                fetchState->failure = "Invalid HTTP status code";
+                fetchState->errorMessage = "Invalid HTTP status code";
                 return 0;
             }
             return length;
         }
         if (line == "\r\n" || line == "\n") {
             if (fetchState->statusCode == 101) {
-                fetchState->failure = "HTTP protocol upgrades are not supported";
+                fetchState->errorMessage = "HTTP protocol upgrades are not supported";
                 return 0;
             }
             if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
@@ -303,7 +303,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
         }
         const std::size_t colon = line.find(':');
         if (colon == std::string_view::npos || colon == 0) {
-            fetchState->failure = "Invalid HTTP response header";
+            fetchState->errorMessage = "Invalid HTTP response header";
             return 0;
         }
         std::string name(line.substr(0, colon));
@@ -313,7 +313,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
             }
         }
         if (name.find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
-            fetchState->failure = "Invalid HTTP response header name";
+            fetchState->errorMessage = "Invalid HTTP response header name";
             return 0;
         }
         std::string_view value = line.substr(colon + 1);
@@ -326,7 +326,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
         for (const char character : value) {
             const unsigned char byte = static_cast<unsigned char>(character);
             if ((byte < 32 && byte != 9) || byte == 127) {
-                fetchState->failure = "Invalid HTTP response header value";
+                fetchState->errorMessage = "Invalid HTTP response header value";
                 return 0;
             }
         }
@@ -345,7 +345,7 @@ std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* 
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {
-            fetchState->failure = "HTTP body block exceeds buffer capacity";
+            fetchState->errorMessage = "HTTP body block exceeds buffer capacity";
             return 0;
         }
         const std::size_t length = size * count;

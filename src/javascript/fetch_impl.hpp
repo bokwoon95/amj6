@@ -39,7 +39,7 @@ struct FetchState {
     std::deque<std::vector<uint8_t>> chunks = {};
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
-    std::string failure = "";
+    std::string errorMessage = "";
     OwnedJSValue readyResolve = {};
     OwnedJSValue readyReject = {};
     OwnedJSValue readResolve = {};
