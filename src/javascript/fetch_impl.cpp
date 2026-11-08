@@ -43,31 +43,17 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     if (JS_IsUndefined(fetchState.readyReject) && JS_IsUndefined(fetchState.readReject)) {
         return;
     }
-    ScopedJSValue argument(fetchClient.jsContext, JS_UNDEFINED);
-    ScopedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
-    if (JS_IsException(reason.get())) {
-        argument.reset(JS_GetException(fetchClient.jsContext));
-    } else {
-        const bool ok = setstringfield(fetchClient.jsContext, reason.get(), "name", "AbortError");
-        if (!ok) {
-            argument.reset(JS_GetException(fetchClient.jsContext));
-        } else {
-            const bool ok = setstringfield(fetchClient.jsContext, reason.get(), "message", "FetchResponse is closed");
-            if (!ok) {
-                argument.reset(JS_GetException(fetchClient.jsContext));
-            } else {
-                argument.reset(reason.release());
-            }
-        }
+    ScopedJSValue argument(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
+    bool ok = !JS_IsException(argument.get());
+    if (ok) {
+        ok = setstringfield(fetchClient.jsContext, argument.get(), "name", "AbortError");
     }
-    // const bool creationFailed =
-    //     JS_IsException(reason.get()) ||
-    //     !setstringfield(fetchClient.jsContext, reason.get(), "name", "AbortError") ||
-    //     !setstringfield(fetchClient.jsContext, reason.get(), "message", "FetchResponse is closed");
-    // const ScopedJSValue exception(fetchClient.jsContext, creationFailed ? JS_GetException(fetchClient.jsContext) : JS_UNDEFINED);
-    // std::array<JSValue, 1> arguments = {creationFailed ? exception.get() : reason.get()};
-    // Resolve/reject functions are native Promise functions, not user callbacks.
-    // Promise continuations run at the host's next job checkpoint.
+    if (ok) {
+        ok = setstringfield(fetchClient.jsContext, argument.get(), "message", "FetchResponse is closed");
+    }
+    if (!ok) {
+        argument.reset(JS_GetException(fetchClient.jsContext));
+    }
     if (!JS_IsUndefined(fetchState.readyReject)) {
         const ScopedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, fetchState.readyReject, JS_UNDEFINED, 1, &argument.get()));
     }
