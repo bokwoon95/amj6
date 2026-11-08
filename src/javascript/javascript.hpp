@@ -14,8 +14,9 @@
 namespace amj::javascript {
 
 // Owns one QuickJS reference and releases it on destruction unless release()
-// is called. Noncopyable. The context must outlive this wrapper. Use only on
-// the context's owner thread.
+// is called. Noncopyable. The context must outlive this wrapper. jsContext is
+// not thread safe, ensure that only one caller is accessing the jsContext at
+// any one time.
 class OwnedJSValue {
   public:
     OwnedJSValue(JSContext* jsContext, JSValue jsValue) {
