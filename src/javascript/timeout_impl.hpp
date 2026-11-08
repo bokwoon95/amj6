@@ -40,7 +40,6 @@ struct Timeout {
     // One setTimeout() registration.
     struct Timer {
         OwnedJSValue callback = {};
-        // Declared last so closure starts before the JS callback is released.
         OwnedUvHandle<uv_timer_t, TimerData> uvTimerHandle = {};
     };
 
