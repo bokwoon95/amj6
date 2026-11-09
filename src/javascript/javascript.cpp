@@ -90,6 +90,33 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
 
 } // namespace
 
+OwnedJSValue jsNewError(JSContext* jsContext, std::string name, std::string message) {
+    // Create error.
+    OwnedJSValue error(jsContext, JS_NewError(jsContext));
+    if (JS_IsException(error.get())) {
+        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+    }
+    // Set name property.
+    OwnedJSValue nameString(jsContext, JS_NewStringLen(jsContext, name.data(), name.size()));
+    if (JS_IsException(nameString.get())) {
+        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+    }
+    int status = JS_DefinePropertyValueStr(jsContext, error.get(), "name", nameString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    if (status < 0) {
+        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+    }
+    // Set message property.
+    OwnedJSValue messageString(jsContext, JS_NewStringLen(jsContext, message.data(), message.size()));
+    if (JS_IsException(messageString.get())) {
+        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+    }
+    status = JS_DefinePropertyValueStr(jsContext, error.get(), "message", messageString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    if (status < 0) {
+        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+    }
+    return error;
+}
+
 JSValue JSONValue::toJSValue(JSContext* jsContext) const try {
     return jsonValueToJSValue(jsContext, *this, 0);
 } catch (const std::bad_alloc&) {
