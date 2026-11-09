@@ -163,7 +163,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
                 continue;
             }
-            bool shouldSettleHeadersPromise = false;
+            bool shouldSettleHeadersReceivedPromise = false;
             bool shouldCloseResponse = false;
             {
                 const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
@@ -171,7 +171,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                 if (fetchState.closeRequested) {
                     shouldCloseResponse = true;
                 } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseHeadersReceived || fetchState.finished)) {
-                    shouldSettleHeadersPromise = true;
+                    shouldSettleHeadersReceivedPromise = true;
                 } else if (!fetchState.read.has_value() || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                     continue;
                 }
@@ -187,7 +187,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                 JSValue rejectValue = JS_UNDEFINED;
                 JSValue argumentValue = JS_UNDEFINED;
                 bool failed = false;
-                if (shouldSettleHeadersPromise) {
+                if (shouldSettleHeadersReceivedPromise) {
                     resolveValue = fetchState.headersReceived.resolveFunction.release();
                     rejectValue = fetchState.headersReceived.rejectFunction.release();
                     if (fetchState.responseHeadersReceived) {
