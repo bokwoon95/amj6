@@ -139,13 +139,13 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
 void deliver(FetchClient& fetchClient) {
     // One completion per response per turn. A fast stream must not monopolize
     // delivery or keep libuv from running timers and other socket callbacks.
-    std::vector<CURL*> curlEasyHandlesSnapshot;
-    curlEasyHandlesSnapshot.reserve(fetchClient.fetchStateMap.size());
+    std::vector<CURL*> curlEasyHandles;
+    curlEasyHandles.reserve(fetchClient.fetchStateMap.size());
     for (const std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
-        curlEasyHandlesSnapshot.push_back(entry.first);
+        curlEasyHandles.push_back(entry.first);
     }
     bool didDeliver = false;
-    for (CURL* curlEasyHandle : curlEasyHandlesSnapshot) {
+    for (CURL* curlEasyHandle : curlEasyHandles) {
         if (fetchClient.shuttingDown) {
             return;
         }
