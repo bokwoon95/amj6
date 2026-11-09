@@ -850,29 +850,73 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             }
             fetchState.ownedCurlRequestHeaders = curlHeaders;
         }
-        const std::vector<CURLcode> optionResults = {
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str()),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https"),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https"),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_MAXREDIRS, 20L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOSIGNAL, 1L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYPEER, 1L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYHOST, 2L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_ACCEPT_ENCODING, ""),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, receiveHeader),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, &fetchState),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, receiveBody),
-            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, &fetchState),
-        };
-        for (const CURLcode result : optionResults) {
-            if (result != CURLE_OK) {
-                throw std::runtime_error(curl_easy_strerror(result));
-            }
+        CURLcode err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str());
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https");
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_MAXREDIRS, 20L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOSIGNAL, 1L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYPEER, 1L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYHOST, 2L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_ACCEPT_ENCODING, "");
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, receiveHeader);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, &fetchState);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, receiveBody);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
+        }
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, &fetchState);
+        if (err != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(err));
         }
         CURLcode methodStatus = CURLE_OK;
         if (fetchState.fetchRequest.method == "HEAD") {
@@ -1013,16 +1057,21 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             ownedUvAsyncHandle = uvAsync.release();
             uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
         }
-        const std::vector<CURLMcode> optionResults = {
-            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, socketInterest),
-            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this),
-            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, timerInterest),
-            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this),
-        };
-        for (const CURLMcode result : optionResults) {
-            if (result != CURLM_OK) {
-                throw std::runtime_error(curl_multi_strerror(result));
-            }
+        CURLMcode err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, socketInterest);
+        if (err != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(err));
+        }
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this);
+        if (err != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(err));
+        }
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, timerInterest);
+        if (err != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(err));
+        }
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this);
+        if (err != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(err));
         }
     } catch (...) {
         shutdown();
