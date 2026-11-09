@@ -146,8 +146,6 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             return;
         }
         FetchClient& fetchClient = *static_cast<FetchClient*>(uvAsyncHandle->data);
-        // This notification is consumed. A new notification refs the handle again;
-        // otherwise the idle client keeps no loop alive.
         uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
 
         std::vector<CURL*> curlEasyHandles;
