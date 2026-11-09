@@ -989,15 +989,15 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         }
         {
             std::unique_ptr<uv_async_t> uvAsync = std::make_unique<uv_async_t>();
-            const int status = uv_async_init(uvLoop, uvAsync.get(), [](uv_async_t* uvAsync) noexcept {
+            const int status = uv_async_init(uvLoop, uvAsync.get(), [](uv_async_t* uvAsyncHandle) noexcept {
                 try {
-                    FetchClient* fetchClient = static_cast<FetchClient*>(uvAsync->data);
+                    FetchClient* fetchClient = static_cast<FetchClient*>(uvAsyncHandle->data);
                     if (fetchClient == nullptr) {
                         return;
                     }
                     // This notification is consumed. Scheduling more delivery refs
                     // the handle again; otherwise the idle client keeps no loop alive.
-                    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsync));
+                    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
                     deliver(*fetchClient);
                     // Delivery may shut down the client and close this handle.
                 } catch (...) {
