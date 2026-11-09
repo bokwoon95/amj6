@@ -24,10 +24,14 @@
     - When removing a map entry to take ownership of its contents, prefer .extract() over .at() plus .erase(). Check that the returned node is nonempty before accessing it. Use .erase() when simply discarding an entry.
 - Use std types where possible.
 - Prefer adding minimal structs and fields.
+- Struct and class members must ALWAYS clearly show OWNERSHIP:
+    - If it's a value type like int, bool, std::string, std::vector or std::map etc, it's OWNED.
+    - If it's an owned type like std::unique_ptr or OwnedJSValue, it's OWNED.
+    - If it's a raw pointer or reference, it's BORROWED.
+    - If it's a raw pointer that is OWNED and we CANNOT wrap it in a std::unique_ptr because we must call a specific teardown function on it (like with C types), PREFIX the member name with "owned" and call the teardown functions on it in the destructor.
 - DO NOT define macros. There is always a non-macro way to do something, or else just bite the bullet and repeat the code.
 - DO NOT use auto when the type can be explicitly named EXCEPT for lambdas, so we don't have to step through a std::function wrapper during debugging.
 - DO NOT use *T t = new T, use *T t = new T().
-- DO NOT use uniform initialization syntax i.e. int64_t num{0}.
 - DO NOT use direct-list initialization for named variables (`T t{value}`).
     1. Use `T t = value;` for literals and existing values.
     2. For default construction, use `T t;` (not `T t{};`).
