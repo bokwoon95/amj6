@@ -36,20 +36,23 @@ struct FetchState {
     int64_t statusCode = 0;
     std::string responseURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
+
     std::deque<std::vector<uint8_t>> chunks = {};
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
     std::string errorMessage = "";
+
     OwnedJSValue readyResolve = {};
     OwnedJSValue readyReject = {};
     OwnedJSValue readResolve = {};
     OwnedJSValue readReject = {};
-    bool headersReceived = false;
-    bool readyDelivered = false;
-    bool finished = false;
-    bool paused = false;
-    bool redirecting = false;
-    bool closeRequested = false; // JS finalizers defer curl cleanup to delivery.
+
+    bool responseHeadersReceived = false; // Response headers received.
+    bool readyPromiseSettled = false;     // Readiness was delivered to JavaScript.
+    bool finished = false;                // Network transfer ended.
+    bool paused = false;                  // Body reception paused for backpressure.
+    bool redirecting = false;             // Currently processing a redirect response.
+    bool closeRequested = false;          // Deferred cleanup requested.
 
     FetchState() = default;
     ~FetchState();

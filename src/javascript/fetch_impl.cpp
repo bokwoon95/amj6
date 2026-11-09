@@ -119,7 +119,7 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
             }
             fetchState.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
-        if (!fetchState.headersReceived) {
+        if (!fetchState.responseHeadersReceived) {
             if (!fetchState.errorMessage.empty()) {
                 fetchState.errorMessage.append(": ");
             }
@@ -137,14 +137,12 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
 }
 
 void deliver(FetchClient& fetchClient) {
-    // One completion per response per turn. A fast stream must not monopolize
-    // delivery or keep libuv from running timers and other socket callbacks.
     std::vector<CURL*> curlEasyHandles;
     curlEasyHandles.reserve(fetchClient.fetchStateMap.size());
     for (const std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
         curlEasyHandles.push_back(entry.first);
     }
-    bool didDeliver = false;
+
     for (CURL* curlEasyHandle : curlEasyHandles) {
         if (fetchClient.shuttingDown) {
             return;
@@ -158,13 +156,12 @@ void deliver(FetchClient& fetchClient) {
             const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
             if (fetchState.closeRequested) {
                 shouldCloseResponse = true;
-            } else if (!fetchState.readyDelivered && (fetchState.headersReceived || fetchState.finished)) {
+            } else if (!fetchState.readyPromiseSettled && (fetchState.responseHeadersReceived || fetchState.finished)) {
                 deliverReady = true;
             } else if (JS_IsUndefined(fetchState.readResolve.get()) || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                 continue;
             }
         }
-        didDeliver = true;
         if (shouldCloseResponse) {
             closeResponse(fetchClient, curlEasyHandle);
             fetchClient.callbackDidRun(fetchClient.jsContext);
@@ -177,10 +174,10 @@ void deliver(FetchClient& fetchClient) {
             JSValue argumentValue = JS_UNDEFINED;
             bool failed = false;
             if (deliverReady) {
-                fetchState.readyDelivered = true;
+                fetchState.readyPromiseSettled = true;
                 resolveValue = fetchState.readyResolve.release();
                 rejectValue = fetchState.readyReject.release();
-                if (fetchState.headersReceived) {
+                if (fetchState.responseHeadersReceived) {
                     char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
                     const CURLcode status = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
                     if (status != CURLE_OK || effectiveURL == nullptr) {
@@ -245,14 +242,6 @@ void deliver(FetchClient& fetchClient) {
         // No map references or iterators survive across it.
         fetchClient.callbackDidRun(fetchClient.jsContext);
     }
-    if (didDeliver && !fetchClient.shuttingDown) {
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-        const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
-        if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-            throw std::runtime_error(uv_strerror(status));
-        }
-    }
 }
 
 // Curl callbacks only mutate native state. Never invoke QuickJS from here.
@@ -293,11 +282,11 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
                 return 0;
             }
             if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-                fetchState->headersReceived = true;
+                fetchState->responseHeadersReceived = true;
             }
             return length;
         }
-        if (fetchState->headersReceived) {
+        if (fetchState->responseHeadersReceived) {
             return length; // Trailers are not part of the exposed header snapshot.
         }
         const std::size_t colon = line.find(':');
@@ -492,7 +481,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        if (!fetchState.readyDelivered) {
+        if (!fetchState.readyPromiseSettled) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         if (!JS_IsUndefined(fetchState.readResolve.get())) {
@@ -574,7 +563,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        if (!fetchState.readyDelivered) {
+        if (!fetchState.readyPromiseSettled) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         return JS_NewInt64(jsContext, fetchState.statusCode);
@@ -607,7 +596,7 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        if (!fetchState.readyDelivered) {
+        if (!fetchState.readyPromiseSettled) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         std::vector<JSONValue> headers;
@@ -645,7 +634,7 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        if (!fetchState.readyDelivered) {
+        if (!fetchState.readyPromiseSettled) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         return JS_NewStringLen(jsContext, fetchState.responseURL.data(), fetchState.responseURL.size());
