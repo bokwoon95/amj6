@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.20)
 # it for release builds).
 option(ENABLE_ASAN_UBSAN "Enable sanitizers in Debug (ASan only with MSVC)" ON)
 
+option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+
 # Disable coverage by default (pass in -DENABLE_COVERAGE=ON to enable it for test builds).
 option(ENABLE_COVERAGE "Enable LLVM source coverage" OFF)
 
@@ -48,6 +50,15 @@ endif()
 # Use CMake's built-in Threads module for threading.
 find_package(Threads REQUIRED)
 
+# Production allocator. Only Release executables link it; Debug keeps ASan's allocator.
+find_package(mimalloc CONFIG REQUIRED)
+if(NOT TARGET mimalloc)
+    message(FATAL_ERROR "mimalloc must use dynamic linkage with the secure and override vcpkg features")
+endif()
+if(MSVC)
+    find_program(amj_minject NAMES minject PATHS "${mimalloc_DIR}/../../tools/mimalloc" NO_DEFAULT_PATH REQUIRED)
+endif()
+
 # Stack traces.
 find_package(cpptrace REQUIRED)
 
@@ -65,15 +76,10 @@ find_package(CURL REQUIRED)
 find_package(httplib REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-# Select MSVC C/C++ runtime linkage; CMake generates the compiler flags.
-#
-# set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDebugDLL) -> /MDd (dynamic debug
-# runtime, matching prebuilt Qt).
-#
-# set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded) -> /MT (static runtime, no MSVC
-# runtime DLLs to ship).
+# Use the dynamic CRT in every configuration: /MDd in Debug, /MD otherwise.
+# Windows mimalloc redirection requires allocations to go through the dynamic CRT.
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:DebugDLL>")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     if(ENABLE_ASAN_UBSAN)
         # ASan is incompatible with /RTC checks and /ZI (Edit and Continue).
         foreach(amj_language C CXX)
@@ -94,7 +100,7 @@ set(amj_test_filters)
 
 ## == src/errors == ##
 
-add_library(amj_errors STATIC src/errors/errors.cpp)
+add_library(amj_errors src/errors/errors.cpp)
 target_link_libraries(amj_errors PRIVATE cpptrace::cpptrace)
 list(APPEND amj_libraries amj_errors)
 if(BUILD_TESTING)
@@ -104,7 +110,7 @@ endif()
 
 ## == src/context == ##
 
-add_library(amj_context STATIC src/context/context.cpp)
+add_library(amj_context src/context/context.cpp)
 list(APPEND amj_libraries amj_context)
 target_link_libraries(amj_context PUBLIC amj_errors PRIVATE Threads::Threads)
 if(BUILD_TESTING)
@@ -114,7 +120,7 @@ endif()
 
 ## == src/keyring == ##
 
-add_library(amj_keyring STATIC src/keyring/keyring.cpp)
+add_library(amj_keyring src/keyring/keyring.cpp)
 list(APPEND amj_libraries amj_keyring)
 target_link_libraries(amj_keyring PUBLIC amj_errors)
 if(BUILD_TESTING)
@@ -146,7 +152,7 @@ endif()
 ## == src/javascript == ##
 
 # File-by-file dependency order: javascript -> text -> URL -> event -> console -> scheduler -> timeout -> abort -> crypto -> fetch.
-add_library(amj_javascript STATIC
+add_library(amj_javascript
     src/javascript/javascript.hpp
     src/javascript/javascript.cpp
     src/javascript/text.js
@@ -252,19 +258,37 @@ endif()
 
 foreach(amj_target IN LISTS amj_libraries)
     target_include_directories(${amj_target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    set_target_properties(${amj_target} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    set_target_properties(${amj_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<0:>")
 endforeach()
 
 # Keep executables beside one another even with multi-configuration generators.
 foreach(amj_target IN LISTS amj_executables)
     set_target_properties(${amj_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<0:>")
+    target_link_libraries(${amj_target} PRIVATE "$<$<CONFIG:Release>:mimalloc>")
+    # Force a reference so linkers cannot discard the allocator as unused.
+    if(MSVC)
+        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:/INCLUDE:mi_version>")
+        # Empty commands are omitted outside Release, including with multi-config generators.
+        add_custom_command(TARGET ${amj_target} POST_BUILD
+            COMMAND "$<$<CONFIG:Release>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:mimalloc>;$<TARGET_FILE_DIR:mimalloc>/mimalloc-redirect.dll;$<TARGET_FILE_DIR:${amj_target}>>"
+            COMMAND "$<$<CONFIG:Release>:${amj_minject};--postfix=-secure;-f;-i;$<TARGET_FILE:${amj_target}>>"
+            COMMAND_EXPAND_LISTS
+            VERBATIM
+        )
+    elseif(APPLE)
+        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:LINKER:-u,_mi_version>")
+    else()
+        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:LINKER:--no-as-needed>")
+    endif()
 endforeach()
 
 foreach(amj_target IN LISTS amj_libraries amj_executables)
     if(MSVC)
         target_compile_definitions(${amj_target} PRIVATE _CRT_SECURE_NO_WARNINGS)
-        target_compile_options(${amj_target} PRIVATE /W4 /WX /permissive-)
+        target_compile_options(${amj_target} PRIVATE /W4 /WX /permissive- /GS)
     else()
-        target_compile_options(${amj_target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror)
+        target_compile_options(${amj_target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror -fstack-protector-strong)
         if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
             foreach(amj_directory IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
                 if(amj_directory MATCHES "/include/c\\+\\+/v1$")

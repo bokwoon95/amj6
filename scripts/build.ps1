@@ -51,10 +51,10 @@ for command in cmake ninja vcpkg; do
     fi
 done
 case "$(uname -s):$(uname -m)" in
-    Darwin:arm64) triplet=arm64-osx ;;
-    Darwin:x86_64) triplet=x64-osx ;;
-    Linux:aarch64) triplet=arm64-linux ;;
-    Linux:x86_64) triplet=x64-linux ;;
+    Darwin:arm64) triplet=arm64-osx-dynamic ;;
+    Darwin:x86_64) triplet=x64-osx-dynamic ;;
+    Linux:aarch64) triplet=arm64-linux-dynamic ;;
+    Linux:x86_64) triplet=x64-linux-dynamic ;;
     *) printf '%s\n' 'Unsupported platform; use PowerShell on Windows.' >&2; exit 1 ;;
 esac
 build="$project_root/build/$mode"
@@ -76,8 +76,13 @@ if [ "$mode" = clang ] || [ "$mode" = coverage ]; then
     set -- "-DCMAKE_C_COMPILER:FILEPATH=$llvm_bin/clang" "-DCMAKE_CXX_COMPILER:FILEPATH=$llvm_bin/clang++" "-DVCPKG_INSTALLED_DIR:PATH=$installed" -DVCPKG_MANIFEST_INSTALL=OFF
     if [ "$mode" = coverage ]; then coverage=ON; fi
 fi
+# Package discovery caches contain absolute paths tied to the selected triplet.
+if [ -f "$build/CMakeCache.txt" ] && ! grep -q "^VCPKG_TARGET_TRIPLET:STRING=$triplet$" "$build/CMakeCache.txt"; then
+    rm -f "$build/CMakeCache.txt"
+    rm -rf "$build/CMakeFiles"
+fi
 # Configure incrementally on every invocation so tooling always sees current sources.
-cmake -S "$project_root" -B "$build" -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=OFF "$@"
+cmake -S "$project_root" -B "$build" -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=ON "$@"
 if [ "$configure_only" = true ] || [ "$prepare_only" = true ] || [ "$mode" = coverage ]; then
     printf '%s\n' "Configured: $build"
     exit 0
@@ -148,11 +153,10 @@ $build = Join-Path $root "build/$mode"
 $configuration = 'Debug'
 $sanitizers = 'ON'
 $coverage = 'OFF'
-$triplet = 'x64-windows-static-md'
+$triplet = 'x64-windows'
 if ($mode -ne 'debug') { $sanitizers = 'OFF' }
 if ($mode -eq 'release') {
     $configuration = 'Release'
-    $triplet = 'x64-windows-static'
 }
 $clangArguments = @()
 if ($mode -in @('clang', 'coverage')) {
@@ -167,17 +171,18 @@ if ($mode -in @('clang', 'coverage')) {
     if ($mode -eq 'coverage') { $coverage = 'ON' }
 }
 $compiler = $compiler.Replace('\', '/')
-# Only discard generated metadata if the selected compiler changes.
+# Discard generated metadata if the selected compiler or dependency triplet changes.
 $cache = Join-Path $build 'CMakeCache.txt'
 if (Test-Path -LiteralPath $cache) {
     $cachedCompiler = Select-String -LiteralPath $cache -Pattern '^CMAKE_CXX_COMPILER:[^=]+=(.*)$'
-    if (!$cachedCompiler -or $cachedCompiler.Matches[0].Groups[1].Value.Replace('\', '/') -ne $compiler) {
+    $cachedTriplet = Select-String -LiteralPath $cache -Pattern '^VCPKG_TARGET_TRIPLET:STRING=(.*)$'
+    if (!$cachedCompiler -or $cachedCompiler.Matches[0].Groups[1].Value.Replace('\', '/') -ne $compiler -or !$cachedTriplet -or $cachedTriplet.Matches[0].Groups[1].Value -ne $triplet) {
         Remove-Item -LiteralPath $cache -Force
         $cmakeFiles = Join-Path $build 'CMakeFiles'
         if (Test-Path -LiteralPath $cmakeFiles) { Remove-Item -LiteralPath $cmakeFiles -Recurse -Force }
     }
 }
-& cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DCMAKE_C_COMPILER:FILEPATH=$compiler" "-DCMAKE_CXX_COMPILER:FILEPATH=$compiler" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=OFF @clangArguments
+& cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DCMAKE_C_COMPILER:FILEPATH=$compiler" "-DCMAKE_CXX_COMPILER:FILEPATH=$compiler" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=ON @clangArguments
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 if ($configureOnly -or $prepareOnly -or $mode -eq 'coverage') {
     Write-Host "Configured: $build"
