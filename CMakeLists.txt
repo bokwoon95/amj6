@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 # it for release builds).
 option(ENABLE_ASAN_UBSAN "Enable sanitizers in Debug (ASan only with MSVC)" ON)
 
-option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # Disable coverage by default (pass in -DENABLE_COVERAGE=ON to enable it for test builds).
 option(ENABLE_COVERAGE "Enable LLVM source coverage" OFF)
@@ -50,15 +50,6 @@ endif()
 # Use CMake's built-in Threads module for threading.
 find_package(Threads REQUIRED)
 
-# Production allocator. Only Release executables link it; Debug keeps ASan's allocator.
-find_package(mimalloc CONFIG REQUIRED)
-if(NOT TARGET mimalloc)
-    message(FATAL_ERROR "mimalloc must use dynamic linkage with the secure and override vcpkg features")
-endif()
-if(MSVC)
-    find_program(amj_minject NAMES minject PATHS "${mimalloc_DIR}/../../tools/mimalloc" NO_DEFAULT_PATH REQUIRED)
-endif()
-
 # Stack traces.
 find_package(cpptrace REQUIRED)
 
@@ -76,10 +67,9 @@ find_package(CURL REQUIRED)
 find_package(httplib REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-# Use the dynamic CRT in every configuration: /MDd in Debug, /MD otherwise.
-# Windows mimalloc redirection requires allocations to go through the dynamic CRT.
+# Use the static CRT in Release (/MT) and the dynamic debug CRT in Debug (/MDd).
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:DebugDLL>")
     if(ENABLE_ASAN_UBSAN)
         # ASan is incompatible with /RTC checks and /ZI (Edit and Continue).
         foreach(amj_language C CXX)
@@ -265,22 +255,6 @@ endforeach()
 # Keep executables beside one another even with multi-configuration generators.
 foreach(amj_target IN LISTS amj_executables)
     set_target_properties(${amj_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<0:>")
-    target_link_libraries(${amj_target} PRIVATE "$<$<CONFIG:Release>:mimalloc>")
-    # Force a reference so linkers cannot discard the allocator as unused.
-    if(MSVC)
-        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:/INCLUDE:mi_version>")
-        # Empty commands are omitted outside Release, including with multi-config generators.
-        add_custom_command(TARGET ${amj_target} POST_BUILD
-            COMMAND "$<$<CONFIG:Release>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_FILE:mimalloc>;$<TARGET_FILE_DIR:mimalloc>/mimalloc-redirect.dll;$<TARGET_FILE_DIR:${amj_target}>>"
-            COMMAND "$<$<CONFIG:Release>:${amj_minject};--postfix=-secure;-f;-i;$<TARGET_FILE:${amj_target}>>"
-            COMMAND_EXPAND_LISTS
-            VERBATIM
-        )
-    elseif(APPLE)
-        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:LINKER:-u,_mi_version>")
-    else()
-        target_link_options(${amj_target} PRIVATE "$<$<CONFIG:Release>:LINKER:--no-as-needed>")
-    endif()
 endforeach()
 
 foreach(amj_target IN LISTS amj_libraries amj_executables)

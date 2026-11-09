@@ -16,10 +16,6 @@
     },
     "gtest",
     "libuv",
-    {
-      "name": "mimalloc",
-      "features": ["secure", "override"]
-    },
     "openssl",
     "quickjs-ng"
   ]

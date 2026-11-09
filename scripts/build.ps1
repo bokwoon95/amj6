@@ -8,6 +8,7 @@ Where-Object "\"<#" 2>/dev/null
 set -eu
 project_root=$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)
 configuration=Debug
+shared_libraries=ON
 sanitizers=ON
 mode=debug
 configure_only=false
@@ -19,7 +20,10 @@ for argument in "$@"; do
             if [ "$mode" != debug ]; then printf '%s\n' 'Choose only one of -release, -clang, -coverage.' >&2; exit 1; fi
             mode=${argument#-}
             sanitizers=OFF
-            if [ "$mode" = release ]; then configuration=Release; fi
+            if [ "$mode" = release ]; then
+                configuration=Release
+                shared_libraries=OFF
+            fi
             ;;
         -configure) configure_only=true ;;
         -prepare) prepare_only=true ;;
@@ -57,6 +61,7 @@ case "$(uname -s):$(uname -m)" in
     Linux:x86_64) triplet=x64-linux-dynamic ;;
     *) printf '%s\n' 'Unsupported platform; use PowerShell on Windows.' >&2; exit 1 ;;
 esac
+if [ "$mode" = release ]; then triplet=${triplet%-dynamic}; fi
 build="$project_root/build/$mode"
 coverage=OFF
 set --
@@ -82,7 +87,7 @@ if [ -f "$build/CMakeCache.txt" ] && ! grep -q "^VCPKG_TARGET_TRIPLET:STRING=$tr
     rm -rf "$build/CMakeFiles"
 fi
 # Configure incrementally on every invocation so tooling always sees current sources.
-cmake -S "$project_root" -B "$build" -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=ON "$@"
+cmake -S "$project_root" -B "$build" -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" "-DBUILD_SHARED_LIBS:BOOL=$shared_libraries" "$@"
 if [ "$configure_only" = true ] || [ "$prepare_only" = true ] || [ "$mode" = coverage ]; then
     printf '%s\n' "Configured: $build"
     exit 0
@@ -151,12 +156,15 @@ if (!(Test-Path -LiteralPath $compiler) -or [version]$env:VCToolsVersion -lt [ve
 $root = Split-Path $PSScriptRoot -Parent
 $build = Join-Path $root "build/$mode"
 $configuration = 'Debug'
+$sharedLibraries = 'ON'
 $sanitizers = 'ON'
 $coverage = 'OFF'
 $triplet = 'x64-windows'
 if ($mode -ne 'debug') { $sanitizers = 'OFF' }
 if ($mode -eq 'release') {
     $configuration = 'Release'
+    $sharedLibraries = 'OFF'
+    $triplet = 'x64-windows-static'
 }
 $clangArguments = @()
 if ($mode -in @('clang', 'coverage')) {
@@ -182,7 +190,7 @@ if (Test-Path -LiteralPath $cache) {
         if (Test-Path -LiteralPath $cmakeFiles) { Remove-Item -LiteralPath $cmakeFiles -Recurse -Force }
     }
 }
-& cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DCMAKE_C_COMPILER:FILEPATH=$compiler" "-DCMAKE_CXX_COMPILER:FILEPATH=$compiler" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" -DBUILD_SHARED_LIBS:BOOL=ON @clangArguments
+& cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$configuration" "-DENABLE_ASAN_UBSAN=$sanitizers" "-DENABLE_COVERAGE:BOOL=$coverage" "-DCMAKE_C_COMPILER:FILEPATH=$compiler" "-DCMAKE_CXX_COMPILER:FILEPATH=$compiler" "-DVCPKG_TARGET_TRIPLET:STRING=$triplet" "-DBUILD_SHARED_LIBS:BOOL=$sharedLibraries" @clangArguments
 if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
 if ($configureOnly -or $prepareOnly -or $mode -eq 'coverage') {
     Write-Host "Configured: $build"
