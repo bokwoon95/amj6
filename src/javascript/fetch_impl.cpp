@@ -72,7 +72,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
 
 // Wake curl due to socket activity or timeout, then notify the loop to check
 // for fetch results.
-void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
     if (fetchClient.shuttingDown) {
         return;
     }
@@ -231,7 +231,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                             }
                             // Unpause can synchronously invoke curl callbacks, but never JS.
                             // Inspect completions even if no further socket event arrives.
-                            wakeupCurl(fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                            wakeCurl(fetchClient, CURL_SOCKET_TIMEOUT, 0);
                         }
                     } else {
                         argumentValue = JS_NULL;
@@ -441,7 +441,7 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
                     curlEvents |= CURL_CSELECT_OUT;
                 }
                 // drive() may close this poll handle. Do not use pollData after it.
-                wakeupCurl(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
+                wakeCurl(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
             } catch (...) {
                 std::terminate();
             }
@@ -466,7 +466,7 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
             try {
                 FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
                 if (fetchClient != nullptr) {
-                    wakeupCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                    wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
                 }
             } catch (...) {
                 std::terminate();
