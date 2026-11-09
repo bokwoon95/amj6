@@ -65,6 +65,14 @@ class OwnedJSValue {
     JSValue jsValue = JS_UNDEFINED;
 };
 
+// Owns a promise and its settlement functions. Duplicate the promise when passing
+// ownership to JavaScript. Callers release its settlement functions when used.
+struct JSPromise {
+    OwnedJSValue promise = {};
+    OwnedJSValue resolveFunction = {};
+    OwnedJSValue rejectFunction = {};
+};
+
 // An in-memory JSON tree, not serialized JSON text. Numbers must be finite.
 // MSVC map moves can allocate; implicit moves may throw and callers handle allocation failures.
 struct JSONValue { // NOLINT(bugprone-exception-escape)

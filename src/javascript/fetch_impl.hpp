@@ -12,6 +12,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -42,13 +43,10 @@ struct FetchState {
     std::size_t headerBytes = 0;
     std::string errorMessage = "";
 
-    OwnedJSValue readyResolve = {};
-    OwnedJSValue readyReject = {};
-    OwnedJSValue readResolve = {};
-    OwnedJSValue readReject = {};
+    JSPromise headersReceived = {};
+    std::optional<JSPromise> read = {};
 
     bool responseHeadersReceived = false; // Response headers received.
-    bool readyPromiseSettled = false;     // Readiness was delivered to JavaScript.
     bool finished = false;                // Network transfer ended.
     bool paused = false;                  // Body reception paused for backpressure.
     bool redirecting = false;             // Currently processing a redirect response.
@@ -113,7 +111,7 @@ struct FetchResponse {
     static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
     static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
 
-    // Getter-only JS properties: status, headers, and url. ready is a read-only
+    // Getter-only JS properties: status, headers, and url. headersReceived is a read-only
     // Promise property installed on each JS response by FetchClient::send().
     static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
     static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);

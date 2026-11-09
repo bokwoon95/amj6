@@ -8,18 +8,18 @@ declare module "amj:fetch_impl" {
   }
 
   export interface FetchResponse {
-    /** Resolves after final response headers, including redirects; rejects on failure. */
-    readonly ready: Promise<void>;
+    /** Resolves when response headers arrive after following redirects; rejects on failure. */
+    readonly headersReceived: Promise<void>;
 
-    /** Access before ready or after close throws. Headers are returned as a copy. */
+    /** Access before headersReceived settles or after close throws. Headers are returned as a copy. */
     readonly status: number;
     readonly headers: Array<[string, string]>;
     readonly url: string;
 
-    /** Await ready first. One outstanding read; nonempty bytes or null for EOF. */
+    /** Await headersReceived first. One outstanding read; nonempty bytes or null for EOF. */
     read(): Promise<Uint8Array | null>;
 
-    /** Idempotent. Frees native state and rejects pending ready/read operations. */
+    /** Idempotent. Frees native state and rejects pending headersReceived/read promises. */
     close(): void;
   }
 
