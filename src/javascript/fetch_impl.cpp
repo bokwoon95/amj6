@@ -257,7 +257,7 @@ void deliver(FetchClient& fetchClient) {
 
 // Curl callbacks only mutate native state. Never invoke QuickJS from here.
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
-std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
@@ -340,7 +340,7 @@ std::size_t receiveHeader(char* bytes, std::size_t size, std::size_t count, void
 }
 
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
-std::size_t receiveBody(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
     try {
         FetchState* fetchState = static_cast<FetchState*>(userdata);
         if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {
@@ -902,7 +902,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, receiveHeader);
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, curlHeaderFunction);
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
@@ -910,7 +910,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, receiveBody);
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, curlWriteFunction);
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
