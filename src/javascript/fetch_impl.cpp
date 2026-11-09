@@ -161,10 +161,10 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
                 continue;
             }
+            FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
             bool shouldSettleReadyPromise = false;
             bool shouldCloseResponse = false;
             {
-                const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
                 const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
                 if (fetchState.closeRequested) {
                     shouldCloseResponse = true;
@@ -180,7 +180,6 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                 continue;
             }
             {
-                FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
                 JSValue resolveFunction = JS_UNDEFINED;
                 JSValue rejectFunction = JS_UNDEFINED;
                 JSValue argumentValue = JS_UNDEFINED;
