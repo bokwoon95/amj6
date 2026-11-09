@@ -850,25 +850,24 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             }
             fetchState.ownedCurlRequestHeaders = curlHeaders;
         }
-        CURL* easy = fetchState.ownedCurlEasyHandle;
         const std::vector<CURLcode> optionResults = {
-            curl_easy_setopt(easy, CURLOPT_URL, fetchState.fetchRequest.url.c_str()),
-            curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https"),
-            curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https"),
-            curl_easy_setopt(easy, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L),
-            curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE),
-            curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 20L),
-            curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 10000L),
-            curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L),
-            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L),
-            curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L),
-            curl_easy_setopt(easy, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L),
-            curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, ""),
-            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders),
-            curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, receiveHeader),
-            curl_easy_setopt(easy, CURLOPT_HEADERDATA, &fetchState),
-            curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receiveBody),
-            curl_easy_setopt(easy, CURLOPT_WRITEDATA, &fetchState),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str()),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https"),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https"),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_MAXREDIRS, 20L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOSIGNAL, 1L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYPEER, 1L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYHOST, 2L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_ACCEPT_ENCODING, ""),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, receiveHeader),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, &fetchState),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, receiveBody),
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, &fetchState),
         };
         for (const CURLcode result : optionResults) {
             if (result != CURLE_OK) {
@@ -877,18 +876,18 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         CURLcode methodStatus = CURLE_OK;
         if (fetchState.fetchRequest.method == "HEAD") {
-            methodStatus = curl_easy_setopt(easy, CURLOPT_NOBODY, 1L);
+            methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOBODY, 1L);
         } else if (fetchState.fetchRequest.method != "GET") {
             const char* bodyBytes = "";
             if (!fetchState.fetchRequest.body.empty()) {
                 bodyBytes = reinterpret_cast<const char*>(fetchState.fetchRequest.body.data());
             }
-            methodStatus = curl_easy_setopt(easy, CURLOPT_POSTFIELDS, bodyBytes);
+            methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDS, bodyBytes);
             if (methodStatus == CURLE_OK) {
-                methodStatus = curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(fetchState.fetchRequest.body.size()));
+                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(fetchState.fetchRequest.body.size()));
             }
             if (methodStatus == CURLE_OK && fetchState.fetchRequest.method != "POST") {
-                methodStatus = curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, fetchState.fetchRequest.method.c_str());
+                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CUSTOMREQUEST, fetchState.fetchRequest.method.c_str());
             }
         }
         if (methodStatus != CURLE_OK) {
@@ -920,10 +919,13 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        const CURLMcode addStatus = curl_multi_add_handle(fetchClient->ownedCurlMultiHandle, easy);
-        if (addStatus != CURLM_OK) {
+        const CURLMcode curlMultiCode = curl_multi_add_handle(
+            fetchClient->ownedCurlMultiHandle,
+            fetchState.ownedCurlEasyHandle
+        );
+        if (curlMultiCode != CURLM_OK) {
             fetchClient->fetchStateMap.erase(registeredHandle);
-            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(addStatus));
+            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMultiCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
         return response.release();
