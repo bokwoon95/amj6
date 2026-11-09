@@ -34,7 +34,7 @@ namespace this_thread = std::this_thread;
 
 namespace {
 
-// Clean up a curlEasyHandle and its fetchState, rejecting any pending headersReceived
+// Clean up a curlEasyHandle and its fetchState, rejecting any pending ready
 // or read promises with AbortError.
 void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
@@ -42,7 +42,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
         return;
     }
     const FetchState& fetchState = mapNode.mapped();
-    const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.headersReceived.promise.get());
+    const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
     if (promiseState != JS_PROMISE_PENDING && !fetchState.read.has_value()) {
         return;
     }
@@ -58,7 +58,7 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
         error.reset(JS_GetException(fetchClient.jsContext));
     }
     if (promiseState == JS_PROMISE_PENDING) {
-        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.headersReceived.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.ready.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
         JS_FreeValue(fetchClient.jsContext, result);
     }
     if (fetchState.read.has_value()) {
@@ -123,7 +123,7 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
             }
             fetchState.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
-        if (!fetchState.responseHeadersReceived) {
+        if (!fetchState.responseReady) {
             if (!fetchState.errorMessage.empty()) {
                 fetchState.errorMessage.append(": ");
             }
@@ -163,15 +163,15 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
                 continue;
             }
-            bool shouldSettleHeadersReceivedPromise = false;
+            bool shouldSettleReadyPromise = false;
             bool shouldCloseResponse = false;
             {
                 const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-                const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.headersReceived.promise.get());
+                const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
                 if (fetchState.closeRequested) {
                     shouldCloseResponse = true;
-                } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseHeadersReceived || fetchState.finished)) {
-                    shouldSettleHeadersReceivedPromise = true;
+                } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseReady || fetchState.finished)) {
+                    shouldSettleReadyPromise = true;
                 } else if (!fetchState.read.has_value() || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                     continue;
                 }
@@ -187,10 +187,10 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                 JSValue rejectFunction = JS_UNDEFINED;
                 JSValue argumentValue = JS_UNDEFINED;
                 bool failed = false;
-                if (shouldSettleHeadersReceivedPromise) {
-                    resolveFunction = fetchState.headersReceived.resolveFunction.release();
-                    rejectFunction = fetchState.headersReceived.rejectFunction.release();
-                    if (fetchState.responseHeadersReceived) {
+                if (shouldSettleReadyPromise) {
+                    resolveFunction = fetchState.ready.resolveFunction.release();
+                    rejectFunction = fetchState.ready.rejectFunction.release();
+                    if (fetchState.responseReady) {
                         char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
                         const CURLcode status = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
                         if (status != CURLE_OK || effectiveURL == nullptr) {
@@ -302,11 +302,11 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
                 return 0;
             }
             if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-                fetchState->responseHeadersReceived = true;
+                fetchState->responseReady = true;
             }
             return length;
         }
-        if (fetchState->responseHeadersReceived) {
+        if (fetchState->responseReady) {
             return length; // Trailers are not part of the exposed header snapshot.
         }
         const std::size_t colon = line.find(':');
@@ -501,9 +501,9 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.headersReceived.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.ready.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
-            return JS_ThrowTypeError(jsContext, "Await FetchResponse.headersReceived before accessing the response");
+            return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         if (fetchState.read.has_value()) {
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
@@ -587,9 +587,9 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.headersReceived.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.ready.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
-            return JS_ThrowTypeError(jsContext, "Await FetchResponse.headersReceived before accessing the response");
+            return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         return JS_NewInt64(jsContext, fetchState.statusCode);
     } catch (const std::bad_alloc&) {
@@ -621,9 +621,9 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.headersReceived.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.ready.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
-            return JS_ThrowTypeError(jsContext, "Await FetchResponse.headersReceived before accessing the response");
+            return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         std::vector<JSONValue> headers;
         headers.reserve(fetchState.responseHeaders.size());
@@ -660,9 +660,9 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.headersReceived.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.ready.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
-            return JS_ThrowTypeError(jsContext, "Await FetchResponse.headersReceived before accessing the response");
+            return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         return JS_NewStringLen(jsContext, fetchState.responseURL.data(), fetchState.responseURL.size());
     } catch (const std::bad_alloc&) {
@@ -954,13 +954,13 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             throw std::runtime_error(curl_easy_strerror(methodStatus));
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        OwnedJSValue headersReceived(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
-        if (JS_IsException(headersReceived.get())) {
+        OwnedJSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        if (JS_IsException(ready.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        fetchState.headersReceived = JSPromise{
-            .promise = std::move(headersReceived),
+        fetchState.ready = JSPromise{
+            .promise = std::move(ready),
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
         };
@@ -978,7 +978,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
-        if (JS_DefinePropertyValueStr(jsContext, response.get(), "headersReceived", JS_DupValue(jsContext, fetchState.headersReceived.promise.get()), JS_PROP_ENUMERABLE) < 0) {
+        if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready", JS_DupValue(jsContext, fetchState.ready.promise.get()), JS_PROP_ENUMERABLE) < 0) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }

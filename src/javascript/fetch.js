@@ -665,7 +665,7 @@ export async function fetch(input, init) {
     } catch (error) {
       state.fail(error);
     }
-    await fetchResponse.headersReceived;
+    await fetchResponse.ready;
     if (state.failed) {
       throw state.reason;
     }
