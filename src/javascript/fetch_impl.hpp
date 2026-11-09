@@ -76,7 +76,7 @@ struct FetchClient {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
-    uv_timer_t* ownedUvTimeoutHandle = nullptr;
+    uv_timer_t* ownedUvTimerHandle = nullptr;
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
     std::map<CURL*, FetchState> fetchStateMap = {};

@@ -140,115 +140,127 @@ void wakeupCurl(FetchClient& fetchClient, curl_socket_t socket, int eventFlags) 
     }
 }
 
-void deliver(FetchClient& fetchClient) {
-    std::vector<CURL*> curlEasyHandles;
-    curlEasyHandles.reserve(fetchClient.fetchStateMap.size());
-    for (const std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
-        curlEasyHandles.push_back(entry.first);
-    }
-
-    for (CURL* curlEasyHandle : curlEasyHandles) {
-        if (fetchClient.shuttingDown) {
+void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
+    try {
+        if (uvAsyncHandle->data == nullptr) {
             return;
         }
-        if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
-            continue;
+        FetchClient& fetchClient = *static_cast<FetchClient*>(uvAsyncHandle->data);
+        // This notification is consumed. A new notification refs the handle again;
+        // otherwise the idle client keeps no loop alive.
+        uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
+
+        std::vector<CURL*> curlEasyHandles;
+        curlEasyHandles.reserve(fetchClient.fetchStateMap.size());
+        for (const std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
+            curlEasyHandles.push_back(entry.first);
         }
-        bool shouldSettleHeadersPromise = false;
-        bool shouldCloseResponse = false;
-        {
-            const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-            const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.headersReceived.promise.get());
-            if (fetchState.closeRequested) {
-                shouldCloseResponse = true;
-            } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseHeadersReceived || fetchState.finished)) {
-                shouldSettleHeadersPromise = true;
-            } else if (!fetchState.read.has_value() || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
+
+        for (CURL* curlEasyHandle : curlEasyHandles) {
+            if (fetchClient.shuttingDown) {
+                return;
+            }
+            if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
                 continue;
             }
-        }
-        if (shouldCloseResponse) {
-            closeResponse(fetchClient, curlEasyHandle);
-            fetchClient.callbackDidRun(fetchClient.jsContext);
-            continue;
-        }
-        {
-            FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-            JSValue resolveValue = JS_UNDEFINED;
-            JSValue rejectValue = JS_UNDEFINED;
-            JSValue argumentValue = JS_UNDEFINED;
-            bool failed = false;
-            if (shouldSettleHeadersPromise) {
-                resolveValue = fetchState.headersReceived.resolveFunction.release();
-                rejectValue = fetchState.headersReceived.rejectFunction.release();
-                if (fetchState.responseHeadersReceived) {
-                    char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
-                    const CURLcode status = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
-                    if (status != CURLE_OK || effectiveURL == nullptr) {
-                        fetchState.errorMessage = "Could not obtain response URL";
-                        failed = true;
-                    } else {
-                        fetchState.responseURL = effectiveURL;
-                    }
-                } else {
-                    failed = true;
+            bool shouldSettleHeadersPromise = false;
+            bool shouldCloseResponse = false;
+            {
+                const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
+                const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.headersReceived.promise.get());
+                if (fetchState.closeRequested) {
+                    shouldCloseResponse = true;
+                } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseHeadersReceived || fetchState.finished)) {
+                    shouldSettleHeadersPromise = true;
+                } else if (!fetchState.read.has_value() || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
+                    continue;
                 }
-            } else {
-                if (!fetchState.read.has_value()) {
-                    throw std::logic_error("FetchResponse has no pending read promise to settle");
-                }
-                resolveValue = fetchState.read.value().resolveFunction.release();
-                rejectValue = fetchState.read.value().rejectFunction.release();
-                fetchState.read.reset();
-                if (!fetchState.errorMessage.empty()) {
-                    failed = true;
-                } else if (!fetchState.chunks.empty()) {
-                    const std::vector<uint8_t>& chunk = fetchState.chunks.front();
-                    argumentValue = JS_NewUint8ArrayCopy(fetchClient.jsContext, chunk.data(), chunk.size());
-                    fetchState.bufferedBytes -= chunk.size();
-                    fetchState.chunks.pop_front();
-                    if (fetchState.paused && fetchState.bufferedBytes <= (256U << 10U /* 256 KiB */) / 2 && !fetchState.finished) {
-                        fetchState.paused = false;
-                        const CURLcode status = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
-                        if (status != CURLE_OK) {
-                            fetchState.errorMessage = curl_easy_strerror(status);
-                            fetchState.finished = true;
-                            if (fetchState.curlMultiHandle != nullptr) {
-                                if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
-                                    std::terminate();
-                                }
-                                fetchState.curlMultiHandle = nullptr;
-                            }
+            }
+            if (shouldCloseResponse) {
+                closeResponse(fetchClient, curlEasyHandle);
+                fetchClient.callbackDidRun(fetchClient.jsContext);
+                continue;
+            }
+            {
+                FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
+                JSValue resolveValue = JS_UNDEFINED;
+                JSValue rejectValue = JS_UNDEFINED;
+                JSValue argumentValue = JS_UNDEFINED;
+                bool failed = false;
+                if (shouldSettleHeadersPromise) {
+                    resolveValue = fetchState.headersReceived.resolveFunction.release();
+                    rejectValue = fetchState.headersReceived.rejectFunction.release();
+                    if (fetchState.responseHeadersReceived) {
+                        char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
+                        const CURLcode status = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
+                        if (status != CURLE_OK || effectiveURL == nullptr) {
+                            fetchState.errorMessage = "Could not obtain response URL";
+                            failed = true;
+                        } else {
+                            fetchState.responseURL = effectiveURL;
                         }
-                        // Unpause can synchronously invoke curl callbacks, but never JS.
-                        // Inspect completions even if no further socket event arrives.
-                        wakeupCurl(fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                    } else {
+                        failed = true;
                     }
                 } else {
-                    argumentValue = JS_NULL;
+                    if (!fetchState.read.has_value()) {
+                        throw std::logic_error("FetchResponse has no pending read promise to settle");
+                    }
+                    resolveValue = fetchState.read.value().resolveFunction.release();
+                    rejectValue = fetchState.read.value().rejectFunction.release();
+                    fetchState.read.reset();
+                    if (!fetchState.errorMessage.empty()) {
+                        failed = true;
+                    } else if (!fetchState.chunks.empty()) {
+                        const std::vector<uint8_t>& chunk = fetchState.chunks.front();
+                        argumentValue = JS_NewUint8ArrayCopy(fetchClient.jsContext, chunk.data(), chunk.size());
+                        fetchState.bufferedBytes -= chunk.size();
+                        fetchState.chunks.pop_front();
+                        if (fetchState.paused && fetchState.bufferedBytes <= (256U << 10U /* 256 KiB */) / 2 && !fetchState.finished) {
+                            fetchState.paused = false;
+                            const CURLcode status = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
+                            if (status != CURLE_OK) {
+                                fetchState.errorMessage = curl_easy_strerror(status);
+                                fetchState.finished = true;
+                                if (fetchState.curlMultiHandle != nullptr) {
+                                    if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
+                                        std::terminate();
+                                    }
+                                    fetchState.curlMultiHandle = nullptr;
+                                }
+                            }
+                            // Unpause can synchronously invoke curl callbacks, but never JS.
+                            // Inspect completions even if no further socket event arrives.
+                            wakeupCurl(fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                        }
+                    } else {
+                        argumentValue = JS_NULL;
+                    }
                 }
-            }
-            const OwnedJSValue resolve(fetchClient.jsContext, resolveValue);
-            const OwnedJSValue reject(fetchClient.jsContext, rejectValue);
-            if (failed) {
-                OwnedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
-                if (JS_IsException(reason.get()) || !setstringfield(fetchClient.jsContext, reason.get(), "name", "TypeError") || !setstringfield(fetchClient.jsContext, reason.get(), "message", fetchState.errorMessage)) {
-                    argumentValue = JS_EXCEPTION;
-                } else {
-                    argumentValue = reason.release();
+                const OwnedJSValue resolve(fetchClient.jsContext, resolveValue);
+                const OwnedJSValue reject(fetchClient.jsContext, rejectValue);
+                if (failed) {
+                    OwnedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
+                    if (JS_IsException(reason.get()) || !setstringfield(fetchClient.jsContext, reason.get(), "name", "TypeError") || !setstringfield(fetchClient.jsContext, reason.get(), "message", fetchState.errorMessage)) {
+                        argumentValue = JS_EXCEPTION;
+                    } else {
+                        argumentValue = reason.release();
+                    }
                 }
+                if (JS_IsException(argumentValue)) {
+                    argumentValue = JS_GetException(fetchClient.jsContext);
+                    failed = true;
+                }
+                const OwnedJSValue argument(fetchClient.jsContext, argumentValue);
+                const JSValue callback = failed ? reject.get() : resolve.get();
+                const OwnedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, callback, JS_UNDEFINED, 1, &argumentValue));
             }
-            if (JS_IsException(argumentValue)) {
-                argumentValue = JS_GetException(fetchClient.jsContext);
-                failed = true;
-            }
-            const OwnedJSValue argument(fetchClient.jsContext, argumentValue);
-            const JSValue callback = failed ? reject.get() : resolve.get();
-            const OwnedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, callback, JS_UNDEFINED, 1, &argumentValue));
+            // The checkpoint can close responses or shut down the whole client.
+            // No map references or iterators survive across it.
+            fetchClient.callbackDidRun(fetchClient.jsContext);
         }
-        // The checkpoint can close responses or shut down the whole client.
-        // No map references or iterators survive across it.
-        fetchClient.callbackDidRun(fetchClient.jsContext);
+    } catch (...) {
+        std::terminate(); // No C++ exception may escape a libuv callback.
     }
 }
 
@@ -353,7 +365,7 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
         }
         if (length > (256U << 10U /* 256 KiB */) - fetchState->bufferedBytes) {
             fetchState->paused = true;
-            return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl redelivers this block.
+            return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
         }
         // Curl supplies exactly length readable bytes; snapshot before returning.
         fetchState->chunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
@@ -447,10 +459,10 @@ int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdat
             return 0;
         }
         if (milliseconds < 0) {
-            return uv_timer_stop(fetchClient->ownedUvTimeoutHandle) == 0 ? 0 : -1;
+            return uv_timer_stop(fetchClient->ownedUvTimerHandle) == 0 ? 0 : -1;
         }
         uv_update_time(fetchClient->uvLoop);
-        const int status = uv_timer_start(fetchClient->ownedUvTimeoutHandle, [](uv_timer_t* uvTimerHandle) noexcept {
+        const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
             try {
                 FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
                 if (fetchClient != nullptr) {
@@ -1038,30 +1050,16 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
                 throw std::runtime_error(uv_strerror(status));
             }
             uvTimerHandle->data = this;
-            ownedUvTimeoutHandle = uvTimerHandle.release();
+            ownedUvTimerHandle = uvTimerHandle.release();
         }
         {
-            std::unique_ptr<uv_async_t> uvAsync = std::make_unique<uv_async_t>();
-            const int status = uv_async_init(uvLoop, uvAsync.get(), [](uv_async_t* uvAsyncHandle) noexcept {
-                try {
-                    FetchClient* fetchClient = static_cast<FetchClient*>(uvAsyncHandle->data);
-                    if (fetchClient == nullptr) {
-                        return;
-                    }
-                    // This notification is consumed. Scheduling more delivery refs
-                    // the handle again; otherwise the idle client keeps no loop alive.
-                    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
-                    deliver(*fetchClient);
-                    // Delivery may shut down the client and close this handle.
-                } catch (...) {
-                    std::terminate();
-                }
-            });
+            std::unique_ptr<uv_async_t> uvAsyncHandle = std::make_unique<uv_async_t>();
+            const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), settlePromises);
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvAsync->data = this;
-            ownedUvAsyncHandle = uvAsync.release();
+            uvAsyncHandle->data = this;
+            ownedUvAsyncHandle = uvAsyncHandle.release();
             uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
         }
         CURLMcode err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, socketInterest);
@@ -1114,12 +1112,12 @@ void FetchClient::shutdown() {
         });
     }
     ownedUvPollHandleMap.clear();
-    if (ownedUvTimeoutHandle != nullptr) {
-        uv_close(reinterpret_cast<uv_handle_t*>(ownedUvTimeoutHandle), [](uv_handle_t* uvHandle) {
+    if (ownedUvTimerHandle != nullptr) {
+        uv_close(reinterpret_cast<uv_handle_t*>(ownedUvTimerHandle), [](uv_handle_t* uvHandle) {
             const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
             delete uvTimerHandle;
         });
-        ownedUvTimeoutHandle = nullptr;
+        ownedUvTimerHandle = nullptr;
     }
     if (ownedUvAsyncHandle != nullptr) {
         ownedUvAsyncHandle->data = nullptr;
@@ -1162,9 +1160,9 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                     if (fetchResponse != nullptr && fetchResponse->curlEasyHandle != nullptr && !fetchResponse->fetchClient->shuttingDown) {
                         FetchClient* fetchClient = fetchResponse->fetchClient;
                         if (fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
-                            // GC can run during delivery allocations. Do not erase a
-                            // FetchState that delivery is currently accessing, and do
-                            // not settle Promises from inside a QuickJS finalizer.
+                            // GC can run while allocating promise results. Do not erase a
+                            // FetchState currently being accessed by settleFetchPromises(),
+                            // and do not settle promises from inside a QuickJS finalizer.
                             fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle).closeRequested = true;
                             if (!fetchClient->shuttingDown) {
                                 uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
