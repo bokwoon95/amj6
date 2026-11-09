@@ -118,7 +118,11 @@ Crypto::Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSCon
 }
 
 Crypto::~Crypto() {
-    shutdown();
+    try {
+        shutdown();
+    } catch (...) {
+        std::terminate();
+    }
 }
 
 void Crypto::shutdown() {
@@ -145,8 +149,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
-            if (!setstringfield(jsContext, error.get(), "name", "TypeMismatchError")
-                || !setstringfield(jsContext, error.get(), "message", "getRandomValues requires an integer typed array")) {
+            if (!setstringfield(jsContext, error.get(), "name", "TypeMismatchError") || !setstringfield(jsContext, error.get(), "message", "getRandomValues requires an integer typed array")) {
                 return JS_EXCEPTION;
             }
             return JS_Throw(jsContext, error.release());
@@ -172,8 +175,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
-            if (!setstringfield(jsContext, error.get(), "name", "QuotaExceededError")
-                || !setstringfield(jsContext, error.get(), "message", "getRandomValues exceeds 65536 bytes")) {
+            if (!setstringfield(jsContext, error.get(), "name", "QuotaExceededError") || !setstringfield(jsContext, error.get(), "message", "getRandomValues exceeds 65536 bytes")) {
                 return JS_EXCEPTION;
             }
             return JS_Throw(jsContext, error.release());
@@ -354,8 +356,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         if (jsModuleDef == nullptr) {
             return nullptr;
         }
-        if (JS_AddModuleExport(jsContext, jsModuleDef, "cryptoGetRandomValues") < 0
-            || JS_AddModuleExport(jsContext, jsModuleDef, "cryptoDigest") < 0) {
+        if (JS_AddModuleExport(jsContext, jsModuleDef, "cryptoGetRandomValues") < 0 || JS_AddModuleExport(jsContext, jsModuleDef, "cryptoDigest") < 0) {
             return nullptr;
         }
         status = JS_SetModulePrivateValue(jsContext, jsModuleDef, modulePrivateValue.release());
