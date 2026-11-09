@@ -183,13 +183,13 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             }
             {
                 FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-                JSValue resolveValue = JS_UNDEFINED;
-                JSValue rejectValue = JS_UNDEFINED;
+                JSValue resolveFunction = JS_UNDEFINED;
+                JSValue rejectFunction = JS_UNDEFINED;
                 JSValue argumentValue = JS_UNDEFINED;
                 bool failed = false;
                 if (shouldSettleHeadersReceivedPromise) {
-                    resolveValue = fetchState.headersReceived.resolveFunction.release();
-                    rejectValue = fetchState.headersReceived.rejectFunction.release();
+                    resolveFunction = fetchState.headersReceived.resolveFunction.release();
+                    rejectFunction = fetchState.headersReceived.rejectFunction.release();
                     if (fetchState.responseHeadersReceived) {
                         char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
                         const CURLcode status = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
@@ -206,8 +206,8 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                     if (!fetchState.read.has_value()) {
                         throw std::logic_error("FetchResponse has no pending read promise to settle");
                     }
-                    resolveValue = fetchState.read.value().resolveFunction.release();
-                    rejectValue = fetchState.read.value().rejectFunction.release();
+                    resolveFunction = fetchState.read.value().resolveFunction.release();
+                    rejectFunction = fetchState.read.value().rejectFunction.release();
                     fetchState.read.reset();
                     if (!fetchState.errorMessage.empty()) {
                         failed = true;
@@ -237,8 +237,8 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                         argumentValue = JS_NULL;
                     }
                 }
-                const OwnedJSValue resolve(fetchClient.jsContext, resolveValue);
-                const OwnedJSValue reject(fetchClient.jsContext, rejectValue);
+                const OwnedJSValue resolve(fetchClient.jsContext, resolveFunction);
+                const OwnedJSValue reject(fetchClient.jsContext, rejectFunction);
                 if (failed) {
                     OwnedJSValue reason(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
                     if (JS_IsException(reason.get()) || !setstringfield(fetchClient.jsContext, reason.get(), "name", "TypeError") || !setstringfield(fetchClient.jsContext, reason.get(), "message", fetchState.errorMessage)) {
