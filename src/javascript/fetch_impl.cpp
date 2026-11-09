@@ -42,8 +42,12 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
         return;
     }
     const FetchState& fetchState = mapNode.mapped();
-    const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
-    if (promiseState != JS_PROMISE_PENDING && !fetchState.read.has_value()) {
+    const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
+    const JSPromiseStateEnum readPromiseState =
+        fetchState.read.has_value()
+            ? JS_PromiseState(fetchClient.jsContext, fetchState.read.value().promise.get())
+            : JS_PROMISE_NOT_A_PROMISE;
+    if (readyPromiseState != JS_PROMISE_PENDING && readPromiseState != JS_PROMISE_PENDING) {
         return;
     }
     OwnedJSValue error(fetchClient.jsContext, JS_NewError(fetchClient.jsContext));
@@ -57,16 +61,13 @@ void closeResponse(FetchClient& fetchClient, CURL* curlEasyHandle) {
     if (!ok) {
         error.reset(JS_GetException(fetchClient.jsContext));
     }
-    if (promiseState == JS_PROMISE_PENDING) {
+    if (readyPromiseState == JS_PROMISE_PENDING) {
         const JSValue result = JS_Call(fetchClient.jsContext, fetchState.ready.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
         JS_FreeValue(fetchClient.jsContext, result);
     }
-    if (fetchState.read.has_value()) {
-        const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.read.value().promise.get());
-        if (promiseState == JS_PROMISE_PENDING) {
-            const JSValue result = JS_Call(fetchClient.jsContext, fetchState.read.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
-            JS_FreeValue(fetchClient.jsContext, result);
-        }
+    if (readPromiseState == JS_PROMISE_PENDING) {
+        const JSValue result = JS_Call(fetchClient.jsContext, fetchState.read.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+        JS_FreeValue(fetchClient.jsContext, result);
     }
 }
 
@@ -167,10 +168,10 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             bool shouldCloseResponse = false;
             {
                 const FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-                const JSPromiseStateEnum promiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
+                const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient.jsContext, fetchState.ready.promise.get());
                 if (fetchState.closeRequested) {
                     shouldCloseResponse = true;
-                } else if (promiseState == JS_PROMISE_PENDING && (fetchState.responseReady || fetchState.finished)) {
+                } else if (readyPromiseState == JS_PROMISE_PENDING && (fetchState.responseReady || fetchState.finished)) {
                     shouldSettleReadyPromise = true;
                 } else if (!fetchState.read.has_value() || (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished)) {
                     continue;
