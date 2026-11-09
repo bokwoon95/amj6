@@ -415,10 +415,10 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
         }
         unsigned int events = 0;
         if (action == CURL_POLL_IN || action == CURL_POLL_INOUT) {
-            events |= UV_READABLE;
+            events |= static_cast<unsigned int>(UV_READABLE);
         }
         if (action == CURL_POLL_OUT || action == CURL_POLL_INOUT) {
-            events |= UV_WRITABLE;
+            events |= static_cast<unsigned int>(UV_WRITABLE);
         }
         uv_poll_t* uvPollHandle = fetchClient->ownedUvPollHandleMap.at(socket);
         if (events == 0) {
@@ -434,10 +434,10 @@ int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action,
                 if (status < 0) {
                     curlEvents |= CURL_CSELECT_ERR;
                 }
-                if ((static_cast<unsigned int>(events) & UV_READABLE) != 0) {
+                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
                     curlEvents |= CURL_CSELECT_IN;
                 }
-                if ((static_cast<unsigned int>(events) & UV_WRITABLE) != 0) {
+                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
                     curlEvents |= CURL_CSELECT_OUT;
                 }
                 // drive() may close this poll handle. Do not use pollData after it.
