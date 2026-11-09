@@ -17,7 +17,7 @@ namespace amj::javascript {
 // thread, which must also run the loop and own the context. Keep this object at
 // a stable address; do not modify its fields after construction.
 //
-// callbackDidRun runs after every timer invocation, including JS failure. It must
+// jsExecutePendingJobs runs after every timer invocation, including JS failure. It must
 // consume any pending exception, apply the host's error policy, and drain QuickJS
 // jobs (handling their errors too). It may call shutdown(), but must not destroy
 // this object or the context, run a nested event loop, or throw. A throwing hook
@@ -44,7 +44,7 @@ struct Timeout {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
-    std::function<void(JSContext*)> callbackDidRun = {};
+    std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
     int32_t timerIDCounter = 0;             // Last allocated timer ID; allocation starts at 1.
     std::map<int32_t, Timer> timerMap = {}; // Host-owned JS references; released on firing/cancel/shutdown.
@@ -52,7 +52,7 @@ struct Timeout {
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
     // run the borrowed loop; the caller must supply an initialized loop.
-    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
+    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;

@@ -63,8 +63,9 @@ struct FetchState {
 // Host-owned, one per context/loop pair, at a stable address. Borrows the context
 // and initialized loop. All use/destruction requires their owner thread.
 //
-// callbackDidRun reports/consumes JS exceptions and drains QuickJS jobs after
-// delivered completions. It may call shutdown(), but must not destroy this
+// jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
+// QuickJS jobs until none remain, handling job exceptions too. It runs after
+// native promise settlement. It may call shutdown(), but must not destroy this
 // object/context, nest the loop, or throw. Captures must be native-only.
 //
 // Explicitly shutdown while QuickJS is alive, drain native close callbacks, then
@@ -80,12 +81,12 @@ struct FetchClient {
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
     std::map<CURL*, FetchState> fetchStateMap = {};
-    std::function<void(JSContext*)> callbackDidRun = {};
+    std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
     JSClassID responseClassID = 0;
     bool shuttingDown = false;
 
-    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
+    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
     FetchClient& operator=(const FetchClient&) = delete;

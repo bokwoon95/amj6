@@ -97,7 +97,7 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
         {
             const OwnedJSValue result(jsContext, JS_Call(jsContext, completion.get(), JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
         }
-        crypto->callbackDidRun(jsContext);
+        crypto->jsExecutePendingJobs(jsContext);
     } catch (...) {
         // No C++ exception may escape a libuv callback or a throwing host hook.
         std::terminate();
@@ -106,14 +106,14 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
 
 } // namespace
 
-Crypto::Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {
-    if (jsContext == nullptr || uvLoop == nullptr || !callbackDidRun) {
+Crypto::Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
+    if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
         throw std::invalid_argument("Crypto requires a context, initialized loop, and completion hook");
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
     this->uvLoop = uvLoop;
-    this->callbackDidRun = std::move(callbackDidRun);
+    this->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
     this->ownerThreadID = this_thread::get_id();
 }
 

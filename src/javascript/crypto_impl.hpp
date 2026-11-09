@@ -15,7 +15,7 @@ namespace amj::javascript {
 // Neither the context nor the initialized libuv loop is owned or run here.
 // Keep this object at a stable address and do not modify its fields directly.
 //
-// callbackDidRun runs after each delivered completion, including JS failures.
+// jsExecutePendingJobs runs after each digest-completion callback, including JS failures.
 // It must consume/report pending exceptions and drain QuickJS jobs. It may call
 // shutdown(), but must not destroy this object/context, nest the loop, or throw.
 // Captures must be native-only and remain valid until this object is destroyed.
@@ -31,12 +31,12 @@ struct Crypto {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     uv_loop_t* uvLoop = nullptr;
-    std::function<void(JSContext*)> callbackDidRun = {};
+    std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
     std::map<uv_work_t*, OwnedJSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
-    Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun);
+    Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~Crypto();
     Crypto(const Crypto&) = delete;
     Crypto& operator=(const Crypto&) = delete;

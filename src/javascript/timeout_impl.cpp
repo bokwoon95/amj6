@@ -52,14 +52,14 @@ void Timeout::Timer::close() {
     });
 }
 
-Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {
-    if (jsContext == nullptr || uvLoop == nullptr || callbackDidRun == nullptr) {
+Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
+    if (jsContext == nullptr || uvLoop == nullptr || jsExecutePendingJobs == nullptr) {
         throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
     this->uvLoop = uvLoop;
-    this->callbackDidRun = std::move(callbackDidRun);
+    this->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
     this->ownerThreadID = this_thread::get_id();
 }
 
@@ -166,7 +166,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 timer.callback.reset(JS_UNDEFINED);
 
                 // Let the host report any JS exceptions and execute pending Promise jobs.
-                timeout->callbackDidRun(timeout->jsContext);
+                timeout->jsExecutePendingJobs(timeout->jsContext);
             } catch (...) {
                 std::terminate();
             }

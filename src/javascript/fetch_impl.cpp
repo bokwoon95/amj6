@@ -178,7 +178,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
             }
             if (shouldCloseResponse) {
                 closeResponse(fetchClient, curlEasyHandle);
-                fetchClient.callbackDidRun(fetchClient.jsContext);
+                fetchClient.jsExecutePendingJobs(fetchClient.jsContext);
                 continue;
             }
             {
@@ -255,9 +255,9 @@ void settlePromises(uv_async_t* uvAsyncHandle) noexcept {
                 const JSValue callback = failed ? reject.get() : resolve.get();
                 const OwnedJSValue result(fetchClient.jsContext, JS_Call(fetchClient.jsContext, callback, JS_UNDEFINED, 1, &argumentValue));
             }
-            // The checkpoint can close responses or shut down the whole client.
+            // Executing JS jobs can close responses or shut down the whole client.
             // No map references or iterators survive across it.
-            fetchClient.callbackDidRun(fetchClient.jsContext);
+            fetchClient.jsExecutePendingJobs(fetchClient.jsContext);
         }
     } catch (...) {
         std::terminate(); // No C++ exception may escape a libuv callback.
@@ -1023,14 +1023,14 @@ FetchState::~FetchState() {
     curl_slist_free_all(ownedCurlRequestHeaders);
 }
 
-FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> callbackDidRun) {
-    if (jsContext == nullptr || uvLoop == nullptr || !callbackDidRun) {
+FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
+    if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
         throw std::invalid_argument("FetchClient requires a context, initialized loop, and completion hook");
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
     this->uvLoop = uvLoop;
-    this->callbackDidRun = std::move(callbackDidRun);
+    this->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
     this->ownerThreadID = this_thread::get_id();
     try {
         static std::once_flag curlInitialization;
