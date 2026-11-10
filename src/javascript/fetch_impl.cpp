@@ -373,102 +373,94 @@ struct PollData {
     curl_socket_t socket = CURL_SOCKET_BAD;
 };
 
-int socketInterest(CURL* /* curlEasyHandle */, curl_socket_t socket, int action, void* userdata, void* /* socketData */) noexcept {
-    try {
-        FetchClient* fetchClient = static_cast<FetchClient*>(userdata);
-        if (action == CURL_POLL_REMOVE) {
-            const std::map<curl_socket_t, uv_poll_t*>::node_type socketNode = fetchClient->ownedUvPollHandleMap.extract(socket);
-            if (!socketNode.empty()) {
-                uv_close(reinterpret_cast<uv_handle_t*>(socketNode.mapped()), [](uv_handle_t* uvHandle) {
-                    const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
-                    const PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
-                    delete pollData;
-                    delete uvPollHandle;
-                });
-            }
-            return 0;
-        }
-        if (fetchClient->shuttingDown) {
-            return 0;
-        }
-        if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
-            std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
-            std::unique_ptr<PollData> pollData = std::make_unique<PollData>();
-            pollData->fetchClient = fetchClient;
-            pollData->socket = socket;
-            fetchClient->ownedUvPollHandleMap.insert_or_assign(socket, nullptr);
-            const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
-            if (status != 0) {
-                fetchClient->ownedUvPollHandleMap.erase(socket);
-                return -1;
-            }
-            uvPollHandle->data = pollData.release();
-            fetchClient->ownedUvPollHandleMap.at(socket) = uvPollHandle.release();
-        }
-        unsigned int events = 0;
-        if (action == CURL_POLL_IN || action == CURL_POLL_INOUT) {
-            events |= static_cast<unsigned int>(UV_READABLE);
-        }
-        if (action == CURL_POLL_OUT || action == CURL_POLL_INOUT) {
-            events |= static_cast<unsigned int>(UV_WRITABLE);
-        }
-        uv_poll_t* uvPollHandle = fetchClient->ownedUvPollHandleMap.at(socket);
-        if (events == 0) {
-            return uv_poll_stop(uvPollHandle) == 0 ? 0 : -1;
-        }
-        const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
-            try {
+int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int action, void* userdata, void* /* socketData */) {
+    FetchClient* fetchClient = static_cast<FetchClient*>(userdata);
+    if (action == CURL_POLL_REMOVE) {
+        const std::map<curl_socket_t, uv_poll_t*>::node_type socketNode = fetchClient->ownedUvPollHandleMap.extract(socket);
+        if (!socketNode.empty()) {
+            uv_close(reinterpret_cast<uv_handle_t*>(socketNode.mapped()), [](uv_handle_t* uvHandle) {
+                const uv_poll_t* uvPollHandle = reinterpret_cast<uv_poll_t*>(uvHandle);
                 const PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
-                if (pollData->fetchClient == nullptr) {
-                    return;
-                }
-                unsigned int curlEvents = 0;
-                if (status < 0) {
-                    curlEvents |= CURL_CSELECT_ERR;
-                }
-                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
-                    curlEvents |= CURL_CSELECT_IN;
-                }
-                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
-                    curlEvents |= CURL_CSELECT_OUT;
-                }
-                // drive() may close this poll handle. Do not use pollData after it.
-                wakeCurl(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
-            } catch (...) {
-                std::terminate();
-            }
-        });
-        return status == 0 ? 0 : -1;
-    } catch (...) {
-        return -1;
+                delete pollData;
+                delete uvPollHandle;
+            });
+        }
+        return 0;
     }
+    if (fetchClient->shuttingDown) {
+        return 0;
+    }
+    if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
+        std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
+        std::unique_ptr<PollData> pollData = std::make_unique<PollData>();
+        pollData->fetchClient = fetchClient;
+        pollData->socket = socket;
+        fetchClient->ownedUvPollHandleMap.insert_or_assign(socket, nullptr);
+        const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
+        if (status != 0) {
+            fetchClient->ownedUvPollHandleMap.erase(socket);
+            return -1;
+        }
+        uvPollHandle->data = pollData.release();
+        fetchClient->ownedUvPollHandleMap.at(socket) = uvPollHandle.release();
+    }
+    unsigned int events = 0;
+    if (action == CURL_POLL_IN || action == CURL_POLL_INOUT) {
+        events |= static_cast<unsigned int>(UV_READABLE);
+    }
+    if (action == CURL_POLL_OUT || action == CURL_POLL_INOUT) {
+        events |= static_cast<unsigned int>(UV_WRITABLE);
+    }
+    uv_poll_t* uvPollHandle = fetchClient->ownedUvPollHandleMap.at(socket);
+    if (events == 0) {
+        return uv_poll_stop(uvPollHandle) == 0 ? 0 : -1;
+    }
+    const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
+        try {
+            const PollData* pollData = static_cast<PollData*>(uvPollHandle->data);
+            if (pollData->fetchClient == nullptr) {
+                return;
+            }
+            unsigned int curlEvents = 0;
+            if (status < 0) {
+                curlEvents |= CURL_CSELECT_ERR;
+            }
+            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
+                curlEvents |= CURL_CSELECT_IN;
+            }
+            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
+                curlEvents |= CURL_CSELECT_OUT;
+            }
+            // drive() may close this poll handle. Do not use pollData after it.
+            wakeCurl(*pollData->fetchClient, pollData->socket, static_cast<int>(curlEvents));
+        } catch (...) {
+            std::terminate();
+        }
+    });
+    return status == 0 ? 0 : -1;
 }
 
-int timerInterest(CURLM* /* curlMultiHandle */, long milliseconds, void* userdata) noexcept {
-    try {
-        const FetchClient* fetchClient = static_cast<FetchClient*>(userdata);
-        if (fetchClient->shuttingDown) {
-            return 0;
-        }
-        if (milliseconds < 0) {
-            return uv_timer_stop(fetchClient->ownedUvTimerHandle) == 0 ? 0 : -1;
-        }
-        uv_update_time(fetchClient->uvLoop);
-        const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
-            try {
-                FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
-                if (fetchClient != nullptr) {
-                    wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-                }
-            } catch (...) {
-                std::terminate();
-            }
-        },
-            static_cast<uint64_t>(milliseconds), 0);
-        return status == 0 ? 0 : -1;
-    } catch (...) {
-        return -1;
+int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, void* userdata) {
+    const FetchClient* fetchClient = static_cast<FetchClient*>(userdata);
+    if (fetchClient->shuttingDown) {
+        return 0;
     }
+    if (milliseconds < 0) {
+        return uv_timer_stop(fetchClient->ownedUvTimerHandle) == 0 ? 0 : -1;
+    }
+    uv_update_time(fetchClient->uvLoop);
+    const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
+        try {
+            FetchClient* fetchClient = static_cast<FetchClient*>(uvTimerHandle->data);
+            if (fetchClient != nullptr) {
+                wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            }
+        } catch (...) {
+            std::terminate();
+        }
+    },
+        static_cast<uint64_t>(milliseconds), 0);
+    return status == 0 ? 0 : -1;
 }
 
 } // namespace
@@ -918,7 +910,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             try {
                 return curlHeaderFunction(bytes, size, count, userdata);
             } catch (...) {
-                std::terminate();
+                return static_cast<std::size_t>(0);
             }
         });
         if (err != CURLE_OK) {
@@ -932,7 +924,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             try {
                 return curlWriteFunction(bytes, size, count, userdata);
             } catch (...) {
-                std::terminate();
+                return static_cast<std::size_t>(0);
             }
         });
         if (err != CURLE_OK) {
@@ -1072,7 +1064,13 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             ownedUvAsyncHandle = uvAsyncHandle.release();
             uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
         }
-        CURLMcode err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, socketInterest);
+        CURLMcode err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata, void* socketData) noexcept {
+            try {
+                return curlSocketFunction(curlEasyHandle, socket, action, userdata, socketData);
+            } catch (...) {
+                return -1;
+            }
+        });
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
@@ -1080,7 +1078,13 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, timerInterest);
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
+            try {
+                return curlTimerFunction(curlMultiHandle, milliseconds, userdata);
+            } catch (...) {
+                return -1;
+            }
+        });
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
