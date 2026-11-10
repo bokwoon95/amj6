@@ -724,6 +724,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
     FetchClient* fetchClient = nullptr;
     CURL* registeredHandle = nullptr;
     try {
+        // TODO: maybe an inline void_ptr::get<T>(void*) will be better to avoid intermediate voidPtr variables?
         void_ptr::VoidPtr* voidPtr = static_cast<void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
         if (voidPtr == nullptr) {
             return JS_EXCEPTION;
