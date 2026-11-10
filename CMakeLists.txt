@@ -4,8 +4,6 @@ cmake_minimum_required(VERSION 3.20)
 # it for release builds).
 option(ENABLE_ASAN_UBSAN "Enable sanitizers in Debug (ASan only with MSVC)" ON)
 
-option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
-
 # Disable coverage by default (pass in -DENABLE_COVERAGE=ON to enable it for test builds).
 option(ENABLE_COVERAGE "Enable LLVM source coverage" OFF)
 
@@ -90,7 +88,7 @@ set(amj_test_filters)
 
 ## == src/errors == ##
 
-add_library(amj_errors src/errors/errors.cpp)
+add_library(amj_errors STATIC src/errors/errors.cpp)
 target_link_libraries(amj_errors PRIVATE cpptrace::cpptrace)
 list(APPEND amj_libraries amj_errors)
 if(BUILD_TESTING)
@@ -100,7 +98,7 @@ endif()
 
 ## == src/context == ##
 
-add_library(amj_context src/context/context.cpp)
+add_library(amj_context STATIC src/context/context.cpp)
 list(APPEND amj_libraries amj_context)
 target_link_libraries(amj_context PUBLIC amj_errors PRIVATE Threads::Threads)
 if(BUILD_TESTING)
@@ -110,7 +108,7 @@ endif()
 
 ## == src/keyring == ##
 
-add_library(amj_keyring src/keyring/keyring.cpp)
+add_library(amj_keyring STATIC src/keyring/keyring.cpp)
 list(APPEND amj_libraries amj_keyring)
 target_link_libraries(amj_keyring PUBLIC amj_errors)
 if(BUILD_TESTING)
@@ -142,7 +140,7 @@ endif()
 ## == src/javascript == ##
 
 # File-by-file dependency order: javascript -> text -> URL -> event -> console -> scheduler -> timeout -> abort -> crypto -> fetch.
-add_library(amj_javascript
+add_library(amj_javascript STATIC
     src/javascript/javascript.hpp
     src/javascript/javascript.cpp
     src/javascript/text.js
@@ -248,8 +246,6 @@ endif()
 
 foreach(amj_target IN LISTS amj_libraries)
     target_include_directories(${amj_target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    set_target_properties(${amj_target} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    set_target_properties(${amj_target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<0:>")
 endforeach()
 
 # Keep executables beside one another even with multi-configuration generators.
