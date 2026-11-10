@@ -724,7 +724,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
     FetchClient* fetchClient = nullptr;
     CURL* registeredHandle = nullptr;
     try {
-        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
+        void_ptr::VoidPtr* voidPtr = static_cast<void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
         if (voidPtr == nullptr) {
             return JS_EXCEPTION;
         }
@@ -1039,9 +1039,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         std::unique_ptr<FetchResponse> fetchResponse = std::make_unique<FetchResponse>();
         fetchResponse->fetchClient = fetchClient;
         fetchResponse->curlEasyHandle = registeredHandle;
-        void_ptr::VoidPtr* responseVoidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
-        if (JS_SetOpaque(response.get(), responseVoidPtr) < 0) {
-            delete responseVoidPtr;
+        voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
+        if (JS_SetOpaque(response.get(), voidPtr) < 0) {
+            delete voidPtr;
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
