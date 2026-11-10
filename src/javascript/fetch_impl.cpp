@@ -37,10 +37,6 @@ namespace {
 // Wake curl due to socket activity or timeout, then notify the loop to check
 // for fetch results.
 void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
-    if (fetchClient.shuttingDown) {
-        return;
-    }
-
     // Have curl advance the transfers.
     int runningHandles = 0;
     const CURLMcode curlMultiCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
@@ -118,12 +114,10 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
     }
 
     for (CURL* curlEasyHandle : curlEasyHandles) {
-        if (fetchClient.shuttingDown) {
-            return;
-        }
         if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
             continue;
         }
+
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
         if (fetchState.abandoned) {
             const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
@@ -150,6 +144,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
             fetchClient.jsExecutePendingJobs(fetchClient.jsContext);
             continue;
         }
+
         const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient.jsContext, fetchState.readyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (readyPromiseState != JS_PROMISE_PENDING) {
@@ -182,12 +177,15 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
             fetchClient.jsExecutePendingJobs(fetchClient.jsContext);
             continue;
         }
+
         if (!fetchState.readPromise.has_value()) {
             continue;
         }
+
         if (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished) {
             continue;
         }
+
         OwnedJSPromise read = std::move(fetchState.readPromise.value());
         fetchState.readPromise.reset();
         if (!fetchState.errorMessage.empty()) {
@@ -360,9 +358,6 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
         }
         return 0;
     }
-    if (fetchClient->shuttingDown) {
-        return 0;
-    }
     if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
         std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
         std::unique_ptr<PollData> pollData = std::make_unique<PollData>();
@@ -415,9 +410,6 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
 
 int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, void* userdata) {
     const FetchClient* fetchClient = static_cast<FetchClient*>(userdata);
-    if (fetchClient->shuttingDown) {
-        return 0;
-    }
     if (milliseconds < 0) {
         return uv_timer_stop(fetchClient->ownedUvTimerHandle) == 0 ? 0 : -1;
     }
@@ -451,7 +443,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
-        if (fetchClient->shuttingDown || fetchResponse->curlEasyHandle == nullptr) {
+        if (fetchResponse->curlEasyHandle == nullptr) {
             return JS_ThrowTypeError(jsContext, "FetchResponse is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
@@ -475,13 +467,11 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
         };
-        if (!fetchClient->shuttingDown) {
-            uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
-            const int status = uv_async_send(fetchClient->ownedUvAsyncHandle);
-            if (status != 0) {
-                uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
-                throw std::runtime_error(uv_strerror(status));
-            }
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
+        const int status = uv_async_send(fetchClient->ownedUvAsyncHandle);
+        if (status != 0) {
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
+            throw std::runtime_error(uv_strerror(status));
         }
         return JS_DupValue(jsContext, fetchState.readPromise.value().promise.get());
     } catch (const std::bad_alloc&) {
@@ -508,7 +498,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         }
         CURL* curlEasyHandle = fetchResponse->curlEasyHandle;
         fetchResponse->curlEasyHandle = nullptr;
-        if (!fetchClient->shuttingDown && curlEasyHandle != nullptr) {
+        if (curlEasyHandle != nullptr) {
             const std::map<CURL*, FetchState>::node_type mapNode = fetchClient->fetchStateMap.extract(curlEasyHandle);
             if (mapNode.empty()) {
                 return JS_UNDEFINED;
@@ -557,7 +547,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
         if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
-        if (fetchClient->shuttingDown || fetchResponse->curlEasyHandle == nullptr) {
+        if (fetchResponse->curlEasyHandle == nullptr) {
             return JS_ThrowTypeError(jsContext, "FetchResponse is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
@@ -591,7 +581,7 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
         if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
-        if (fetchClient->shuttingDown || fetchResponse->curlEasyHandle == nullptr) {
+        if (fetchResponse->curlEasyHandle == nullptr) {
             return JS_ThrowTypeError(jsContext, "FetchResponse is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
@@ -630,7 +620,7 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
         if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
-        if (fetchClient->shuttingDown || fetchResponse->curlEasyHandle == nullptr) {
+        if (fetchResponse->curlEasyHandle == nullptr) {
             return JS_ThrowTypeError(jsContext, "FetchResponse is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
@@ -662,8 +652,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient->jsContext || fetchClient->shuttingDown) {
-            return JS_ThrowInternalError(jsContext, "FetchClient is shut down or belongs to another context");
+        if (jsContext != fetchClient->jsContext) {
+            return JS_ThrowInternalError(jsContext, "FetchClient belongs to another context");
         }
         if (argc < 1 || !JS_IsObject(argv[0])) {
             return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
@@ -796,10 +786,6 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
                 return JS_ThrowInternalError(jsContext, "Missing request body storage");
             }
             fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
-        }
-        // Property getters above can reenter JS and shut down the client.
-        if (fetchClient->shuttingDown) {
-            return JS_ThrowInternalError(jsContext, "FetchClient is shut down");
         }
         if (fetchClient->fetchStateMap.size() >= 64) {
             return JS_ThrowRangeError(jsContext, "Too many open FetchResponses");
@@ -1140,7 +1126,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (this_thread::get_id() != fetchClient.ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient.jsContext || fetchClient.shuttingDown || fetchClient.responseClassID != 0) {
+        if (jsContext != fetchClient.jsContext || fetchClient.responseClassID != 0) {
             JS_ThrowInternalError(jsContext, "FetchClient registration requires its live context and a fresh client");
             return nullptr;
         }
@@ -1164,7 +1150,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
                 try {
                     const std::unique_ptr<FetchResponse> fetchResponse(static_cast<FetchResponse*>(JS_GetOpaque(value, JS_GetClassID(value))));
-                    if (fetchResponse == nullptr || fetchResponse->curlEasyHandle == nullptr || fetchResponse->fetchClient->shuttingDown) {
+                    if (fetchResponse == nullptr || fetchResponse->curlEasyHandle == nullptr) {
                         return;
                     }
                     FetchClient* fetchClient = fetchResponse->fetchClient;
@@ -1176,9 +1162,6 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                     // by settlePromises(), and do not settle promises
                     // from inside a QuickJS finalizer.
                     fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle).abandoned = true;
-                    if (fetchClient->shuttingDown) {
-                        return;
-                    }
                     uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
                     const int status = uv_async_send(fetchClient->ownedUvAsyncHandle);
                     if (status != 0) {

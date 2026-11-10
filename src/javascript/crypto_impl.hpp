@@ -16,8 +16,10 @@ namespace amj::javascript {
 // Keep this object at a stable address and do not modify its fields directly.
 //
 // jsExecutePendingJobs runs after each digest-completion callback, including JS failures.
-// It must consume/report pending exceptions and drain QuickJS jobs. It may call
-// shutdown(), but must not destroy this object/context, nest the loop, or throw.
+// It must consume/report pending exceptions and drain QuickJS jobs. It must not
+// run/pump libuv or another event loop, shut down or destroy any native module
+// service, free the context/runtime, or throw. Host teardown must wait until JS
+// execution and native callbacks return; JS must not resume after teardown begins.
 // Captures must be native-only and remain valid until this object is destroyed.
 //
 // Explicitly shutdown before freeing the context. Shutdown detaches pending

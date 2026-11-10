@@ -19,9 +19,11 @@ namespace amj::javascript {
 //
 // jsExecutePendingJobs runs after every timer invocation, including JS failure. It must
 // consume any pending exception, apply the host's error policy, and drain QuickJS
-// jobs (handling their errors too). It may call shutdown(), but must not destroy
-// this object or the context, run a nested event loop, or throw. A throwing hook
-// terminates the process rather than unwinding through libuv.
+// jobs (handling their errors too). It must not run/pump libuv or another event
+// loop, shut down or destroy any native module service, free the context/runtime,
+// or throw. Host teardown must wait until JS execution and native callbacks return;
+// JS must not resume after teardown begins. A throwing hook terminates the process
+// rather than unwinding through libuv.
 //
 // shutdown() releases pending timers' JS values and starts native handle closure;
 // an executing callback keeps its local JS references until it returns.

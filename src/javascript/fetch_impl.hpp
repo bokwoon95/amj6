@@ -65,8 +65,10 @@ struct FetchState {
 //
 // jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
 // QuickJS jobs until none remain, handling job exceptions too. It runs after
-// native promise settlement. It may call shutdown(), but must not destroy this
-// object/context, nest the loop, or throw. Captures must be native-only.
+// native promise settlement. It must not run/pump libuv or another event loop,
+// shut down or destroy any native module service, free the context/runtime, or
+// throw. Host teardown must wait until JS execution and native callbacks return;
+// JS must not resume after teardown begins. Captures must be native-only.
 //
 // Explicitly shutdown while QuickJS is alive, drain native close callbacks, then
 // free the context/runtime before destroying this object. Repeated shutdown and
