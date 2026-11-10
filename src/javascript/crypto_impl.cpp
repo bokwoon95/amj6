@@ -44,8 +44,8 @@ struct DigestWork {
 void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
     try {
         const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
-        DigestWork* digestWork = &voidPtr->get<DigestWork>();
-        Crypto* crypto = digestWork->crypto;
+        DigestWork& digestWork = voidPtr->get<DigestWork>();
+        Crypto* crypto = digestWork.crypto;
         if (crypto == nullptr) {
             return; // Shutdown detached this request; no JS dependencies remain.
         }
@@ -58,24 +58,24 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
             std::terminate();
         }
         const OwnedJSValue& completion = completionNode.mapped();
-        digestWork->crypto = nullptr;
+        digestWork.crypto = nullptr;
 
         JSValue outputValue = JS_EXCEPTION;
         try {
             if (status < 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            if (digestWork->digestStatus != 1) {
-                const char* reason = ERR_reason_error_string(digestWork->opensslError);
+            if (digestWork.digestStatus != 1) {
+                const char* reason = ERR_reason_error_string(digestWork.opensslError);
                 if (reason != nullptr) {
                     throw std::runtime_error(reason);
                 }
                 throw std::runtime_error("OpenSSL digest failed");
             }
-            if (digestWork->outputLength > digestWork->output.size()) {
+            if (digestWork.outputLength > digestWork.output.size()) {
                 throw std::runtime_error("OpenSSL returned an invalid digest length");
             }
-            outputValue = JS_NewArrayBufferCopy(jsContext, digestWork->output.data(), digestWork->outputLength);
+            outputValue = JS_NewArrayBufferCopy(jsContext, digestWork.output.data(), digestWork.outputLength);
         } catch (const std::bad_alloc&) {
             JS_ThrowOutOfMemory(jsContext);
         } catch (const std::exception& exception) {
@@ -272,12 +272,12 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
             const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvWork->data);
-            DigestWork* digestWork = &voidPtr->get<DigestWork>();
+            DigestWork& digestWork = voidPtr->get<DigestWork>();
             // The worker touches native storage only, never crypto/context/JS.
             ERR_clear_error();
-            digestWork->digestStatus = EVP_Digest(digestWork->input.data(), digestWork->input.size(), digestWork->output.data(), &digestWork->outputLength, digestWork->digestType, nullptr);
-            if (digestWork->digestStatus != 1) {
-                digestWork->opensslError = ERR_get_error();
+            digestWork.digestStatus = EVP_Digest(digestWork.input.data(), digestWork.input.size(), digestWork.output.data(), &digestWork.outputLength, digestWork.digestType, nullptr);
+            if (digestWork.digestStatus != 1) {
+                digestWork.opensslError = ERR_get_error();
             }
         };
         submittedWork->uvWork.data = voidPtr.release();
