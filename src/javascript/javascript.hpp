@@ -69,7 +69,7 @@ OwnedJSValue jsNewError(JSContext* jsContext, std::string name, std::string mess
 
 // Owns a promise and its settlement functions. Duplicate the promise when passing
 // ownership to JavaScript. Callers release its settlement functions when used.
-struct JSPromise {
+struct OwnedJSPromise {
     OwnedJSValue promise = {};
     OwnedJSValue resolveFunction = {};
     OwnedJSValue rejectFunction = {};

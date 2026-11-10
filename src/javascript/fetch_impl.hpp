@@ -43,8 +43,8 @@ struct FetchState {
     std::size_t headerBytes = 0;
     std::string errorMessage = "";
 
-    JSPromise ready = {};
-    std::optional<JSPromise> read = {};
+    OwnedJSPromise readyPromise = {};
+    std::optional<OwnedJSPromise> readPromise = {};
 
     bool responseReady = false; // Response headers received.
     bool finished = false;      // Network transfer ended.
