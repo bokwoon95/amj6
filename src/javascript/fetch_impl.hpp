@@ -92,7 +92,6 @@ struct FetchClient {
     uint64_t fetchStateIDCounter = 0;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    JSClassID responseClassID = 0;
     bool shuttingDown = false;
 
     FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
@@ -116,16 +115,15 @@ struct FetchResponse {
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
 
-    // Direct QuickJS callbacks. Extract this response from thisValue;
-    // functionData[0] supplies the bound client's class for receiver validation.
-    static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
-    static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
+    // Direct QuickJS callbacks. Extract this response from thisValue.
+    static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 
     // Getter-only JS properties: status, headers, and url. ready is a read-only
     // Promise property installed on each JS response by FetchClient::send().
-    static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
-    static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
-    static JSValue getURL(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
+    static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    static JSValue getURL(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 };
 
 // Registers amj:fetch_impl, exporting fetchClient with send(fetchRequest).

@@ -36,6 +36,9 @@ namespace void_ptr = amj::void_ptr;
 
 namespace {
 
+std::mutex fetchResponseClassIDMutex = {};
+std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+
 // Wake curl due to socket activity or timeout, then notify the loop to check
 // for fetch results.
 void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
@@ -456,19 +459,27 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
 
 } // namespace
 
-JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */, int /* magic */, JSValueConst* functionData) {
+JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        const void_ptr::VoidPtr* clientVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(functionData[0], JS_GetClassID(functionData[0])));
-        FetchClient* fetchClient = clientVoidPtr->get<FetchClient*>();
-        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchClient->responseClassID));
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+        }
+        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID));
         if (responseVoidPtr == nullptr) {
             return JS_EXCEPTION;
         }
         const FetchResponse* fetchResponse = &responseVoidPtr->get<FetchResponse>();
+        FetchClient* fetchClient = fetchResponse->fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
+        if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         if (fetchResponse->curlEasyHandle == nullptr) {
@@ -511,19 +522,27 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
     }
 }
 
-JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */, int /* magic */, JSValueConst* functionData) {
+JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        const void_ptr::VoidPtr* clientVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(functionData[0], JS_GetClassID(functionData[0])));
-        FetchClient* fetchClient = clientVoidPtr->get<FetchClient*>();
-        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchClient->responseClassID));
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+        }
+        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID));
         if (responseVoidPtr == nullptr) {
             return JS_EXCEPTION;
         }
         FetchResponse* fetchResponse = &responseVoidPtr->get<FetchResponse>();
+        FetchClient* fetchClient = fetchResponse->fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
+        if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         CURL* curlEasyHandle = fetchResponse->curlEasyHandle;
@@ -564,19 +583,27 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
     }
 }
 
-JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */, int /* magic */, JSValueConst* functionData) {
+JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        const void_ptr::VoidPtr* clientVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(functionData[0], JS_GetClassID(functionData[0])));
-        const FetchClient* fetchClient = clientVoidPtr->get<FetchClient*>();
-        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchClient->responseClassID));
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+        }
+        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID));
         if (responseVoidPtr == nullptr) {
             return JS_EXCEPTION;
         }
         const FetchResponse* fetchResponse = &responseVoidPtr->get<FetchResponse>();
+        const FetchClient* fetchClient = fetchResponse->fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
+        if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         if (fetchResponse->curlEasyHandle == nullptr) {
@@ -600,19 +627,27 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
     }
 }
 
-JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */, int /* magic */, JSValueConst* functionData) {
+JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        const void_ptr::VoidPtr* clientVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(functionData[0], JS_GetClassID(functionData[0])));
-        const FetchClient* fetchClient = clientVoidPtr->get<FetchClient*>();
-        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchClient->responseClassID));
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+        }
+        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID));
         if (responseVoidPtr == nullptr) {
             return JS_EXCEPTION;
         }
         const FetchResponse* fetchResponse = &responseVoidPtr->get<FetchResponse>();
+        const FetchClient* fetchClient = fetchResponse->fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
+        if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         if (fetchResponse->curlEasyHandle == nullptr) {
@@ -641,19 +676,27 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
     }
 }
 
-JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */, int /* magic */, JSValueConst* functionData) {
+JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        const void_ptr::VoidPtr* clientVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(functionData[0], JS_GetClassID(functionData[0])));
-        const FetchClient* fetchClient = clientVoidPtr->get<FetchClient*>();
-        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchClient->responseClassID));
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+        }
+        const void_ptr::VoidPtr* responseVoidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID));
         if (responseVoidPtr == nullptr) {
             return JS_EXCEPTION;
         }
         const FetchResponse* fetchResponse = &responseVoidPtr->get<FetchResponse>();
+        const FetchClient* fetchClient = fetchResponse->fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (fetchResponse->fetchClient != fetchClient || jsContext != fetchClient->jsContext) {
+        if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         if (fetchResponse->curlEasyHandle == nullptr) {
@@ -691,6 +734,15 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         if (jsContext != fetchClient->jsContext) {
             return JS_ThrowInternalError(jsContext, "FetchClient belongs to another context");
+        }
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
+            }
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
         }
         if (argc < 1 || !JS_IsObject(argv[0])) {
             return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
@@ -979,7 +1031,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
         };
-        OwnedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchClient->responseClassID));
+        OwnedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchResponseClassID));
         if (JS_IsException(response.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
@@ -1174,8 +1226,8 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (this_thread::get_id() != fetchClient.ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient.jsContext || fetchClient.responseClassID != 0) {
-            JS_ThrowInternalError(jsContext, "FetchClient registration requires its live context and a fresh client");
+        if (jsContext != fetchClient.jsContext || fetchClient.shuttingDown) {
+            JS_ThrowInternalError(jsContext, "FetchClient registration requires its live context and an active client");
             return nullptr;
         }
         JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
@@ -1195,7 +1247,25 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        JS_NewClassID(jsRuntime, &fetchClient.responseClassID);
+        JSClassID fetchResponseClassID = 0;
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (fetchResponseClassIDMap.contains(jsRuntime)) {
+                fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+            } else {
+                JS_NewClassID(jsRuntime, &fetchResponseClassID);
+                fetchResponseClassIDMap.insert_or_assign(jsRuntime, fetchResponseClassID);
+                const auto jsRuntimeFinalizer = [](JSRuntime* jsRuntime, void* /* argument */) {
+                    const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+                    fetchResponseClassIDMap.erase(jsRuntime);
+                };
+                const int status = JS_AddRuntimeFinalizer(jsRuntime, jsRuntimeFinalizer, nullptr);
+                if (status < 0) {
+                    fetchResponseClassIDMap.erase(jsRuntime);
+                    throw std::bad_alloc();
+                }
+            }
+        }
         const JSClassDef responseClass = {
             .class_name = "FetchResponse",
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
@@ -1231,7 +1301,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             .call = nullptr,
             .exotic = nullptr,
         };
-        if (JS_NewClass(jsRuntime, fetchClient.responseClassID, &responseClass) < 0) {
+        if (!JS_IsRegisteredClass(jsRuntime, fetchResponseClassID) && JS_NewClass(jsRuntime, fetchResponseClassID, &responseClass) < 0) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
@@ -1254,23 +1324,23 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (JS_IsException(prototype.get())) {
             return nullptr;
         }
-        const std::array<std::pair<const char*, JSCFunctionData*>, 2> methods = {{
+        const std::array<std::pair<const char*, JSCFunction*>, 2> methods = {{
             {"read", FetchResponse::read},
             {"close", FetchResponse::close},
         }};
-        for (const std::pair<const char*, JSCFunctionData*>& method : methods) {
-            const JSValue function = JS_NewCFunctionData2(jsContext, method.second, method.first, 0, 0, 1, &clientData);
+        for (const std::pair<const char*, JSCFunction*>& method : methods) {
+            const JSValue function = JS_NewCFunction(jsContext, method.second, method.first, 0);
             if (JS_IsException(function) || JS_DefinePropertyValueStr(jsContext, prototype.get(), method.first, function, 0) < 0) {
                 return nullptr;
             }
         }
-        const std::array<std::pair<const char*, JSCFunctionData*>, 3> getters = {{
+        const std::array<std::pair<const char*, JSCFunction*>, 3> getters = {{
             {"status", FetchResponse::getStatus},
             {"headers", FetchResponse::getHeaders},
             {"url", FetchResponse::getURL},
         }};
-        for (const std::pair<const char*, JSCFunctionData*>& getter : getters) {
-            const JSValue function = JS_NewCFunctionData2(jsContext, getter.second, getter.first, 0, 0, 1, &clientData);
+        for (const std::pair<const char*, JSCFunction*>& getter : getters) {
+            const JSValue function = JS_NewCFunction(jsContext, getter.second, getter.first, 0);
             if (JS_IsException(function)) {
                 return nullptr;
             }
@@ -1281,7 +1351,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                 return nullptr;
             }
         }
-        JS_SetClassProto(jsContext, fetchClient.responseClassID, prototype.release());
+        JS_SetClassProto(jsContext, fetchResponseClassID, prototype.release());
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:fetch_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
             const JSValue client = JS_GetModulePrivateValue(jsContext, jsModuleDef);
             if (JS_IsException(client)) {
