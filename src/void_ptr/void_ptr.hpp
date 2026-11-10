@@ -112,23 +112,4 @@ private:
     void (*deleteFunction)(std::any&) noexcept = nullptr;
 };
 
-// Accept only actual void* or const void* userdata. For an already-typed wrapper,
-// call is<T>() or cast<T>() directly. Non-null data must point to a live VoidPtr.
-// A null wrapper does not match any type; a borrowed payload may itself be null.
-template <typename T, typename Pointer>
-    requires(std::is_same_v<Pointer, void*> || std::is_same_v<Pointer, const void*>)
-bool is(Pointer data) noexcept {
-    return data != nullptr && static_cast<const VoidPtr*>(data)->is<T>();
-}
-
-// A null wrapper is invalid; a borrowed payload inside it may still be null.
-template <typename T, typename Pointer>
-    requires(std::is_same_v<Pointer, void*> || std::is_same_v<Pointer, const void*>)
-decltype(auto) cast(Pointer data) noexcept {
-    if (data == nullptr) {
-        std::terminate();
-    }
-    return static_cast<const VoidPtr*>(data)->cast<T>();
-}
-
 } // namespace amj::void_ptr

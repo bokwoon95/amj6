@@ -139,7 +139,7 @@ void Crypto::shutdown() {
     std::map<uv_work_t*, OwnedJSValue> detached;
     detached.swap(pendingDigests);
     for (const std::pair<uv_work_t* const, OwnedJSValue>& entry : detached) {
-        DigestWork& digestWork = void_ptr::cast<DigestWork>(entry.first->data);
+        DigestWork& digestWork = static_cast<void_ptr::VoidPtr*>(entry.first->data)->cast<DigestWork>();
         digestWork.crypto = nullptr;
     }
 }
@@ -270,7 +270,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
-            DigestWork& digestWork = void_ptr::cast<DigestWork>(uvWork->data);
+            DigestWork& digestWork = static_cast<void_ptr::VoidPtr*>(uvWork->data)->cast<DigestWork>();
             // The worker touches native storage only, never crypto/context/JS.
             ERR_clear_error();
             digestWork.digestStatus = EVP_Digest(digestWork.input.data(), digestWork.input.size(), digestWork.output.data(), &digestWork.outputLength, digestWork.digestType, nullptr);
@@ -353,7 +353,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                 if (cryptoData == nullptr) {
                     return JS_EXCEPTION;
                 }
-                Crypto* crypto = void_ptr::cast<Crypto*>(cryptoData);
+                Crypto* crypto = static_cast<const void_ptr::VoidPtr*>(cryptoData)->cast<Crypto*>();
                 return cryptoDigest(jsContext, thisValue, argc, argv, *crypto);
             };
             JSValueConst functionData = modulePrivateValue.get();

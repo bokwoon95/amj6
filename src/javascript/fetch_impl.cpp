@@ -109,7 +109,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
     if (uvAsyncHandle->data == nullptr) {
         return;
     }
-    FetchClient* fetchClient = void_ptr::cast<FetchClient*>(uvAsyncHandle->data);
+    FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
     uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
 
     std::vector<std::pair<CURL*, uint64_t>> entries;
@@ -260,7 +260,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
 // Curl callbacks only mutate native state. Never invoke QuickJS from here.
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
 std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
-    FetchState* fetchState = void_ptr::cast<FetchState*>(userdata);
+    FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
         fetchState->errorMessage = "Response headers exceed 64 KiB";
         return 0;
@@ -338,7 +338,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
 }
 
 std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, const void* userdata) {
-    FetchState* fetchState = void_ptr::cast<FetchState*>(userdata);
+    FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {
         fetchState->errorMessage = "HTTP body block exceeds buffer capacity";
         return 0;
@@ -366,7 +366,7 @@ struct PollData {
 };
 
 int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int action, const void* userdata, void* /* socketData */) {
-    FetchClient* fetchClient = void_ptr::cast<FetchClient*>(userdata);
+    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
     if (action == CURL_POLL_REMOVE) {
         const std::map<curl_socket_t, uv_poll_t*>::node_type socketNode = fetchClient->ownedUvPollHandleMap.extract(socket);
         if (!socketNode.empty()) {
@@ -405,7 +405,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
     }
     const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         try {
-            const PollData& pollData = void_ptr::cast<PollData>(uvPollHandle->data);
+            const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
             if (pollData.fetchClient == nullptr) {
                 return;
             }
@@ -429,14 +429,14 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
 }
 
 int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const void* userdata) {
-    const FetchClient* fetchClient = void_ptr::cast<FetchClient*>(userdata);
+    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
     if (milliseconds < 0) {
         return uv_timer_stop(fetchClient->ownedUvTimerHandle) == 0 ? 0 : -1;
     }
     uv_update_time(fetchClient->uvLoop);
     const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
         try {
-            FetchClient* fetchClient = void_ptr::cast<FetchClient*>(uvTimerHandle->data);
+            FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
             if (fetchClient != nullptr) {
                 wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             }
@@ -465,7 +465,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (responseData == nullptr) {
             return JS_EXCEPTION;
         }
-        const FetchResponse& fetchResponse = void_ptr::cast<FetchResponse>(responseData);
+        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
         FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
@@ -528,7 +528,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         if (responseData == nullptr) {
             return JS_EXCEPTION;
         }
-        FetchResponse& fetchResponse = void_ptr::cast<FetchResponse>(responseData);
+        FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
         FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
@@ -589,7 +589,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
         if (responseData == nullptr) {
             return JS_EXCEPTION;
         }
-        const FetchResponse& fetchResponse = void_ptr::cast<FetchResponse>(responseData);
+        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
         const FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
@@ -633,7 +633,7 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
         if (responseData == nullptr) {
             return JS_EXCEPTION;
         }
-        const FetchResponse& fetchResponse = void_ptr::cast<FetchResponse>(responseData);
+        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
         const FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
@@ -682,7 +682,7 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
         if (responseData == nullptr) {
             return JS_EXCEPTION;
         }
-        const FetchResponse& fetchResponse = void_ptr::cast<FetchResponse>(responseData);
+        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
         const FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
@@ -719,7 +719,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (clientData == nullptr) {
             return JS_EXCEPTION;
         }
-        fetchClient = void_ptr::cast<FetchClient*>(clientData);
+        fetchClient = static_cast<const void_ptr::VoidPtr*>(clientData)->cast<FetchClient*>();
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }

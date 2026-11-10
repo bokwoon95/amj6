@@ -150,7 +150,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const TimerData& timerData = void_ptr::cast<TimerData>(uvTimerHandle->data);
+                const TimerData& timerData = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<TimerData>();
                 Timeout* timeout = timerData.timeout;
                 const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData.timerID);
                 if (mapNode.empty()) {
@@ -327,7 +327,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
                 if (timeoutData == nullptr) {
                     return JS_EXCEPTION;
                 }
-                Timeout* timeout = void_ptr::cast<Timeout*>(timeoutData);
+                Timeout* timeout = static_cast<const void_ptr::VoidPtr*>(timeoutData)->cast<Timeout*>();
                 if (magic < 0 || static_cast<std::size_t>(magic) >= functionEntries.size()) {
                     return JS_ThrowInternalError(jsContext, "Invalid timeout function index");
                 }

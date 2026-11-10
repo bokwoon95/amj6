@@ -49,7 +49,7 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         if (consoleDataPointer == nullptr) {
             return JS_EXCEPTION;
         }
-        const std::function<void(ConsoleData)>* consoleSink = void_ptr::cast<std::function<void(ConsoleData)>*>(consoleDataPointer);
+        const std::function<void(ConsoleData)>* consoleSink = static_cast<const void_ptr::VoidPtr*>(consoleDataPointer)->cast<std::function<void(ConsoleData)>*>();
         (*consoleSink)(consoleData);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
