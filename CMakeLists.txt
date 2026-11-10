@@ -139,7 +139,7 @@ endif()
 
 ## == src/javascript == ##
 
-# File-by-file dependency order: javascript -> text -> URL -> event -> console -> scheduler -> timeout -> abort -> crypto -> fetch.
+# File-by-file dependency order: javascript -> text -> URL -> event -> console -> timeout -> abort -> crypto -> fetch.
 add_library(amj_javascript STATIC
     src/javascript/javascript.hpp
     src/javascript/javascript.cpp
@@ -153,7 +153,6 @@ add_library(amj_javascript STATIC
     src/javascript/console_impl.cpp
     src/javascript/console_impl.d.ts
     src/javascript/console.js
-    src/javascript/scheduler.cpp
     src/javascript/timeout_impl.cpp
     src/javascript/timeout_impl.d.ts
     src/javascript/timeout.js

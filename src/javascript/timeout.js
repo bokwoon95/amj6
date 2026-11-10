@@ -1,5 +1,5 @@
 // @ts-check
-// Public timer semantics over the C++ scheduler-backed implementation.
+// Public timer semantics over the C++ libuv-backed implementation.
 import { timeoutClear, timeoutSet } from "amj:timeout_impl";
 
 /**

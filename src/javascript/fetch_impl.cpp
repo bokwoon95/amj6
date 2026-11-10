@@ -318,7 +318,6 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
     return length;
 }
 
-// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
 std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
     FetchState* fetchState = static_cast<FetchState*>(userdata);
     if (size != 0 && count > (256U << 10U /* 256 KiB */) / size) {

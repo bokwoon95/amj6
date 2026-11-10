@@ -169,8 +169,7 @@ returning curl's pause result: curl redelivers that entire block on resume.
 The public facade preserves the original JS abort reason, rather than exposing
 native close's generic rejection. Native readiness ends at the final response's
 headers, not at an informational/redirect header block. No fixed body deadline
-is imposed. `Scheduler` remains on disk but no longer drives fetch, timers, or
-digests; an invocation host must run libuv, not `Scheduler::runNext()`.
+is imposed. An invocation host must run libuv to drive fetch, timers, and digests.
 
 ## Declaration files and checking
 
