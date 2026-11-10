@@ -1,6 +1,7 @@
 #pragma once
 
 #include "javascript.hpp"
+#include "void_ptr/void_ptr.hpp"
 
 #include <curl/curl.h>
 #include <curl/multi.h>
@@ -12,6 +13,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -19,6 +21,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace void_ptr = amj::void_ptr;
 
 struct FetchRequest {
     std::string url = "";
@@ -34,6 +37,7 @@ struct FetchState {
     CURLM* curlMultiHandle = nullptr;
     CURL* ownedCurlEasyHandle = nullptr;
     curl_slist* ownedCurlRequestHeaders = nullptr;
+    std::unique_ptr<void_ptr::VoidPtr> curlCallbackData = nullptr; // Owns the wrapper, which borrows this state.
     FetchRequest fetchRequest = {};
     int64_t statusCode = 0;
     std::string effectiveURL = "";
@@ -80,6 +84,7 @@ struct FetchClient {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
+    std::unique_ptr<void_ptr::VoidPtr> curlCallbackData = nullptr; // Owns the wrapper, which borrows this client.
     uv_timer_t* ownedUvTimerHandle = nullptr;
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};

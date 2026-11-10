@@ -104,7 +104,7 @@ Prioritize memory safety, defined behavior, and predictable failure over micro-o
 
 ### Memory and lifetime safety
 - Prefer stack allocation, RAII, standard containers, and smart pointers.
-- Avoid explicit `new`, `delete`, `malloc`, and `free`.
+- Avoid explicit `new`, `delete`, `malloc`, and `free`, except at C userdata ownership boundaries. Use `new T(...)` only for a one-line ownership transfer; otherwise use `make_unique()` and `.release()` at the end.
 - Prefer `std::unique_ptr` for dynamic ownership; use `std::shared_ptr` only when shared ownership is necessary.
 - Prefer references for required borrowed objects and pointers for nullable borrowed objects.
 - Never dereference a pointer unless its validity is established.

@@ -1,6 +1,7 @@
 #include "console_impl.hpp"
 
 #include "javascript.hpp"
+#include "void_ptr/void_ptr.hpp"
 
 #include <quickjs.h>
 
@@ -11,6 +12,7 @@
 #include <string>
 
 namespace amj::javascript {
+namespace void_ptr = amj::void_ptr;
 
 JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) {
     try {
@@ -43,10 +45,11 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             return JS_EXCEPTION;
         }
         consoleData.text = text.value();
-        const std::function<void(ConsoleData)>* consoleSink = static_cast<const std::function<void(ConsoleData)>*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-        if (consoleSink == nullptr) {
+        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
+        if (voidPtr == nullptr) {
             return JS_EXCEPTION;
         }
+        const std::function<void(ConsoleData)>* consoleSink = voidPtr->get<std::function<void(ConsoleData)>*>();
         (*consoleSink)(consoleData);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
@@ -72,7 +75,10 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         JS_NewClassID(jsRuntime, &consoleClassID);
         const JSClassDef jsClassDef = {
             .class_name = "ConsoleSink",
-            .finalizer = nullptr,
+            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
+                delete voidPtr;
+            },
             .gc_mark = nullptr,
             .call = nullptr,
             .exotic = nullptr,
@@ -86,8 +92,10 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        status = JS_SetOpaque(modulePrivateValue.get(), &consoleSink);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&consoleSink);
+        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach console sink");
             return nullptr;
         }

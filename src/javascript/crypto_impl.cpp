@@ -1,6 +1,7 @@
 #include "crypto_impl.hpp"
 
 #include "javascript.hpp"
+#include "void_ptr/void_ptr.hpp"
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -25,6 +26,7 @@
 
 namespace amj::javascript {
 namespace this_thread = std::this_thread;
+namespace void_ptr = amj::void_ptr;
 
 namespace {
 
@@ -41,7 +43,8 @@ struct DigestWork {
 
 void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
     try {
-        const std::unique_ptr<DigestWork> digestWork(static_cast<DigestWork*>(uvWork->data));
+        const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
+        DigestWork* digestWork = &voidPtr->get<DigestWork>();
         Crypto* crypto = digestWork->crypto;
         if (crypto == nullptr) {
             return; // Shutdown detached this request; no JS dependencies remain.
@@ -136,8 +139,9 @@ void Crypto::shutdown() {
     std::map<uv_work_t*, OwnedJSValue> detached;
     detached.swap(pendingDigests);
     for (const std::pair<uv_work_t* const, OwnedJSValue>& entry : detached) {
-        DigestWork* digestWork = static_cast<DigestWork*>(entry.first->data);
-        digestWork->crypto = nullptr;
+        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(entry.first->data);
+        DigestWork& digestWork = voidPtr->get<DigestWork>();
+        digestWork.crypto = nullptr;
     }
 }
 
@@ -262,11 +266,13 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             // Snapshot the validated slice before returning or invoking any JS.
             std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
         }
-        digestWork->uvWork.data = digestWork.get();
+        DigestWork* submittedWork = digestWork.get();
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
         OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
-        crypto.pendingDigests.insert_or_assign(&digestWork->uvWork, std::move(completion));
+        crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
-            DigestWork* digestWork = static_cast<DigestWork*>(uvWork->data);
+            const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvWork->data);
+            DigestWork* digestWork = &voidPtr->get<DigestWork>();
             // The worker touches native storage only, never crypto/context/JS.
             ERR_clear_error();
             digestWork->digestStatus = EVP_Digest(digestWork->input.data(), digestWork->input.size(), digestWork->output.data(), &digestWork->outputLength, digestWork->digestType, nullptr);
@@ -274,14 +280,15 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
                 digestWork->opensslError = ERR_get_error();
             }
         };
-        const int status = uv_queue_work(crypto.uvLoop, &digestWork->uvWork, doDigest, digestDidFinish);
+        submittedWork->uvWork.data = voidPtr.release();
+        const int status = uv_queue_work(crypto.uvLoop, &submittedWork->uvWork, doDigest, digestDidFinish);
         if (status != 0) {
-            crypto.pendingDigests.erase(&digestWork->uvWork);
+            crypto.pendingDigests.erase(&submittedWork->uvWork);
+            delete static_cast<void_ptr::VoidPtr*>(submittedWork->uvWork.data);
             return JS_ThrowInternalError(jsContext, "cryptoDigest: uv_queue_work: %s", uv_strerror(status));
         }
         // The map owns completion; after successful submission,
-        // digestDidFinish owns and deletes the work allocation.
-        DigestWork* submittedWork = digestWork.release();
+        // digestDidFinish deletes the wrapper and its owned work allocation.
         submittedWork->crypto = &crypto;
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
@@ -307,7 +314,10 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         JS_NewClassID(jsRuntime, &cryptoClassID);
         const JSClassDef jsClassDef = {
             .class_name = "Crypto",
-            .finalizer = nullptr,
+            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
+                delete voidPtr;
+            },
             .gc_mark = nullptr, // Callback references belong to the host-owned Crypto.
             .call = nullptr,
             .exotic = nullptr,
@@ -321,8 +331,10 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        status = JS_SetOpaque(modulePrivateValue.get(), &crypto);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&crypto);
+        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach Crypto");
             return nullptr;
         }
@@ -340,10 +352,11 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                 return -1;
             }
             const auto digestCallback = [](JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) -> JSValue {
-                Crypto* crypto = static_cast<Crypto*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-                if (crypto == nullptr) {
+                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
+                if (voidPtr == nullptr) {
                     return JS_EXCEPTION;
                 }
+                Crypto* crypto = voidPtr->get<Crypto*>();
                 return cryptoDigest(jsContext, thisValue, argc, argv, *crypto);
             };
             JSValueConst functionData = modulePrivateValue.get();

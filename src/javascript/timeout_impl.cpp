@@ -270,7 +270,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (!JS_IsRegisteredClass(jsRuntime, timeoutClassID)) {
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
-                .finalizer = nullptr,
+                .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                    const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
+                    delete voidPtr;
+                },
                 .gc_mark = nullptr, // Callback references belong to the host-owned Timeout.
                 .call = nullptr,
                 .exotic = nullptr,
@@ -287,8 +290,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        int status = JS_SetOpaque(modulePrivateValue.get(), &timeout);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&timeout);
+        int status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach Timeout");
             return nullptr;
         }
@@ -322,10 +327,11 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
 
             const auto jsCFunctionData = [](JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData) -> JSValue {
                 // QuickJS retains the JS carrier, which borrows the native Timeout.
-                Timeout* timeout = static_cast<Timeout*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-                if (timeout == nullptr) {
+                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
+                if (voidPtr == nullptr) {
                     return JS_EXCEPTION;
                 }
+                Timeout* timeout = voidPtr->get<Timeout*>();
                 if (magic < 0 || static_cast<std::size_t>(magic) >= functionEntries.size()) {
                     return JS_ThrowInternalError(jsContext, "Invalid timeout function index");
                 }
