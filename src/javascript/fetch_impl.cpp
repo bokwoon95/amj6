@@ -120,9 +120,9 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
         CURL* curlEasyHandle = entry.first;
         const uint64_t fetchStateID = entry.second;
 
-        // Earlier iterations run JS promise jobs, which may close other responses
-        // and remove their states from the map. Skip handles whose states have
-        // been removed since entries was snapshotted.
+        // Earlier iterations run JS promise jobs, which may close other
+        // responses and remove their states from the map. Skip handles whose
+        // states have been removed since entries was snapshotted.
         if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
             continue;
         }
