@@ -1,6 +1,7 @@
 #include "timeout_impl.hpp"
 
 #include "javascript.hpp"
+#include "void_ptr/void_ptr.hpp"
 
 #include <quickjs.h>
 #include <uv.h>
@@ -22,6 +23,7 @@
 
 namespace amj::javascript {
 namespace this_thread = std::this_thread;
+namespace void_ptr = amj::void_ptr;
 
 namespace {
 
@@ -46,8 +48,8 @@ void Timeout::Timer::close() {
     }
     uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
         const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-        const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
-        delete timerData;
+        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvTimerHandle->data);
+        delete voidPtr;
         delete uvTimerHandle;
     });
 }
@@ -134,6 +136,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
         timerData->timeout = &timeout;
         timerData->timerID = timerID;
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -142,16 +145,17 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
         }
-        uvTimerHandle->data = timerData.release();
+        uvTimerHandle->data = voidPtr.release();
         timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const TimerData* timerData = static_cast<TimerData*>(uvTimerHandle->data);
-                Timeout* timeout = timerData->timeout;
-                const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData->timerID);
+                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvTimerHandle->data);
+                const TimerData& timerData = voidPtr->get<TimerData>();
+                Timeout* timeout = timerData.timeout;
+                const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData.timerID);
                 if (mapNode.empty()) {
                     std::terminate(); // An active timer must have a registration.
                 }
