@@ -461,9 +461,9 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
 
 JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
@@ -524,9 +524,9 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
 
 JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
@@ -585,9 +585,9 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
 
 JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
@@ -629,9 +629,9 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
 
 JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
@@ -678,9 +678,9 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
 
 JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowTypeError(jsContext, "FetchResponse class is not registered");
@@ -735,9 +735,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (jsContext != fetchClient->jsContext) {
             return JS_ThrowInternalError(jsContext, "FetchClient belongs to another context");
         }
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID fetchResponseClassID = 0;
         {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
