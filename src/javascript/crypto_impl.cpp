@@ -43,8 +43,8 @@ struct DigestWork {
 
 void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
     try {
-        const std::unique_ptr<void_ptr::VoidPtr> workDataVoidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
-        DigestWork& digestWork = workDataVoidPtr->cast<DigestWork>();
+        const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
+        DigestWork& digestWork = voidPtr->cast<DigestWork>();
         Crypto* crypto = digestWork.crypto;
         if (crypto == nullptr) {
             return; // Shutdown detached this request; no JS dependencies remain.
@@ -266,7 +266,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
         }
         DigestWork* submittedWork = digestWork.get();
-        std::unique_ptr<void_ptr::VoidPtr> workDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
         OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
@@ -278,7 +278,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
                 digestWork.opensslError = ERR_get_error();
             }
         };
-        submittedWork->uvWork.data = workDataVoidPtr.release();
+        submittedWork->uvWork.data = voidPtr.release();
         const int status = uv_queue_work(crypto.uvLoop, &submittedWork->uvWork, doDigest, digestDidFinish);
         if (status != 0) {
             crypto.pendingDigests.erase(&submittedWork->uvWork);
@@ -328,10 +328,10 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* cryptoData = new void_ptr::VoidPtr(&crypto);
-        status = JS_SetOpaque(modulePrivateValue.get(), cryptoData);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&crypto);
+        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
-            delete cryptoData;
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach Crypto");
             return nullptr;
         }

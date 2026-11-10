@@ -382,14 +382,14 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
         std::unique_ptr<PollData> pollData = std::make_unique<PollData>();
         pollData->fetchClient = fetchClient;
         pollData->socket = socket;
-        std::unique_ptr<void_ptr::VoidPtr> pollDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(pollData));
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(pollData));
         fetchClient->ownedUvPollHandleMap.insert_or_assign(socket, nullptr);
         const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
         if (status != 0) {
             fetchClient->ownedUvPollHandleMap.erase(socket);
             return -1;
         }
-        uvPollHandle->data = pollDataVoidPtr.release();
+        uvPollHandle->data = voidPtr.release();
         fetchClient->ownedUvPollHandleMap.at(socket) = uvPollHandle.release();
     }
     unsigned int events = 0;
@@ -881,7 +881,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         fetchState.fetchRequest = std::move(fetchRequest);
         registeredHandle = curlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = curlEasyHandle.release();
-        fetchState.curlCallbackData = std::make_unique<void_ptr::VoidPtr>(&fetchState);
+        fetchState.voidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         bool hasContentType = false;
         for (const std::pair<std::string, std::string>& header : fetchState.fetchRequest.headers) {
             std::string lowerName = header.first;
@@ -964,7 +964,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, fetchState.curlCallbackData.get());
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, fetchState.voidPtr.get());
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
@@ -978,7 +978,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, fetchState.curlCallbackData.get());
+        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, fetchState.voidPtr.get());
         if (err != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(err));
         }
@@ -1030,9 +1030,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         std::unique_ptr<FetchResponse> fetchResponse = std::make_unique<FetchResponse>();
         fetchResponse->fetchClient = fetchClient;
         fetchResponse->curlEasyHandle = registeredHandle;
-        void_ptr::VoidPtr* responseData = new void_ptr::VoidPtr(std::move(fetchResponse));
-        if (JS_SetOpaque(response.get(), responseData) < 0) {
-            delete responseData;
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
+        if (JS_SetOpaque(response.get(), voidPtr) < 0) {
+            delete voidPtr;
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
@@ -1097,24 +1097,25 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
                 throw std::runtime_error("curl_global_init failed");
             }
         });
-        curlCallbackData = std::make_unique<void_ptr::VoidPtr>(this);
+        this->voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
         ownedCurlMultiHandle = curl_multi_init();
         if (ownedCurlMultiHandle == nullptr) {
             throw std::bad_alloc();
         }
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr;
         {
             std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-            std::unique_ptr<void_ptr::VoidPtr> timerDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(this);
+            voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
             const int status = uv_timer_init(uvLoop, uvTimerHandle.get());
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvTimerHandle->data = timerDataVoidPtr.release();
+            uvTimerHandle->data = voidPtr.release();
             ownedUvTimerHandle = uvTimerHandle.release();
         }
         {
             std::unique_ptr<uv_async_t> uvAsyncHandle = std::make_unique<uv_async_t>();
-            std::unique_ptr<void_ptr::VoidPtr> asyncDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(this);
+            voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
             const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), [](uv_async_t* uvAsyncHandle) noexcept {
                 try {
                     settlePromises(uvAsyncHandle);
@@ -1125,7 +1126,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvAsyncHandle->data = asyncDataVoidPtr.release();
+            uvAsyncHandle->data = voidPtr.release();
             ownedUvAsyncHandle = uvAsyncHandle.release();
             uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
         }
@@ -1139,7 +1140,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, curlCallbackData.get());
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->voidPtr.get());
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
@@ -1153,7 +1154,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, curlCallbackData.get());
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->voidPtr.get());
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
@@ -1182,7 +1183,7 @@ void FetchClient::shutdown() {
         }
         ownedCurlMultiHandle = nullptr;
     }
-    curlCallbackData.reset();
+    this->voidPtr.reset();
     for (const std::pair<const curl_socket_t, uv_poll_t*>& entry : ownedUvPollHandleMap) {
         uv_close(reinterpret_cast<uv_handle_t*>(entry.second), [](uv_handle_t* uvHandle) {
             delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
@@ -1255,11 +1256,11 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             .class_name = "FetchResponse",
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
                 try {
-                    const std::unique_ptr<void_ptr::VoidPtr> responseDataVoidPtr(static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value))));
-                    if (responseDataVoidPtr == nullptr) {
+                    const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value))));
+                    if (voidPtr == nullptr) {
                         return;
                     }
-                    const FetchResponse& fetchResponse = responseDataVoidPtr->cast<FetchResponse>();
+                    const FetchResponse& fetchResponse = voidPtr->cast<FetchResponse>();
                     if (fetchResponse.curlEasyHandle == nullptr) {
                         return;
                     }
@@ -1294,9 +1295,9 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (JS_IsException(client.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* fetchClientData = new void_ptr::VoidPtr(&fetchClient);
-        if (JS_SetOpaque(client.get(), fetchClientData) < 0) {
-            delete fetchClientData;
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&fetchClient);
+        if (JS_SetOpaque(client.get(), voidPtr) < 0) {
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach FetchClient");
             return nullptr;
         }

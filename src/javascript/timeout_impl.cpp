@@ -134,7 +134,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
         timerData->timeout = &timeout;
         timerData->timerID = timerID;
-        std::unique_ptr<void_ptr::VoidPtr> timerDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -143,7 +143,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
         }
-        uvTimerHandle->data = timerDataVoidPtr.release();
+        uvTimerHandle->data = voidPtr.release();
         timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
@@ -286,10 +286,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* timeoutData = new void_ptr::VoidPtr(&timeout);
-        int status = JS_SetOpaque(modulePrivateValue.get(), timeoutData);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&timeout);
+        int status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
-            delete timeoutData;
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach Timeout");
             return nullptr;
         }

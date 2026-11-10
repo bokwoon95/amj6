@@ -37,7 +37,7 @@ struct FetchState {
     CURLM* curlMultiHandle = nullptr;
     CURL* ownedCurlEasyHandle = nullptr;
     curl_slist* ownedCurlRequestHeaders = nullptr;
-    std::unique_ptr<void_ptr::VoidPtr> curlCallbackData = nullptr; // Owns the wrapper, which borrows this state.
+    std::unique_ptr<void_ptr::VoidPtr> voidPtr = nullptr; // Owns the wrapper, which borrows this state.
     FetchRequest fetchRequest = {};
     int64_t statusCode = 0;
     std::string effectiveURL = "";
@@ -84,7 +84,7 @@ struct FetchClient {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
-    std::unique_ptr<void_ptr::VoidPtr> curlCallbackData = nullptr; // Owns the wrapper, which borrows this client.
+    std::unique_ptr<void_ptr::VoidPtr> voidPtr = nullptr; // Owns the wrapper, which borrows this client.
     uv_timer_t* ownedUvTimerHandle = nullptr;
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};

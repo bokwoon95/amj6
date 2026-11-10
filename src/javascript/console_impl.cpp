@@ -91,10 +91,10 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* consoleDataPointer = new void_ptr::VoidPtr(&consoleSink);
-        status = JS_SetOpaque(modulePrivateValue.get(), consoleDataPointer);
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&consoleSink);
+        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
-            delete consoleDataPointer;
+            delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach console sink");
             return nullptr;
         }
