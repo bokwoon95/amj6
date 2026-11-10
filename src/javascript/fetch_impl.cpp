@@ -83,7 +83,7 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
             }
             fetchState.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
-        if (!fetchState.responseReady) {
+        if (!fetchState.responseHeadersReceived) {
             if (!fetchState.errorMessage.empty()) {
                 fetchState.errorMessage.append(": ");
             }
@@ -135,7 +135,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
         }
 
         // If fetchState was abandoned (set by the QuickJS GC finalizer), it
-        // means the user forgot to call fetchResponse.close() is no longer
+        // means the user forgot to call fetchResponse.close() and is no longer
         // referencing the `fetchResponse` variable. Terminate all its current
         // ready/read promises with AbortError.
         if (fetchState.abandoned) {
@@ -166,10 +166,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
 
         const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient.jsContext, fetchState.readyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
-            if (readyPromiseState != JS_PROMISE_PENDING) {
-                throw std::logic_error("FetchResponse.ready.promise is not a promise");
-            }
-            if (!fetchState.responseReady) {
+            if (!fetchState.responseHeadersReceived) {
                 if (!fetchState.finished) {
                     continue;
                 }
@@ -189,7 +186,7 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
                 fetchClient.jsExecutePendingJobs(fetchClient.jsContext);
                 continue;
             }
-            fetchState.responseURL = effectiveURL;
+            fetchState.effectiveURL = effectiveURL;
             JSValue argument = JS_UNDEFINED;
             const JSValue result = JS_Call(fetchClient.jsContext, fetchState.readyPromise.resolveFunction.get(), JS_UNDEFINED, 1, &argument);
             JS_FreeValue(fetchClient.jsContext, result);
@@ -292,11 +289,11 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
             return 0;
         }
         if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-            fetchState->responseReady = true;
+            fetchState->responseHeadersReceived = true;
         }
         return length;
     }
-    if (fetchState->responseReady) {
+    if (fetchState->responseHeadersReceived) {
         return length; // Trailers are not part of the exposed header snapshot.
     }
     const std::size_t colon = line.find(':');
@@ -650,7 +647,7 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
-        return JS_NewStringLen(jsContext, fetchState.responseURL.data(), fetchState.responseURL.size());
+        return JS_NewStringLen(jsContext, fetchState.effectiveURL.data(), fetchState.effectiveURL.size());
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {

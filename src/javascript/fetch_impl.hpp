@@ -36,7 +36,7 @@ struct FetchState {
     curl_slist* ownedCurlRequestHeaders = nullptr;
     FetchRequest fetchRequest = {};
     int64_t statusCode = 0;
-    std::string responseURL = "";
+    std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
 
     std::deque<std::vector<uint8_t>> chunks = {};
@@ -47,11 +47,11 @@ struct FetchState {
     OwnedJSPromise readyPromise = {};
     std::optional<OwnedJSPromise> readPromise = {};
 
-    bool responseReady = false; // Response headers received.
-    bool finished = false;      // Network transfer ended.
-    bool paused = false;        // Body reception paused for backpressure.
-    bool redirecting = false;   // Currently processing a redirect response.
-    bool abandoned = false;     // JavaScript code stopped referencing it before the fetchResponse was closed.
+    bool responseHeadersReceived = false; // Response headers received.
+    bool finished = false;                // Network transfer ended.
+    bool paused = false;                  // Body reception paused for backpressure.
+    bool redirecting = false;             // Currently processing a redirect response.
+    bool abandoned = false;               // JavaScript code stopped referencing it before the fetchResponse was closed.
 
     FetchState() = default;
     ~FetchState();
