@@ -115,14 +115,29 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
 
     for (const std::pair<CURL*, uint64_t>& entry : entries) {
         CURL* curlEasyHandle = entry.first;
+        const uint64_t fetchStateID = entry.second;
+
+        // Earlier iterations run JS promise jobs, which may close other responses
+        // and remove their states from the map. Skip handles whose states have
+        // been removed since entries was snapshotted.
         if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
             continue;
         }
 
+        // Get the fetchState for the give curlEasyHandle.
+        //
+        // Curl may reuse CURL* pointers, so we need to check that the
+        // fetchStateID matches the one that we previously snapshotted into
+        // entries.
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
-        if (fetchState.fetchStateID != entry.second) {
-            continue; // JS jobs may close a response and create another at the same address.
+        if (fetchState.fetchStateID != fetchStateID) {
+            continue;
         }
+
+        // If fetchState was abandoned (set by the QuickJS GC finalizer), it
+        // means the user forgot to call fetchResponse.close() is no longer
+        // referencing the `fetchResponse` variable. Terminate all its current
+        // ready/read promises with AbortError.
         if (fetchState.abandoned) {
             const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
             if (mapNode.empty()) {
