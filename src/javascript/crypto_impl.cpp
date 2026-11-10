@@ -43,8 +43,8 @@ struct DigestWork {
 
 void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
     try {
-        const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
-        DigestWork& digestWork = voidPtr->get<DigestWork>();
+        const std::unique_ptr<void_ptr::VoidPtr> workDataVoidPtr(static_cast<void_ptr::VoidPtr*>(uvWork->data));
+        DigestWork& digestWork = workDataVoidPtr->cast<DigestWork>();
         Crypto* crypto = digestWork.crypto;
         if (crypto == nullptr) {
             return; // Shutdown detached this request; no JS dependencies remain.
@@ -139,8 +139,7 @@ void Crypto::shutdown() {
     std::map<uv_work_t*, OwnedJSValue> detached;
     detached.swap(pendingDigests);
     for (const std::pair<uv_work_t* const, OwnedJSValue>& entry : detached) {
-        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(entry.first->data);
-        DigestWork& digestWork = voidPtr->get<DigestWork>();
+        DigestWork& digestWork = void_ptr::cast<DigestWork>(entry.first->data);
         digestWork.crypto = nullptr;
     }
 }
@@ -267,12 +266,11 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
         }
         DigestWork* submittedWork = digestWork.get();
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
+        std::unique_ptr<void_ptr::VoidPtr> workDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
         OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
-            const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvWork->data);
-            DigestWork& digestWork = voidPtr->get<DigestWork>();
+            DigestWork& digestWork = void_ptr::cast<DigestWork>(uvWork->data);
             // The worker touches native storage only, never crypto/context/JS.
             ERR_clear_error();
             digestWork.digestStatus = EVP_Digest(digestWork.input.data(), digestWork.input.size(), digestWork.output.data(), &digestWork.outputLength, digestWork.digestType, nullptr);
@@ -280,7 +278,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
                 digestWork.opensslError = ERR_get_error();
             }
         };
-        submittedWork->uvWork.data = voidPtr.release();
+        submittedWork->uvWork.data = workDataVoidPtr.release();
         const int status = uv_queue_work(crypto.uvLoop, &submittedWork->uvWork, doDigest, digestDidFinish);
         if (status != 0) {
             crypto.pendingDigests.erase(&submittedWork->uvWork);
@@ -315,8 +313,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         const JSClassDef jsClassDef = {
             .class_name = "Crypto",
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                delete voidPtr;
+                delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
             },
             .gc_mark = nullptr, // Callback references belong to the host-owned Crypto.
             .call = nullptr,
@@ -331,10 +328,10 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&crypto);
-        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
+        void_ptr::VoidPtr* cryptoData = new void_ptr::VoidPtr(&crypto);
+        status = JS_SetOpaque(modulePrivateValue.get(), cryptoData);
         if (status < 0) {
-            delete voidPtr;
+            delete cryptoData;
             JS_ThrowInternalError(jsContext, "Could not attach Crypto");
             return nullptr;
         }
@@ -352,11 +349,11 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                 return -1;
             }
             const auto digestCallback = [](JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) -> JSValue {
-                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-                if (voidPtr == nullptr) {
+                const void* cryptoData = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+                if (cryptoData == nullptr) {
                     return JS_EXCEPTION;
                 }
-                Crypto* crypto = voidPtr->get<Crypto*>();
+                Crypto* crypto = void_ptr::cast<Crypto*>(cryptoData);
                 return cryptoDigest(jsContext, thisValue, argc, argv, *crypto);
             };
             JSValueConst functionData = modulePrivateValue.get();

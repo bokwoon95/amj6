@@ -1,5 +1,15 @@
 TODO: make context::Context compose well with other context::Context types, just like in Go.
 
+TODO: amj::void_ptr
+new VoidPtr(std::unique_ptr<T>)
+new VoidPtr(T*)
+void VoidPtr::reset(std::unique_ptr<T>)
+void VoidPtr::reset(T*)
+VoidPtr* VoidPtr::release()
+bool VoidPtr::is<T>() <-> bool void_ptr::is<T>(void*)
+T& VoidPtr::cast<T>() <-> T& void_ptr::cast<T>(void*)
+T* VoidPtr::cast<T*>() <-> T* void_ptr::cast<T>(void*)
+
 urlParse
 urlWithComponent
 queryStringParse

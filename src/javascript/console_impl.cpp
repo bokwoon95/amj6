@@ -45,11 +45,11 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             return JS_EXCEPTION;
         }
         consoleData.text = text.value();
-        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-        if (voidPtr == nullptr) {
+        const void* consoleDataPointer = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+        if (consoleDataPointer == nullptr) {
             return JS_EXCEPTION;
         }
-        const std::function<void(ConsoleData)>* consoleSink = voidPtr->get<std::function<void(ConsoleData)>*>();
+        const std::function<void(ConsoleData)>* consoleSink = void_ptr::cast<std::function<void(ConsoleData)>*>(consoleDataPointer);
         (*consoleSink)(consoleData);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
@@ -76,8 +76,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         const JSClassDef jsClassDef = {
             .class_name = "ConsoleSink",
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                delete voidPtr;
+                delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
             },
             .gc_mark = nullptr,
             .call = nullptr,
@@ -92,10 +91,10 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&consoleSink);
-        status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
+        void_ptr::VoidPtr* consoleDataPointer = new void_ptr::VoidPtr(&consoleSink);
+        status = JS_SetOpaque(modulePrivateValue.get(), consoleDataPointer);
         if (status < 0) {
-            delete voidPtr;
+            delete consoleDataPointer;
             JS_ThrowInternalError(jsContext, "Could not attach console sink");
             return nullptr;
         }

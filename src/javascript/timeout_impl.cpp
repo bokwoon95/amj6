@@ -47,10 +47,8 @@ void Timeout::Timer::close() {
         return;
     }
     uv_close(reinterpret_cast<uv_handle_t*>(uvTimerHandle), [](uv_handle_t* uvHandle) {
-        const uv_timer_t* uvTimerHandle = reinterpret_cast<uv_timer_t*>(uvHandle);
-        const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvTimerHandle->data);
-        delete voidPtr;
-        delete uvTimerHandle;
+        delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+        delete reinterpret_cast<uv_timer_t*>(uvHandle);
     });
 }
 
@@ -136,7 +134,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
         timerData->timeout = &timeout;
         timerData->timerID = timerID;
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
+        std::unique_ptr<void_ptr::VoidPtr> timerDataVoidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -145,15 +143,14 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             timeout.timerMap.erase(timerID);
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
         }
-        uvTimerHandle->data = voidPtr.release();
+        uvTimerHandle->data = timerDataVoidPtr.release();
         timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(uvTimerHandle->data);
-                const TimerData& timerData = voidPtr->get<TimerData>();
+                const TimerData& timerData = void_ptr::cast<TimerData>(uvTimerHandle->data);
                 Timeout* timeout = timerData.timeout;
                 const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData.timerID);
                 if (mapNode.empty()) {
@@ -271,8 +268,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
                 .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                    const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                    delete voidPtr;
+                    delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
                 },
                 .gc_mark = nullptr, // Callback references belong to the host-owned Timeout.
                 .call = nullptr,
@@ -290,10 +286,10 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&timeout);
-        int status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
+        void_ptr::VoidPtr* timeoutData = new void_ptr::VoidPtr(&timeout);
+        int status = JS_SetOpaque(modulePrivateValue.get(), timeoutData);
         if (status < 0) {
-            delete voidPtr;
+            delete timeoutData;
             JS_ThrowInternalError(jsContext, "Could not attach Timeout");
             return nullptr;
         }
@@ -327,11 +323,11 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
 
             const auto jsCFunctionData = [](JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData) -> JSValue {
                 // QuickJS retains the JS carrier, which borrows the native Timeout.
-                const void_ptr::VoidPtr* voidPtr = static_cast<const void_ptr::VoidPtr*>(JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0])));
-                if (voidPtr == nullptr) {
+                const void* timeoutData = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+                if (timeoutData == nullptr) {
                     return JS_EXCEPTION;
                 }
-                Timeout* timeout = voidPtr->get<Timeout*>();
+                Timeout* timeout = void_ptr::cast<Timeout*>(timeoutData);
                 if (magic < 0 || static_cast<std::size_t>(magic) >= functionEntries.size()) {
                     return JS_ThrowInternalError(jsContext, "Invalid timeout function index");
                 }
