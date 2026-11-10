@@ -137,10 +137,10 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
             continue;
         }
 
-        // If fetchState was abandoned (set by the QuickJS GC finalizer), it
-        // means the user forgot to call fetchResponse.close() and is no longer
-        // referencing the `fetchResponse` variable. Terminate all its current
-        // ready/read promises with AbortError.
+        // If fetchState was abandoned (the QuickJS GC finalizer sets this
+        // flag), it means the user forgot to call fetchResponse.close() and is
+        // no longer referencing the `fetchResponse` variable. Terminate its
+        // current ready/read promises with AbortError.
         if (fetchState.abandoned) {
             const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
             if (mapNode.empty()) {
