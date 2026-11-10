@@ -107,18 +107,22 @@ void settlePromises(uv_async_t* uvAsyncHandle) {
     FetchClient& fetchClient = *static_cast<FetchClient*>(uvAsyncHandle->data);
     uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
 
-    std::vector<CURL*> curlEasyHandles;
-    curlEasyHandles.reserve(fetchClient.fetchStateMap.size());
+    std::vector<std::pair<CURL*, uint64_t>> entries;
+    entries.reserve(fetchClient.fetchStateMap.size());
     for (const std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
-        curlEasyHandles.push_back(entry.first);
+        entries.push_back({entry.first, entry.second.fetchStateID});
     }
 
-    for (CURL* curlEasyHandle : curlEasyHandles) {
+    for (const std::pair<CURL*, uint64_t>& entry : entries) {
+        CURL* curlEasyHandle = entry.first;
         if (!fetchClient.fetchStateMap.contains(curlEasyHandle)) {
             continue;
         }
 
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlEasyHandle);
+        if (fetchState.fetchStateID != entry.second) {
+            continue; // JS jobs may close a response and create another at the same address.
+        }
         if (fetchState.abandoned) {
             const std::map<CURL*, FetchState>::node_type mapNode = fetchClient.fetchStateMap.extract(curlEasyHandle);
             if (mapNode.empty()) {
@@ -796,6 +800,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         fetchClient->fetchStateMap.try_emplace(curlEasyHandle.get());
         FetchState& fetchState = fetchClient->fetchStateMap.at(curlEasyHandle.get());
+        fetchClient->fetchStateIDCounter++;
+        fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
         fetchState.fetchRequest = std::move(fetchRequest);
         registeredHandle = curlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = curlEasyHandle.release();

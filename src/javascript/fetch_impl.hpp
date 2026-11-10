@@ -30,6 +30,7 @@ struct FetchRequest {
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
 struct FetchState {
+    uint64_t fetchStateID = 0;
     CURLM* curlMultiHandle = nullptr;
     CURL* ownedCurlEasyHandle = nullptr;
     curl_slist* ownedCurlRequestHeaders = nullptr;
@@ -83,6 +84,7 @@ struct FetchClient {
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
     std::map<CURL*, FetchState> fetchStateMap = {};
+    uint64_t fetchStateIDCounter = 0;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
     JSClassID responseClassID = 0;
