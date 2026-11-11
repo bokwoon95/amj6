@@ -168,8 +168,8 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             }
             fetchState.error.errorMessage.append(curl_multi_strerror(curlMCode));
             if (fetchState.curlMultiHandle != nullptr) {
-                const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
-                if (curlMultiCode != CURLM_OK) {
+                const CURLMcode curlMCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
+                if (curlMCode != CURLM_OK) {
                     std::terminate();
                 }
                 // Set the curlMultiHandle to nullptr so that the FetchState
