@@ -39,8 +39,11 @@ namespace {
 std::mutex fetchResponseClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-// Wake curl due to socket activity or timeout, then notify the loop to check
-// for fetch results.
+// Have curl perform process socket activity or a timeout, then signal the uv async
+// handle to run its callback.
+// 1. Tell curl to read and write socket data.
+// 2. Mark which fetchStates are finished.
+// 3. Schedule the uvAsyncHandle callback.
 void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
     // Have curl advance the transfers.
     int runningHandles = 0;
@@ -105,14 +108,15 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
     }
 }
 
-// Settle the fetch promises by looping over each fetchState in the
-// FetchClient's fetchStateMap anc calling the resolve/reject functions of
-// whatever is ready.
-void settleFetchPromises(uv_async_t* uvAsyncHandle) {
+// Settles the FetchClient's promises by looping over each fetchState in the
+// fetchStateMap and calling the resolve/reject functions of whatever is ready.
+void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
     if (uvAsyncHandle->data == nullptr) {
         return;
     }
     FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
+
+    // Consume the notification.
     uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
 
     // Snapshot the existing CURL* keys + fetchStateID from the fetchStateMap
@@ -1125,7 +1129,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
             const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), [](uv_async_t* uvAsyncHandle) noexcept {
                 try {
-                    settleFetchPromises(uvAsyncHandle);
+                    uvAsyncHandleCallback(uvAsyncHandle);
                 } catch (...) {
                     std::terminate();
                 }
