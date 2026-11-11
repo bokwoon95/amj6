@@ -25,17 +25,17 @@ namespace amj::javascript {
 namespace errors = amj::errors;
 namespace void_ptr = amj::void_ptr;
 
-enum class FetchStatus : std::uint8_t {
-    Running,
-    Paused,
-    Done,
-};
-
 struct FetchRequest {
     std::string url = "";
     std::string method = "";
     std::vector<std::pair<std::string, std::string>> headers = {};
     std::vector<uint8_t> body = {};
+};
+
+enum class FetchStatus : std::uint8_t {
+    Running,
+    Paused,
+    Done,
 };
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
