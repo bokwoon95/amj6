@@ -135,7 +135,7 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
         return 0;
     }
     if (length > bodyBufferLimit - fetchState->responseBodySize) {
-        fetchState->curlStatus = CurlStatus::Paused;
+        fetchState->fetchStatus = FetchStatus::Paused;
         return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
     }
     // Curl supplies exactly length readable bytes; snapshot before returning.
@@ -161,7 +161,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            fetchState.curlStatus = CurlStatus::Done;
+            fetchState.fetchStatus = FetchStatus::Done;
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
                 fetchState.error.errorMessage.append(": ");
@@ -193,7 +193,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             throw std::logic_error("Curl transfer is done but has no FetchState");
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.curlStatus = CurlStatus::Done;
+        fetchState.fetchStatus = FetchStatus::Done;
         if (curlMsg->data.result != CURLE_OK) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
@@ -295,7 +295,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersComplete) {
                 // The transfer is not yet done, don't settle the readyPromise.
-                if (fetchState.curlStatus != CurlStatus::Done) {
+                if (fetchState.fetchStatus != FetchStatus::Done) {
                     continue;
                 }
 
@@ -335,7 +335,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // No error, buffered data, or end-of-stream to settle the readPromise with.
-        if (!fetchState.error.errorCode && fetchState.responseBodyChunks.empty() && fetchState.curlStatus != CurlStatus::Done) {
+        if (!fetchState.error.errorCode && fetchState.responseBodyChunks.empty() && fetchState.fetchStatus != FetchStatus::Done) {
             continue;
         }
 
@@ -371,12 +371,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // Resume the paused transfer once bufferedBytes is at most half of
         // bodyBufferLimit. Set Running before resuming because curl callbacks
         // can synchronously pause the transfer again.
-        if (fetchState.curlStatus == CurlStatus::Paused && fetchState.responseBodySize <= bodyBufferLimit / 2) {
-            fetchState.curlStatus = CurlStatus::Running;
+        if (fetchState.fetchStatus == FetchStatus::Paused && fetchState.responseBodySize <= bodyBufferLimit / 2) {
+            fetchState.fetchStatus = FetchStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
-                fetchState.curlStatus = CurlStatus::Done;
+                fetchState.fetchStatus = FetchStatus::Done;
                 if (fetchState.curlMultiHandle != nullptr) {
                     if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
                         std::terminate();

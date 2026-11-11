@@ -25,7 +25,7 @@ namespace amj::javascript {
 namespace errors = amj::errors;
 namespace void_ptr = amj::void_ptr;
 
-enum class CurlStatus : std::uint8_t {
+enum class FetchStatus : std::uint8_t {
     Running,
     Paused,
     Done,
@@ -56,7 +56,7 @@ struct FetchState {
     std::size_t responseBodySize = 0;
     errors::Error error = {};
 
-    CurlStatus curlStatus = CurlStatus::Running;
+    FetchStatus fetchStatus = FetchStatus::Running;
     bool redirecting = false; // Currently processing a redirect response.
     bool abandoned = false;   // JavaScript code stopped referencing it before the fetchResponse was closed.
 
