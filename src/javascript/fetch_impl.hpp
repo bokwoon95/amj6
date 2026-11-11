@@ -52,7 +52,7 @@ struct FetchState {
     std::optional<OwnedJSPromise> readPromise = {};
 
     bool responseHeadersReceived = false; // Response headers received.
-    bool finished = false;                // Network transfer ended.
+    bool done = false;                    // Network transfer is done.
     bool paused = false;                  // Body reception paused for backpressure.
     bool redirecting = false;             // Currently processing a redirect response.
     bool abandoned = false;               // JavaScript code stopped referencing it before the fetchResponse was closed.

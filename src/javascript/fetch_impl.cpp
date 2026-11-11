@@ -39,38 +39,41 @@ namespace {
 std::mutex fetchResponseClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-// Have curl perform process socket activity or a timeout, then signal the uv async
-// handle to run its callback.
+// Process curl transfers in response to socket activity or a timeout:
+//
 // 1. Tell curl to read and write socket data.
-// 2. Mark which fetchStates are finished.
-// 3. Schedule the uvAsyncHandle callback.
-void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
-    // Have curl advance the transfers.
+//
+// 2. Mark which fetchStates are done and record any errors.
+//
+// 3. Signal the uv async handle, which triggers settlePendingPromises().
+void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+    // Tell curl to read and write socket data.
     int runningHandles = 0;
     const CURLMcode curlMultiCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
     if (curlMultiCode != CURLM_OK) {
-        // If curl fails to advance the transfers, mark all fetches as failed
-        // and unregister them from the curlMultiHandle.
+        // If curl socket action fails, mark all fetches as failed and
+        // unregister them from the curlMultiHandle.
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
+            fetchState.done = true;
             if (!fetchState.errorMessage.empty()) {
                 fetchState.errorMessage.append(": ");
             }
             fetchState.errorMessage.append(curl_multi_strerror(curlMultiCode));
-            fetchState.finished = true;
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                 if (curlMultiCode != CURLM_OK) {
                     std::terminate();
                 }
+                // Set the curlMultiHandle to nullptr so that the FetchState
+                // destructor doesn't try to unregister it again.
                 fetchState.curlMultiHandle = nullptr;
             }
         }
     }
 
-    // Loop through all the completed transfers and mark their FetchState as
-    // finished (optionally recording any error message).
+    // Mark which fetchStates are done.
     while (true) {
         int msgsInQueue = 0;
         const CURLMsg* curlMsg = curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
@@ -81,10 +84,10 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
             continue;
         }
         if (!fetchClient.fetchStateMap.contains(curlMsg->easy_handle)) {
-            throw std::logic_error("Completed curl transfer has no FetchState");
+            throw std::logic_error("Curl transfer is done but has no FetchState");
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.finished = true;
+        fetchState.done = true;
         if (curlMsg->data.result != CURLE_OK) {
             if (!fetchState.errorMessage.empty()) {
                 fetchState.errorMessage.append(": ");
@@ -99,7 +102,7 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
         }
     }
 
-    // Send a notification to check the fetchStateMap for results.
+    // Signal the uv async handle, which triggers settlePendingPromises().
     uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
     const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
     if (status != 0) {
@@ -108,17 +111,15 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
     }
 }
 
-// Settles the FetchClient's promises by looping over each fetchState in the
-// fetchStateMap and calling the resolve/reject functions of whatever is ready.
-void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
-    if (uvAsyncHandle->data == nullptr) {
-        return;
-    }
-    FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
-
-    // Consume the notification.
-    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
-
+// Settle pending promises:
+//
+// 1. Reject pending promises for abandoned responses.
+//
+// 2. Resolve or reject ready promises.
+//
+// 3. Resolve or reject pending read promises with an error, end-of-stream, or
+// a buffered body chunk.
+void settlePendingPromises(FetchClient* fetchClient) {
     // Snapshot the existing CURL* keys + fetchStateID from the fetchStateMap
     // into an entries list before looping over the entries. The fetchStateMap
     // can be modified during iteration, so we need a stable list to iterate
@@ -183,7 +184,7 @@ void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
         const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersReceived) {
-                if (!fetchState.finished) {
+                if (!fetchState.done) {
                     continue;
                 }
                 OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.errorMessage);
@@ -214,7 +215,7 @@ void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
             continue;
         }
 
-        if (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.finished) {
+        if (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.done) {
             continue;
         }
 
@@ -238,12 +239,12 @@ void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
         OwnedJSValue bytes(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
         fetchState.bufferedBytes -= chunk.size();
         fetchState.chunks.pop_front();
-        if (fetchState.paused && fetchState.bufferedBytes <= (256U << 10U /* 256 KiB */) / 2 && !fetchState.finished) {
+        if (fetchState.paused && fetchState.bufferedBytes <= (256U << 10U /* 256 KiB */) / 2 && !fetchState.done) {
             fetchState.paused = false;
             const CURLcode status = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (status != CURLE_OK) {
                 fetchState.errorMessage = curl_easy_strerror(status);
-                fetchState.finished = true;
+                fetchState.done = true;
                 if (fetchState.curlMultiHandle != nullptr) {
                     if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
                         std::terminate();
@@ -252,8 +253,8 @@ void uvAsyncHandleCallback(uv_async_t* uvAsyncHandle) {
                 }
             }
             // Unpause can synchronously invoke curl callbacks, but never JS.
-            // Inspect completions even if no further socket event arrives.
-            wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            // Check for transfers that are done even if no further socket event arrives.
+            processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
         }
         if (JS_IsException(bytes.get())) {
             OwnedJSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
@@ -430,8 +431,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
                 curlEvents |= CURL_CSELECT_OUT;
             }
-            // drive() may close this poll handle. Do not use pollData after it.
-            wakeCurl(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
+            // processCurlTransfers() may close this poll handle. Do not use pollData after it.
+            processCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
         } catch (...) {
             std::terminate();
         }
@@ -449,7 +450,7 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
         try {
             FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
             if (fetchClient != nullptr) {
-                wakeCurl(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             }
         } catch (...) {
             std::terminate();
@@ -1127,13 +1128,21 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         {
             std::unique_ptr<uv_async_t> uvAsyncHandle = std::make_unique<uv_async_t>();
             voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
-            const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), [](uv_async_t* uvAsyncHandle) noexcept {
+            const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
                 try {
-                    uvAsyncHandleCallback(uvAsyncHandle);
+                    if (uvAsyncHandle->data == nullptr) {
+                        return;
+                    }
+                    FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
+
+                    // Unreference the async handle.
+                    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
+                    settlePendingPromises(fetchClient);
                 } catch (...) {
                     std::terminate();
                 }
-            });
+            };
+            const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), uvAsyncCallback);
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
@@ -1281,7 +1290,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                     }
                     // GC can run while allocating promise results. Do
                     // not erase a FetchState currently being accessed
-                    // by settlePromises(), and do not settle promises
+                    // by settlePendingPromises(), and do not settle promises
                     // from inside a QuickJS finalizer.
                     fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned = true;
                     uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
