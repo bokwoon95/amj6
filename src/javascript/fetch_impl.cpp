@@ -53,12 +53,16 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
         return 0;
     }
     const std::size_t length = size * count;
-    if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
+    const std::string_view line(bytes, length);
+    if (line.starts_with("HTTP/")) {
+        // Each response gets a fresh header budget, including after redirects.
+        fetchState->responseHeadersSize = 0;
+    }
+    if (length > (64U << 10U /* 64 KiB */) - fetchState->responseHeadersSize) {
         fetchState->error = errors::message("Response headers exceed 64 KiB");
         return 0;
     }
-    fetchState->headerBytes += length;
-    const std::string_view line(bytes, length);
+    fetchState->responseHeadersSize += length;
     if (line.starts_with("HTTP/")) {
         fetchState->responseHeaders.clear();
         fetchState->redirecting = false;
@@ -81,11 +85,11 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
             return 0;
         }
         if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-            fetchState->responseHeadersReceived = true;
+            fetchState->responseHeadersComplete = true;
         }
         return length;
     }
-    if (fetchState->responseHeadersReceived) {
+    if (fetchState->responseHeadersComplete) {
         return length; // Trailers are not part of the exposed header snapshot.
     }
     const std::size_t colon = line.find(':');
@@ -137,13 +141,13 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
     if (length == 0) {
         return 0;
     }
-    if (length > bodyBufferLimit - fetchState->bufferedBytes) {
+    if (length > bodyBufferLimit - fetchState->responseBodySize) {
         fetchState->curlStatus = CurlStatus::Paused;
         return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
     }
     // Curl supplies exactly length readable bytes; snapshot before returning.
-    fetchState->chunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
-    fetchState->bufferedBytes += length;
+    fetchState->responseBodyChunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
+    fetchState->responseBodySize += length;
     return length;
 }
 
@@ -204,7 +208,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             }
             fetchState.error.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
-        if (!fetchState.responseHeadersReceived) {
+        if (!fetchState.responseHeadersComplete) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
                 fetchState.error.errorMessage.append(": ");
@@ -296,7 +300,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // If readyPromise has not yet been settled, settle it first.
         const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
-            if (!fetchState.responseHeadersReceived) {
+            if (!fetchState.responseHeadersComplete) {
                 // The transfer is not yet done, don't settle the readyPromise.
                 if (fetchState.curlStatus != CurlStatus::Done) {
                     continue;
@@ -338,7 +342,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // No error, buffered data, or end-of-stream to settle the readPromise with.
-        if (!fetchState.error.errorCode && fetchState.chunks.empty() && fetchState.curlStatus != CurlStatus::Done) {
+        if (!fetchState.error.errorCode && fetchState.responseBodyChunks.empty() && fetchState.curlStatus != CurlStatus::Done) {
             continue;
         }
 
@@ -358,7 +362,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // No error or buffered chunks remain, and the transfer is done.
         // Resolve the readPromise with null to indicate end-of-stream.
-        if (fetchState.chunks.empty()) {
+        if (fetchState.responseBodyChunks.empty()) {
             JSValue endOfStream = JS_NULL;
             const JSValue result = JS_Call(fetchClient->jsContext, readPromise.resolveFunction.get(), JS_UNDEFINED, 1, &endOfStream);
             JS_FreeValue(fetchClient->jsContext, result);
@@ -367,14 +371,14 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Pop the oldest chunk from fetchState.chunks.
-        const std::vector<uint8_t> chunk = std::move(fetchState.chunks.front());
-        fetchState.chunks.pop_front();
-        fetchState.bufferedBytes -= chunk.size();
+        const std::vector<uint8_t> chunk = std::move(fetchState.responseBodyChunks.front());
+        fetchState.responseBodyChunks.pop_front();
+        fetchState.responseBodySize -= chunk.size();
 
         // Resume the paused transfer once bufferedBytes is at most half of
         // bodyBufferLimit. Set Running before resuming because curl callbacks
         // can synchronously pause the transfer again.
-        if (fetchState.curlStatus == CurlStatus::Paused && fetchState.bufferedBytes <= bodyBufferLimit / 2) {
+        if (fetchState.curlStatus == CurlStatus::Paused && fetchState.responseBodySize <= bodyBufferLimit / 2) {
             fetchState.curlStatus = CurlStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
@@ -937,12 +941,12 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         fetchClient->fetchStateMap.try_emplace(curlEasyHandle.get());
         FetchState& fetchState = fetchClient->fetchStateMap.at(curlEasyHandle.get());
+        fetchState.selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
         fetchState.fetchRequest = std::move(fetchRequest);
         registeredHandle = curlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = curlEasyHandle.release();
-        fetchState.voidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         bool hasContentType = false;
         for (const std::pair<std::string, std::string>& header : fetchState.fetchRequest.headers) {
             std::string lowerName = header.first;
@@ -973,85 +977,85 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             }
             fetchState.ownedCurlRequestHeaders = curlHeaders;
         }
-        CURLcode err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str());
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        CURLcode curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str());
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https");
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https");
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_MAXREDIRS, 20L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_MAXREDIRS, 20L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOSIGNAL, 1L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOSIGNAL, 1L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYPEER, 1L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYPEER, 1L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYHOST, 2L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SSL_VERIFYHOST, 2L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_ACCEPT_ENCODING, "");
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_ACCEPT_ENCODING, "");
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders);
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders);
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, fetchState.voidPtr.get());
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, fetchState.selfVoidPtr.get());
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
             try {
                 return curlHeaderFunction(bytes, size, count, userdata);
             } catch (...) {
                 return static_cast<std::size_t>(0);
             }
         });
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, fetchState.voidPtr.get());
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, fetchState.selfVoidPtr.get());
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        err = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
             try {
                 return curlWriteFunction(bytes, size, count, userdata);
             } catch (...) {
                 return static_cast<std::size_t>(0);
             }
         });
-        if (err != CURLE_OK) {
-            throw std::runtime_error(curl_easy_strerror(err));
+        if (curlCode != CURLE_OK) {
+            throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         CURLcode methodStatus = CURLE_OK;
         if (fetchState.fetchRequest.method == "HEAD") {
@@ -1101,13 +1105,13 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        const CURLMcode curlMultiCode = curl_multi_add_handle(
+        const CURLMcode curlmCode = curl_multi_add_handle(
             fetchClient->ownedCurlMultiHandle,
             fetchState.ownedCurlEasyHandle
         );
-        if (curlMultiCode != CURLM_OK) {
+        if (curlmCode != CURLM_OK) {
             fetchClient->fetchStateMap.erase(registeredHandle);
-            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMultiCode));
+            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlmCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
         return response.release();
@@ -1158,7 +1162,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
                 throw std::runtime_error("curl_global_init failed");
             }
         });
-        this->voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
+        this->selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(this);
         ownedCurlMultiHandle = curl_multi_init();
         if (ownedCurlMultiHandle == nullptr) {
             throw std::bad_alloc();
@@ -1209,7 +1213,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->voidPtr.get());
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->selfVoidPtr.get());
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
@@ -1223,7 +1227,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->voidPtr.get());
+        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->selfVoidPtr.get());
         if (err != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(err));
         }
@@ -1252,7 +1256,7 @@ void FetchClient::shutdown() {
         }
         ownedCurlMultiHandle = nullptr;
     }
-    this->voidPtr.reset();
+    this->selfVoidPtr.reset();
     for (const std::pair<const curl_socket_t, uv_poll_t*>& entry : ownedUvPollHandleMap) {
         uv_close(reinterpret_cast<uv_handle_t*>(entry.second), [](uv_handle_t* uvHandle) {
             delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);

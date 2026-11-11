@@ -41,28 +41,27 @@ struct FetchRequest {
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
 struct FetchState {
+    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
     uint64_t fetchStateID = 0;
     CURLM* curlMultiHandle = nullptr;
     CURL* ownedCurlEasyHandle = nullptr;
     curl_slist* ownedCurlRequestHeaders = nullptr;
-    std::unique_ptr<void_ptr::VoidPtr> voidPtr = nullptr; // Owns the wrapper, which borrows this state.
     FetchRequest fetchRequest = {};
     int64_t statusCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
-
-    std::deque<std::vector<uint8_t>> chunks = {};
-    std::size_t bufferedBytes = 0;
-    std::size_t headerBytes = 0;
+    std::size_t responseHeadersSize = 0;
+    bool responseHeadersComplete = false;
+    std::deque<std::vector<uint8_t>> responseBodyChunks = {};
+    std::size_t responseBodySize = 0;
     errors::Error error = {};
 
-    OwnedJSPromise readyPromise = {};
-    std::optional<OwnedJSPromise> readPromise = {};
-
-    bool responseHeadersReceived = false; // Response headers received.
     CurlStatus curlStatus = CurlStatus::Running;
     bool redirecting = false; // Currently processing a redirect response.
     bool abandoned = false;   // JavaScript code stopped referencing it before the fetchResponse was closed.
+
+    OwnedJSPromise readyPromise = {};
+    std::optional<OwnedJSPromise> readPromise = {};
 
     FetchState() = default;
     ~FetchState();
@@ -87,11 +86,11 @@ struct FetchState {
 // destruction after shutdown never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
 struct FetchClient {
+    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr; // Owns the wrapper, which borrows this client.
     uv_loop_t* uvLoop = nullptr;
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
-    std::unique_ptr<void_ptr::VoidPtr> voidPtr = nullptr; // Owns the wrapper, which borrows this client.
     uv_timer_t* ownedUvTimerHandle = nullptr;
     uv_async_t* ownedUvAsyncHandle = nullptr;
     std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
