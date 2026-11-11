@@ -43,6 +43,109 @@ constexpr std::size_t bodyBufferLimit = 256U << 10U /* 256 KiB */;
 std::mutex fetchResponseClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
+// Curl callbacks only mutate native state. Never invoke QuickJS from here.
+// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
+std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
+    FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
+    if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
+        fetchState->error = errors::message("Response headers exceed 64 KiB");
+        return 0;
+    }
+    const std::size_t length = size * count;
+    if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
+        fetchState->error = errors::message("Response headers exceed 64 KiB");
+        return 0;
+    }
+    fetchState->headerBytes += length;
+    const std::string_view line(bytes, length);
+    if (line.starts_with("HTTP/")) {
+        fetchState->responseHeaders.clear();
+        fetchState->redirecting = false;
+        const std::size_t space = line.find(' ');
+        if (space == std::string_view::npos || line.size() - space < 4) {
+            fetchState->error = errors::message("Invalid HTTP status line");
+            return 0;
+        }
+        const std::string_view code = line.substr(space + 1, 3);
+        const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
+        if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
+            fetchState->error = errors::message("Invalid HTTP status code");
+            return 0;
+        }
+        return length;
+    }
+    if (line == "\r\n" || line == "\n") {
+        if (fetchState->statusCode == 101) {
+            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
+            return 0;
+        }
+        if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
+            fetchState->responseHeadersReceived = true;
+        }
+        return length;
+    }
+    if (fetchState->responseHeadersReceived) {
+        return length; // Trailers are not part of the exposed header snapshot.
+    }
+    const std::size_t colon = line.find(':');
+    if (colon == std::string_view::npos || colon == 0) {
+        fetchState->error = errors::message("Invalid HTTP response header");
+        return 0;
+    }
+    std::string name(line.substr(0, colon));
+    for (char& character : name) {
+        if (character >= 'A' && character <= 'Z') {
+            character = static_cast<char>(character - 'A' + 'a');
+        }
+    }
+    if (name.find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
+        fetchState->error = errors::message("Invalid HTTP response header name");
+        return 0;
+    }
+    std::string_view value = line.substr(colon + 1);
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ' || value.back() == '\t')) {
+        value.remove_suffix(1);
+    }
+    for (const char character : value) {
+        const unsigned char byte = static_cast<unsigned char>(character);
+        if ((byte < 32 && byte != 9) || byte == 127) {
+            fetchState->error = errors::message("Invalid HTTP response header value");
+            return 0;
+        }
+    }
+    if (name == "location" && !value.empty() && (fetchState->statusCode == 301 || fetchState->statusCode == 302 || fetchState->statusCode == 303 || fetchState->statusCode == 307 || fetchState->statusCode == 308)) {
+        fetchState->redirecting = true;
+    }
+    fetchState->responseHeaders.push_back({name, std::string(value)});
+    return length;
+}
+
+std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, const void* userdata) {
+    FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
+    if (size != 0 && count > bodyBufferLimit / size) {
+        fetchState->error = errors::message("HTTP body block exceeds buffer capacity");
+        return 0;
+    }
+    const std::size_t length = size * count;
+    if (fetchState->redirecting) {
+        return length;
+    }
+    if (length == 0) {
+        return 0;
+    }
+    if (length > bodyBufferLimit - fetchState->bufferedBytes) {
+        fetchState->curlStatus = CurlStatus::Paused;
+        return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
+    }
+    // Curl supplies exactly length readable bytes; snapshot before returning.
+    fetchState->chunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
+    fetchState->bufferedBytes += length;
+    return length;
+}
+
 // Process curl transfers in response to socket activity or a timeout:
 //
 // 1. Tell curl to read and write socket data.
@@ -61,12 +164,11 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
             fetchState.curlStatus = CurlStatus::Done;
-            std::string errorMessage = fetchState.error.errorMessage;
-            if (!errorMessage.empty()) {
-                errorMessage.append(": ");
+            fetchState.error.errorCode = errors::ErrorCode::GenericError;
+            if (!fetchState.error.errorMessage.empty()) {
+                fetchState.error.errorMessage.append(": ");
             }
-            errorMessage.append(curl_multi_strerror(curlmCode));
-            fetchState.error = errors::message(errorMessage);
+            fetchState.error.errorMessage.append(curl_multi_strerror(curlmCode));
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                 if (curlMultiCode != CURLM_OK) {
@@ -95,20 +197,18 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
         fetchState.curlStatus = CurlStatus::Done;
         if (curlMsg->data.result != CURLE_OK) {
-            std::string errorMessage = fetchState.error.errorMessage;
-            if (!errorMessage.empty()) {
-                errorMessage.append(": ");
+            fetchState.error.errorCode = errors::ErrorCode::GenericError;
+            if (!fetchState.error.errorMessage.empty()) {
+                fetchState.error.errorMessage.append(": ");
             }
-            errorMessage.append(curl_easy_strerror(curlMsg->data.result));
-            fetchState.error = errors::message(errorMessage);
+            fetchState.error.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
         }
         if (!fetchState.responseHeadersReceived) {
-            std::string errorMessage = fetchState.error.errorMessage;
-            if (!errorMessage.empty()) {
-                errorMessage.append(": ");
+            fetchState.error.errorCode = errors::ErrorCode::GenericError;
+            if (!fetchState.error.errorMessage.empty()) {
+                fetchState.error.errorMessage.append(": ");
             }
-            errorMessage.append("HTTP response ended without final headers");
-            fetchState.error = errors::message(errorMessage);
+            fetchState.error.errorMessage.append("HTTP response ended without final headers");
         }
     }
 
@@ -304,109 +404,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
         JS_FreeValue(fetchClient->jsContext, result);
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
-}
-
-// Curl callbacks only mutate native state. Never invoke QuickJS from here.
-// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
-std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
-    FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
-        fetchState->error = errors::message("Response headers exceed 64 KiB");
-        return 0;
-    }
-    const std::size_t length = size * count;
-    if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
-        fetchState->error = errors::message("Response headers exceed 64 KiB");
-        return 0;
-    }
-    fetchState->headerBytes += length;
-    const std::string_view line(bytes, length);
-    if (line.starts_with("HTTP/")) {
-        fetchState->responseHeaders.clear();
-        fetchState->redirecting = false;
-        const std::size_t space = line.find(' ');
-        if (space == std::string_view::npos || line.size() - space < 4) {
-            fetchState->error = errors::message("Invalid HTTP status line");
-            return 0;
-        }
-        const std::string_view code = line.substr(space + 1, 3);
-        const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
-        if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
-            fetchState->error = errors::message("Invalid HTTP status code");
-            return 0;
-        }
-        return length;
-    }
-    if (line == "\r\n" || line == "\n") {
-        if (fetchState->statusCode == 101) {
-            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
-            return 0;
-        }
-        if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-            fetchState->responseHeadersReceived = true;
-        }
-        return length;
-    }
-    if (fetchState->responseHeadersReceived) {
-        return length; // Trailers are not part of the exposed header snapshot.
-    }
-    const std::size_t colon = line.find(':');
-    if (colon == std::string_view::npos || colon == 0) {
-        fetchState->error = errors::message("Invalid HTTP response header");
-        return 0;
-    }
-    std::string name(line.substr(0, colon));
-    for (char& character : name) {
-        if (character >= 'A' && character <= 'Z') {
-            character = static_cast<char>(character - 'A' + 'a');
-        }
-    }
-    if (name.find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
-        fetchState->error = errors::message("Invalid HTTP response header name");
-        return 0;
-    }
-    std::string_view value = line.substr(colon + 1);
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ' || value.back() == '\t')) {
-        value.remove_suffix(1);
-    }
-    for (const char character : value) {
-        const unsigned char byte = static_cast<unsigned char>(character);
-        if ((byte < 32 && byte != 9) || byte == 127) {
-            fetchState->error = errors::message("Invalid HTTP response header value");
-            return 0;
-        }
-    }
-    if (name == "location" && !value.empty() && (fetchState->statusCode == 301 || fetchState->statusCode == 302 || fetchState->statusCode == 303 || fetchState->statusCode == 307 || fetchState->statusCode == 308)) {
-        fetchState->redirecting = true;
-    }
-    fetchState->responseHeaders.push_back({name, std::string(value)});
-    return length;
-}
-
-std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, const void* userdata) {
-    FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (size != 0 && count > bodyBufferLimit / size) {
-        fetchState->error = errors::message("HTTP body block exceeds buffer capacity");
-        return 0;
-    }
-    const std::size_t length = size * count;
-    if (fetchState->redirecting) {
-        return length;
-    }
-    if (length == 0) {
-        return 0;
-    }
-    if (length > bodyBufferLimit - fetchState->bufferedBytes) {
-        fetchState->curlStatus = CurlStatus::Paused;
-        return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
-    }
-    // Curl supplies exactly length readable bytes; snapshot before returning.
-    fetchState->chunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
-    fetchState->bufferedBytes += length;
-    return length;
 }
 
 struct PollData {
