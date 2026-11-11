@@ -39,6 +39,7 @@ namespace void_ptr = amj::void_ptr;
 namespace {
 
 constexpr std::size_t bodyBufferLimit = 256U << 10U /* 256 KiB */;
+constexpr std::size_t requestBodyLimit = 32U << 20U /* 32 MiB */;
 
 std::mutex fetchResponseClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
@@ -792,8 +793,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (JS_IsException(url.get()) || JS_IsException(method.get()) || JS_IsException(headers.get()) || JS_IsException(body.get())) {
             return JS_EXCEPTION;
         }
-        if (!JS_IsString(url.get()) || !JS_IsString(method.get()) || !JS_IsArray(headers.get()) || JS_GetTypedArrayType(body.get()) != JS_TYPED_ARRAY_UINT8) {
-            return JS_ThrowTypeError(jsContext, "FetchRequest requires string url/method, header pairs, and Uint8Array body");
+        if (!JS_IsString(url.get()) || !JS_IsString(method.get()) || !JS_IsArray(headers.get()) || (!JS_IsString(body.get()) && JS_GetTypedArrayType(body.get()) != JS_TYPED_ARRAY_UINT8)) {
+            return JS_ThrowTypeError(jsContext, "FetchRequest requires string url/method, header pairs, and string or Uint8Array body");
         }
         const std::optional<std::string> urlText = jsstring(jsContext, url.get());
         const std::optional<std::string> methodText = jsstring(jsContext, method.get());
@@ -887,31 +888,45 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             headerBytes += valueText.value().size() + 4;
             fetchRequest.headers.push_back({nameText.value(), valueText.value()});
         }
-        std::size_t byteOffset = 0;
-        std::size_t byteLength = 0;
-        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
-        if (JS_IsException(buffer.get())) {
-            return JS_EXCEPTION;
-        }
-        if (!JS_IsArrayBuffer(buffer.get())) {
-            return JS_ThrowTypeError(jsContext, "Shared request bodies are not supported");
-        }
-        std::size_t bufferLength = 0;
-        const uint8_t* bytes = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
-        if (bytes == nullptr && JS_HasException(jsContext)) {
-            return JS_EXCEPTION;
-        }
-        if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > (32U << 20U /* 32 MiB */)) {
-            return JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB");
-        }
-        if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
-            return JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body");
-        }
-        if (byteLength != 0) {
-            if (bytes == nullptr) {
-                return JS_ThrowInternalError(jsContext, "Missing request body storage");
+        if (JS_IsString(body.get())) {
+            const std::optional<std::string> bodyText = jsstring(jsContext, body.get());
+            if (!bodyText.has_value()) {
+                return JS_EXCEPTION;
             }
-            fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
+            if (bodyText.value().size() > requestBodyLimit) {
+                return JS_ThrowRangeError(jsContext, "Upload exceeds 32 MiB");
+            }
+            if (!bodyText.value().empty() && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+                return JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body");
+            }
+            fetchRequest.body.assign(bodyText.value().begin(), bodyText.value().end());
+        } else {
+            std::size_t byteOffset = 0;
+            std::size_t byteLength = 0;
+            const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
+            if (JS_IsException(buffer.get())) {
+                return JS_EXCEPTION;
+            }
+            if (!JS_IsArrayBuffer(buffer.get())) {
+                return JS_ThrowTypeError(jsContext, "Shared request bodies are not supported");
+            }
+            std::size_t bufferLength = 0;
+            const uint8_t* bytes = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
+            if (bytes == nullptr && JS_HasException(jsContext)) {
+                return JS_EXCEPTION;
+            }
+            if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > requestBodyLimit) {
+                return JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB");
+            }
+            if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+                return JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body");
+            }
+            if (byteLength != 0) {
+                if (bytes == nullptr) {
+                    return JS_ThrowInternalError(jsContext, "Missing request body storage");
+                }
+                fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
+            }
         }
         if (fetchClient->fetchStateMap.size() >= 64) {
             return JS_ThrowRangeError(jsContext, "Too many open FetchResponses");
