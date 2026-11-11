@@ -53,7 +53,7 @@ struct FetchState {
 
     bool responseHeadersReceived = false; // Response headers received.
     bool done = false;                    // Network transfer is done.
-    bool paused = false;                  // Body reception paused for backpressure.
+    bool curlPaused = false;                  // Body reception paused for backpressure.
     bool redirecting = false;             // Currently processing a redirect response.
     bool abandoned = false;               // JavaScript code stopped referencing it before the fetchResponse was closed.
 
