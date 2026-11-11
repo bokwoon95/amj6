@@ -105,13 +105,20 @@ void wakeCurl(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) 
     }
 }
 
-void settlePromises(uv_async_t* uvAsyncHandle) {
+// Settle the fetch promises by looping over each fetchState in the
+// FetchClient's fetchStateMap anc calling the resolve/reject functions of
+// whatever is ready.
+void settleFetchPromises(uv_async_t* uvAsyncHandle) {
     if (uvAsyncHandle->data == nullptr) {
         return;
     }
     FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
     uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
 
+    // Snapshot the existing CURL* keys + fetchStateID from the fetchStateMap
+    // into an entries list before looping over the entries. The fetchStateMap
+    // can be modified during iteration, so we need a stable list to iterate
+    // over.
     std::vector<std::pair<CURL*, uint64_t>> entries;
     entries.reserve(fetchClient->fetchStateMap.size());
     for (const std::pair<CURL* const, FetchState>& entry : fetchClient->fetchStateMap) {
@@ -1118,7 +1125,7 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
             const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), [](uv_async_t* uvAsyncHandle) noexcept {
                 try {
-                    settlePromises(uvAsyncHandle);
+                    settleFetchPromises(uvAsyncHandle);
                 } catch (...) {
                     std::terminate();
                 }
