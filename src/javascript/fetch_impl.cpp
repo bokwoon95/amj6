@@ -1,5 +1,6 @@
 #include "fetch_impl.hpp"
 
+#include "errors/errors.hpp"
 #include "javascript.hpp"
 #include "void_ptr/void_ptr.hpp"
 
@@ -31,6 +32,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
 
@@ -58,11 +60,13 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            fetchState.done = true;
-            if (!fetchState.errorMessage.empty()) {
-                fetchState.errorMessage.append(": ");
+            fetchState.curlStatus = CurlStatus::Done;
+            std::string errorMessage = fetchState.error.errorMessage;
+            if (!errorMessage.empty()) {
+                errorMessage.append(": ");
             }
-            fetchState.errorMessage.append(curl_multi_strerror(curlmCode));
+            errorMessage.append(curl_multi_strerror(curlmCode));
+            fetchState.error = errors::message(errorMessage);
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                 if (curlMultiCode != CURLM_OK) {
@@ -89,18 +93,22 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             throw std::logic_error("Curl transfer is done but has no FetchState");
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.done = true;
+        fetchState.curlStatus = CurlStatus::Done;
         if (curlMsg->data.result != CURLE_OK) {
-            if (!fetchState.errorMessage.empty()) {
-                fetchState.errorMessage.append(": ");
+            std::string errorMessage = fetchState.error.errorMessage;
+            if (!errorMessage.empty()) {
+                errorMessage.append(": ");
             }
-            fetchState.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
+            errorMessage.append(curl_easy_strerror(curlMsg->data.result));
+            fetchState.error = errors::message(errorMessage);
         }
         if (!fetchState.responseHeadersReceived) {
-            if (!fetchState.errorMessage.empty()) {
-                fetchState.errorMessage.append(": ");
+            std::string errorMessage = fetchState.error.errorMessage;
+            if (!errorMessage.empty()) {
+                errorMessage.append(": ");
             }
-            fetchState.errorMessage.append("HTTP response ended without final headers");
+            errorMessage.append("HTTP response ended without final headers");
+            fetchState.error = errors::message(errorMessage);
         }
     }
 
@@ -189,13 +197,13 @@ void settlePendingPromises(FetchClient* fetchClient) {
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersReceived) {
                 // The transfer is not yet done, don't settle the readyPromise.
-                if (!fetchState.done) {
+                if (fetchState.curlStatus != CurlStatus::Done) {
                     continue;
                 }
 
                 // The transfer was done without receiving any response
                 // headers. Reject readyPromise.
-                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.errorMessage);
+                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -206,8 +214,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
             char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
             const CURLcode code = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
             if (code != CURLE_OK || effectiveURL == nullptr) {
-                fetchState.errorMessage = "Could not obtain response URL";
-                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.errorMessage);
+                fetchState.error = errors::message("Could not obtain response URL");
+                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -229,7 +237,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // No error, buffered data, or end-of-stream to settle the readPromise with.
-        if (fetchState.errorMessage.empty() && fetchState.chunks.empty() && !fetchState.done) {
+        if (!fetchState.error.errorCode && fetchState.chunks.empty() && fetchState.curlStatus != CurlStatus::Done) {
             continue;
         }
 
@@ -239,8 +247,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         fetchState.readPromise.reset();
 
         // Reject the readPromise if the transfer encountered an error.
-        if (!fetchState.errorMessage.empty()) {
-            OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.errorMessage);
+        if (fetchState.error.errorCode) {
+            OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
             const JSValue result = JS_Call(fetchClient->jsContext, readPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -262,16 +270,15 @@ void settlePendingPromises(FetchClient* fetchClient) {
         fetchState.chunks.pop_front();
         fetchState.bufferedBytes -= chunk.size();
 
-        // If curl is currently paused (due to bufferedBytes exceeding our
-        // bodyBufferLimit) and our bufferedBytes just fell below half of
-        // bodyBufferLimit (and the fetchState is not "canceled yet (?)"), tell
-        // curl to resume transfers.
-        if (fetchState.curlPaused && fetchState.bufferedBytes <= bodyBufferLimit / 2 && !fetchState.done) {
-            fetchState.curlPaused = false;
+        // Resume the paused transfer once bufferedBytes is at most half of
+        // bodyBufferLimit. Set Running before resuming because curl callbacks
+        // can synchronously pause the transfer again.
+        if (fetchState.curlStatus == CurlStatus::Paused && fetchState.bufferedBytes <= bodyBufferLimit / 2) {
+            fetchState.curlStatus = CurlStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
-                fetchState.errorMessage = curl_easy_strerror(curlCode);
-                fetchState.done = true;
+                fetchState.error = errors::message(curl_easy_strerror(curlCode));
+                fetchState.curlStatus = CurlStatus::Done;
                 if (fetchState.curlMultiHandle != nullptr) {
                     if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
                         std::terminate();
@@ -304,12 +311,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
 std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
     FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
-        fetchState->errorMessage = "Response headers exceed 64 KiB";
+        fetchState->error = errors::message("Response headers exceed 64 KiB");
         return 0;
     }
     const std::size_t length = size * count;
     if (length > (64U << 10U /* 64 KiB */) - fetchState->headerBytes) {
-        fetchState->errorMessage = "Response headers exceed 64 KiB";
+        fetchState->error = errors::message("Response headers exceed 64 KiB");
         return 0;
     }
     fetchState->headerBytes += length;
@@ -319,20 +326,20 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
         fetchState->redirecting = false;
         const std::size_t space = line.find(' ');
         if (space == std::string_view::npos || line.size() - space < 4) {
-            fetchState->errorMessage = "Invalid HTTP status line";
+            fetchState->error = errors::message("Invalid HTTP status line");
             return 0;
         }
         const std::string_view code = line.substr(space + 1, 3);
         const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
         if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
-            fetchState->errorMessage = "Invalid HTTP status code";
+            fetchState->error = errors::message("Invalid HTTP status code");
             return 0;
         }
         return length;
     }
     if (line == "\r\n" || line == "\n") {
         if (fetchState->statusCode == 101) {
-            fetchState->errorMessage = "HTTP protocol upgrades are not supported";
+            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
             return 0;
         }
         if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
@@ -345,7 +352,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
     }
     const std::size_t colon = line.find(':');
     if (colon == std::string_view::npos || colon == 0) {
-        fetchState->errorMessage = "Invalid HTTP response header";
+        fetchState->error = errors::message("Invalid HTTP response header");
         return 0;
     }
     std::string name(line.substr(0, colon));
@@ -355,7 +362,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
         }
     }
     if (name.find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
-        fetchState->errorMessage = "Invalid HTTP response header name";
+        fetchState->error = errors::message("Invalid HTTP response header name");
         return 0;
     }
     std::string_view value = line.substr(colon + 1);
@@ -368,7 +375,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
     for (const char character : value) {
         const unsigned char byte = static_cast<unsigned char>(character);
         if ((byte < 32 && byte != 9) || byte == 127) {
-            fetchState->errorMessage = "Invalid HTTP response header value";
+            fetchState->error = errors::message("Invalid HTTP response header value");
             return 0;
         }
     }
@@ -382,7 +389,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
 std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, const void* userdata) {
     FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (size != 0 && count > bodyBufferLimit / size) {
-        fetchState->errorMessage = "HTTP body block exceeds buffer capacity";
+        fetchState->error = errors::message("HTTP body block exceeds buffer capacity");
         return 0;
     }
     const std::size_t length = size * count;
@@ -393,7 +400,7 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
         return 0;
     }
     if (length > bodyBufferLimit - fetchState->bufferedBytes) {
-        fetchState->curlPaused = true;
+        fetchState->curlStatus = CurlStatus::Paused;
         return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
     }
     // Curl supplies exactly length readable bytes; snapshot before returning.

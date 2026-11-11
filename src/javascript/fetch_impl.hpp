@@ -1,5 +1,6 @@
 #pragma once
 
+#include "errors/errors.hpp"
 #include "javascript.hpp"
 #include "void_ptr/void_ptr.hpp"
 
@@ -21,7 +22,14 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace void_ptr = amj::void_ptr;
+
+enum class CurlStatus : std::uint8_t {
+    Running,
+    Paused,
+    Done,
+};
 
 struct FetchRequest {
     std::string url = "";
@@ -46,16 +54,15 @@ struct FetchState {
     std::deque<std::vector<uint8_t>> chunks = {};
     std::size_t bufferedBytes = 0;
     std::size_t headerBytes = 0;
-    std::string errorMessage = "";
+    errors::Error error = {};
 
     OwnedJSPromise readyPromise = {};
     std::optional<OwnedJSPromise> readPromise = {};
 
     bool responseHeadersReceived = false; // Response headers received.
-    bool done = false;                    // Network transfer is done.
-    bool curlPaused = false;                  // Body reception paused for backpressure.
-    bool redirecting = false;             // Currently processing a redirect response.
-    bool abandoned = false;               // JavaScript code stopped referencing it before the fetchResponse was closed.
+    CurlStatus curlStatus = CurlStatus::Running;
+    bool redirecting = false; // Currently processing a redirect response.
+    bool abandoned = false;   // JavaScript code stopped referencing it before the fetchResponse was closed.
 
     FetchState() = default;
     ~FetchState();
