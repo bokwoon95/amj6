@@ -6,6 +6,7 @@
 
 #include <curl/curl.h>
 #include <curl/easy.h>
+#include <curl/header.h>
 #include <curl/multi.h>
 #include <curl/system.h>
 #include <curl/urlapi.h>
@@ -13,7 +14,6 @@
 #include <uv.h>
 
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -65,66 +65,59 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
     fetchState->responseHeadersSize += length;
     if (line.starts_with("HTTP/")) {
         fetchState->responseHeaders.clear();
+        fetchState->responseHeadersComplete = false;
         fetchState->redirecting = false;
-        const std::size_t space = line.find(' ');
-        if (space == std::string_view::npos || line.size() - space < 4) {
-            fetchState->error = errors::message("Invalid HTTP status line");
-            return 0;
-        }
-        const std::string_view code = line.substr(space + 1, 3);
-        const std::from_chars_result result = std::from_chars(code.data(), code.data() + code.size(), fetchState->statusCode);
-        if (result.ec != std::errc() || result.ptr != code.data() + code.size()) {
-            fetchState->error = errors::message("Invalid HTTP status code");
-            return 0;
-        }
-        return length;
-    }
-    if (line == "\r\n" || line == "\n") {
-        if (fetchState->statusCode == 101) {
-            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
-            return 0;
-        }
-        if (fetchState->statusCode >= 200 && !fetchState->redirecting) {
-            fetchState->responseHeadersComplete = true;
-        }
         return length;
     }
     if (fetchState->responseHeadersComplete) {
         return length; // Trailers are not part of the exposed header snapshot.
     }
-    const std::size_t colon = line.find(':');
-    if (colon == std::string_view::npos || colon == 0) {
-        fetchState->error = errors::message("Invalid HTTP response header");
+    if (line != "\r\n" && line != "\n") {
+        return length;
+    }
+
+    // Curl has parsed this response's headers. Query its status and headers
+    // instead of parsing the callback's raw header lines ourselves.
+    long statusCode = 0;
+    const CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &statusCode);
+    if (curlCode != CURLE_OK) {
+        fetchState->error = errors::message(curl_easy_strerror(curlCode));
         return 0;
     }
-    std::string name(line.substr(0, colon));
-    for (char& character : name) {
-        if (character >= 'A' && character <= 'Z') {
-            character = static_cast<char>(character - 'A' + 'a');
+    fetchState->statusCode = statusCode;
+    if (statusCode == 101) {
+        fetchState->error = errors::message("HTTP protocol upgrades are not supported");
+        return 0;
+    }
+    if (statusCode < 200) {
+        return length; // Informational responses precede the final response.
+    }
+    if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
+        curl_header* location = nullptr;
+        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0, CURLH_HEADER, -1, &location);
+        if (curlHCode == CURLHE_OK && location != nullptr && location->value[0] != '\0') {
+            fetchState->redirecting = true;
+            return length;
         }
-    }
-    if (name.find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz") != std::string::npos) {
-        fetchState->error = errors::message("Invalid HTTP response header name");
-        return 0;
-    }
-    std::string_view value = line.substr(colon + 1);
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-        value.remove_prefix(1);
-    }
-    while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ' || value.back() == '\t')) {
-        value.remove_suffix(1);
-    }
-    for (const char character : value) {
-        const unsigned char byte = static_cast<unsigned char>(character);
-        if ((byte < 32 && byte != 9) || byte == 127) {
-            fetchState->error = errors::message("Invalid HTTP response header value");
+        if (curlHCode != CURLHE_OK && curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
+            fetchState->error = errors::message("Could not obtain response redirect header");
             return 0;
         }
     }
-    if (name == "location" && !value.empty() && (fetchState->statusCode == 301 || fetchState->statusCode == 302 || fetchState->statusCode == 303 || fetchState->statusCode == 307 || fetchState->statusCode == 308)) {
-        fetchState->redirecting = true;
+
+    // Snapshot ordinary headers from the latest request, excluding redirect
+    // history, informational responses, proxy CONNECT headers, and trailers.
+    curl_header* header = nullptr;
+    while ((header = curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, header)) != nullptr) {
+        std::string name(header->name);
+        for (char& character : name) {
+            if (character >= 'A' && character <= 'Z') {
+                character = static_cast<char>(character - 'A' + 'a');
+            }
+        }
+        fetchState->responseHeaders.push_back({name, std::string(header->value)});
     }
-    fetchState->responseHeaders.push_back({name, std::string(value)});
+    fetchState->responseHeadersComplete = true;
     return length;
 }
 
@@ -161,8 +154,8 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
 void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
     // Tell curl to read and write socket data.
     int runningHandles = 0;
-    const CURLMcode curlmCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
-    if (curlmCode != CURLM_OK) {
+    const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
+    if (curlMCode != CURLM_OK) {
         // If curl socket action fails, mark all fetches as failed and
         // unregister them from the curlMultiHandle.
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
@@ -173,7 +166,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             if (!fetchState.error.errorMessage.empty()) {
                 fetchState.error.errorMessage.append(": ");
             }
-            fetchState.error.errorMessage.append(curl_multi_strerror(curlmCode));
+            fetchState.error.errorMessage.append(curl_multi_strerror(curlMCode));
             if (fetchState.curlMultiHandle != nullptr) {
                 const CURLMcode curlMultiCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                 if (curlMultiCode != CURLM_OK) {
@@ -1105,13 +1098,13 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        const CURLMcode curlmCode = curl_multi_add_handle(
+        const CURLMcode curlMCode = curl_multi_add_handle(
             fetchClient->ownedCurlMultiHandle,
             fetchState.ownedCurlEasyHandle
         );
-        if (curlmCode != CURLM_OK) {
+        if (curlMCode != CURLM_OK) {
             fetchClient->fetchStateMap.erase(registeredHandle);
-            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlmCode));
+            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
         return response.release();
