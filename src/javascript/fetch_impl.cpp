@@ -66,7 +66,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
     if (line.starts_with("HTTP/")) {
         fetchState->responseHeaders.clear();
         fetchState->responseHeadersComplete = false;
-        fetchState->redirecting = false;
+        fetchState->responseRedirecting = false;
         return length;
     }
     if (fetchState->responseHeadersComplete) {
@@ -96,7 +96,7 @@ std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count,
         curl_header* location = nullptr;
         const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0, CURLH_HEADER, -1, &location);
         if (curlHCode == CURLHE_OK && location != nullptr && location->value[0] != '\0') {
-            fetchState->redirecting = true;
+            fetchState->responseRedirecting = true;
             return length;
         }
         if (curlHCode != CURLHE_OK && curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
@@ -128,19 +128,19 @@ std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, 
         return 0;
     }
     const std::size_t length = size * count;
-    if (fetchState->redirecting) {
+    if (fetchState->responseRedirecting) {
         return length;
     }
     if (length == 0) {
         return 0;
     }
-    if (length > bodyBufferLimit - fetchState->responseBodySize) {
-        fetchState->fetchStatus = FetchStatus::Paused;
+    if (length > bodyBufferLimit - fetchState->responseBufferSize) {
+        fetchState->responseStatus = FetchResponseStatus::Paused;
         return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
     }
     // Curl supplies exactly length readable bytes; snapshot before returning.
-    fetchState->responseBodyChunks.push_back(std::vector<uint8_t>(bytes, bytes + length));
-    fetchState->responseBodySize += length;
+    fetchState->responseBuffer.push_back(std::vector<uint8_t>(bytes, bytes + length));
+    fetchState->responseBufferSize += length;
     return length;
 }
 
@@ -161,7 +161,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            fetchState.fetchStatus = FetchStatus::Done;
+            fetchState.responseStatus = FetchResponseStatus::Done;
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
                 fetchState.error.errorMessage.append(": ");
@@ -193,7 +193,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             throw std::logic_error("Curl transfer is done but has no FetchState");
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.fetchStatus = FetchStatus::Done;
+        fetchState.responseStatus = FetchResponseStatus::Done;
         if (curlMsg->data.result != CURLE_OK) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
@@ -268,21 +268,21 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 throw std::logic_error("abandoned FetchState disappeared");
             }
             const FetchState& fetchState = mapNode.mapped();
-            const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readyPromise.promise.get());
-            if (readyPromiseState != JS_PROMISE_PENDING && !fetchState.readPromise.has_value()) {
+            const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
+            if (readyPromiseState != JS_PROMISE_PENDING && !fetchState.responseReadPromise.has_value()) {
                 continue;
             }
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             // Reject readyPromise.
             if (readyPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
             // Reject readPromise.
-            if (fetchState.readPromise.has_value()) {
-                const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readPromise.value().promise.get());
+            if (fetchState.responseReadPromise.has_value()) {
+                const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadPromise.value().promise.get());
                 if (readPromiseState == JS_PROMISE_PENDING) {
-                    const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                    const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                     JS_FreeValue(fetchClient->jsContext, result);
                 }
             }
@@ -291,18 +291,18 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // If readyPromise has not yet been settled, settle it first.
-        const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readyPromise.promise.get());
+        const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersComplete) {
                 // The transfer is not yet done, don't settle the readyPromise.
-                if (fetchState.fetchStatus != FetchStatus::Done) {
+                if (fetchState.responseStatus != FetchResponseStatus::Done) {
                     continue;
                 }
 
                 // The transfer was done without receiving any response
                 // headers. Reject readyPromise.
                 OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
                 continue;
@@ -314,7 +314,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             if (code != CURLE_OK || effectiveURL == nullptr) {
                 fetchState.error = errors::message("Could not obtain response URL");
                 OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
                 continue;
@@ -323,26 +323,26 @@ void settlePendingPromises(FetchClient* fetchClient) {
             // Resolve readyPromise.
             fetchState.effectiveURL = effectiveURL;
             JSValue argument = JS_UNDEFINED;
-            const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.resolveFunction.get(), JS_UNDEFINED, 1, &argument);
+            const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 1, &argument);
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
         // No readPromise needs settling.
-        if (!fetchState.readPromise.has_value()) {
+        if (!fetchState.responseReadPromise.has_value()) {
             continue;
         }
 
         // No error, buffered data, or end-of-stream to settle the readPromise with.
-        if (!fetchState.error.errorCode && fetchState.responseBodyChunks.empty() && fetchState.fetchStatus != FetchStatus::Done) {
+        if (!fetchState.error.errorCode && fetchState.responseBuffer.empty() && fetchState.responseStatus != FetchResponseStatus::Done) {
             continue;
         }
 
         // Move fetchState.readPromise out to a local variable and reset it so
         // JS can request another read.
-        OwnedJSPromise readPromise = std::move(fetchState.readPromise.value());
-        fetchState.readPromise.reset();
+        OwnedJSPromise readPromise = std::move(fetchState.responseReadPromise.value());
+        fetchState.responseReadPromise.reset();
 
         // Reject the readPromise if the transfer encountered an error.
         if (fetchState.error.errorCode) {
@@ -355,7 +355,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // No error or buffered chunks remain, and the transfer is done.
         // Resolve the readPromise with null to indicate end-of-stream.
-        if (fetchState.responseBodyChunks.empty()) {
+        if (fetchState.responseBuffer.empty()) {
             JSValue endOfStream = JS_NULL;
             const JSValue result = JS_Call(fetchClient->jsContext, readPromise.resolveFunction.get(), JS_UNDEFINED, 1, &endOfStream);
             JS_FreeValue(fetchClient->jsContext, result);
@@ -364,19 +364,17 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Pop the oldest chunk from fetchState.chunks.
-        const std::vector<uint8_t> responseBodyChunk = std::move(fetchState.responseBodyChunks.front());
-        fetchState.responseBodyChunks.pop_front();
-        fetchState.responseBodySize -= responseBodyChunk.size();
+        const std::vector<uint8_t> responseBodyChunk = std::move(fetchState.responseBuffer.front());
+        fetchState.responseBuffer.pop_front();
+        fetchState.responseBufferSize -= responseBodyChunk.size();
 
-        // Resume the paused transfer once bufferedBytes is at most half of
-        // bodyBufferLimit. Set Running before resuming because curl callbacks
-        // can synchronously pause the transfer again.
-        if (fetchState.fetchStatus == FetchStatus::Paused && fetchState.responseBodySize <= bodyBufferLimit / 2) {
-            fetchState.fetchStatus = FetchStatus::Running;
+        // If responseBodySize fell below half of bodyBufferLimit and
+        // fetchStatus is currently paused, unpause it.
+        if (fetchState.responseBufferSize <= bodyBufferLimit / 2 && fetchState.responseStatus == FetchResponseStatus::Paused) {
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
-                fetchState.fetchStatus = FetchStatus::Done;
+                fetchState.responseStatus = FetchResponseStatus::Done;
                 if (fetchState.curlMultiHandle != nullptr) {
                     if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
                         std::terminate();
@@ -384,8 +382,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
                     fetchState.curlMultiHandle = nullptr;
                 }
             }
-            // Unpause can synchronously invoke curl callbacks, but never JS.
-            // Check for transfers that are done even if no further socket event arrives.
+            fetchState.responseStatus = FetchResponseStatus::Running;
             processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
         }
 
@@ -524,11 +521,11 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.readyPromise.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
-        if (fetchState.readPromise.has_value()) {
+        if (fetchState.responseReadPromise.has_value()) {
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
@@ -536,7 +533,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
-        fetchState.readPromise = OwnedJSPromise{
+        fetchState.responseReadPromise = OwnedJSPromise{
             .promise = std::move(promise),
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
@@ -547,7 +544,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
             throw std::runtime_error(uv_strerror(status));
         }
-        return JS_DupValue(jsContext, fetchState.readPromise.value().promise.get());
+        return JS_DupValue(jsContext, fetchState.responseReadPromise.value().promise.get());
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -588,19 +585,19 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
                 return JS_UNDEFINED;
             }
             const FetchState& fetchState = mapNode.mapped();
-            const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readyPromise.promise.get());
-            if (!fetchState.readPromise.has_value() && readyPromiseState != JS_PROMISE_PENDING) {
+            const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
+            if (!fetchState.responseReadPromise.has_value() && readyPromiseState != JS_PROMISE_PENDING) {
                 return JS_UNDEFINED;
             }
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             if (readyPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
-            if (fetchState.readPromise.has_value()) {
-                const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.readPromise.value().promise.get());
+            if (fetchState.responseReadPromise.has_value()) {
+                const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadPromise.value().promise.get());
                 if (readPromiseState == JS_PROMISE_PENDING) {
-                    const JSValue result = JS_Call(fetchClient->jsContext, fetchState.readPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                    const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                     JS_FreeValue(fetchClient->jsContext, result);
                 }
             }
@@ -648,7 +645,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.readyPromise.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
@@ -692,7 +689,7 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.readyPromise.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
@@ -741,7 +738,7 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
-        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.readyPromise.promise.get());
+        const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
@@ -937,11 +934,11 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         fetchState.selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
-        fetchState.fetchRequest = std::move(fetchRequest);
+        fetchState.request = std::move(fetchRequest);
         registeredHandle = curlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = curlEasyHandle.release();
         bool hasContentType = false;
-        for (const std::pair<std::string, std::string>& header : fetchState.fetchRequest.headers) {
+        for (const std::pair<std::string, std::string>& header : fetchState.request.headers) {
             std::string lowerName = header.first;
             for (char& character : lowerName) {
                 if (character >= 'A' && character <= 'Z') {
@@ -970,7 +967,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             }
             fetchState.ownedCurlRequestHeaders = curlHeaders;
         }
-        CURLcode curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.fetchRequest.url.c_str());
+        CURLcode curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.request.url.c_str());
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1051,19 +1048,19 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         CURLcode methodStatus = CURLE_OK;
-        if (fetchState.fetchRequest.method == "HEAD") {
+        if (fetchState.request.method == "HEAD") {
             methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_NOBODY, 1L);
-        } else if (fetchState.fetchRequest.method != "GET") {
+        } else if (fetchState.request.method != "GET") {
             const char* bodyBytes = "";
-            if (!fetchState.fetchRequest.body.empty()) {
-                bodyBytes = reinterpret_cast<const char*>(fetchState.fetchRequest.body.data());
+            if (!fetchState.request.body.empty()) {
+                bodyBytes = reinterpret_cast<const char*>(fetchState.request.body.data());
             }
             methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDS, bodyBytes);
             if (methodStatus == CURLE_OK) {
-                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(fetchState.fetchRequest.body.size()));
+                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(fetchState.request.body.size()));
             }
-            if (methodStatus == CURLE_OK && fetchState.fetchRequest.method != "POST") {
-                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CUSTOMREQUEST, fetchState.fetchRequest.method.c_str());
+            if (methodStatus == CURLE_OK && fetchState.request.method != "POST") {
+                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CUSTOMREQUEST, fetchState.request.method.c_str());
             }
         }
         if (methodStatus != CURLE_OK) {
@@ -1075,7 +1072,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        fetchState.readyPromise = OwnedJSPromise{
+        fetchState.responseReadyPromise = OwnedJSPromise{
             .promise = std::move(ready),
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
@@ -1094,7 +1091,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
-        if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready", JS_DupValue(jsContext, fetchState.readyPromise.promise.get()), JS_PROP_ENUMERABLE) < 0) {
+        if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready", JS_DupValue(jsContext, fetchState.responseReadyPromise.promise.get()), JS_PROP_ENUMERABLE) < 0) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }

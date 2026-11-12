@@ -32,7 +32,7 @@ struct FetchRequest {
     std::vector<uint8_t> body = {};
 };
 
-enum class FetchStatus : std::uint8_t {
+enum class FetchResponseStatus : std::uint8_t {
     Running,
     Paused,
     Done,
@@ -45,23 +45,23 @@ struct FetchState {
     uint64_t fetchStateID = 0;
     CURLM* curlMultiHandle = nullptr;
     CURL* ownedCurlEasyHandle = nullptr;
+    errors::Error error = {};
+    bool abandoned = false; // JavaScript code stopped referencing it before the fetchResponse was closed.
+
     curl_slist* ownedCurlRequestHeaders = nullptr;
-    FetchRequest fetchRequest = {};
+    FetchRequest request = {};
+
+    FetchResponseStatus responseStatus = FetchResponseStatus::Running;
     int64_t statusCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
     std::size_t responseHeadersSize = 0;
     bool responseHeadersComplete = false;
-    std::deque<std::vector<uint8_t>> responseBodyChunks = {};
-    std::size_t responseBodySize = 0;
-    errors::Error error = {};
-
-    FetchStatus fetchStatus = FetchStatus::Running;
-    bool redirecting = false; // Currently processing a redirect response.
-    bool abandoned = false;   // JavaScript code stopped referencing it before the fetchResponse was closed.
-
-    OwnedJSPromise readyPromise = {};
-    std::optional<OwnedJSPromise> readPromise = {};
+    std::deque<std::vector<uint8_t>> responseBuffer = {};
+    std::size_t responseBufferSize = 0;
+    bool responseRedirecting = false; // Currently processing a redirect response.
+    OwnedJSPromise responseReadyPromise = {};
+    std::optional<OwnedJSPromise> responseReadPromise = {};
 
     FetchState() = default;
     ~FetchState();
