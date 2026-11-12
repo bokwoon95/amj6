@@ -370,7 +370,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // If responseBodySize fell below half of bodyBufferLimit and
         // fetchStatus is currently paused, unpause it.
-        if (fetchState.responseBufferSize <= bodyBufferLimit / 2 && fetchState.responseCurlStatus == CurlStatus::Paused) {
+        if (fetchState.responseCurlStatus == CurlStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
             fetchState.responseCurlStatus = CurlStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
