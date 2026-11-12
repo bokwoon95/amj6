@@ -54,11 +54,12 @@ struct FetchState {
     FetchRequest request = {};
 
     // Response.
-    CurlStatus responseCurlStatus = CurlStatus::Running;
-    int64_t statusCode = 0;
+    CurlStatus responseCurlStatus = CurlStatus::NotStarted;
+    int64_t responseCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
     std::size_t responseHeadersSize = 0;
+    std::size_t responseTrailersSize = 0;
     bool responseHeadersComplete = false;
     std::deque<std::vector<uint8_t>> responseBuffer = {};
     std::size_t responseBufferSize = 0;

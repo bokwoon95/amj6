@@ -4,7 +4,8 @@ declare module "amj:fetch_impl" {
     url: string;
     method: string;
     headers: Array<[string, string]>;
-    body: Uint8Array;
+    /** Strings are UTF-8 encoded. Uploads are limited to 32 MiB total. */
+    body: string | Uint8Array;
   }
 
   export interface FetchResponse {

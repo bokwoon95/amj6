@@ -32,6 +32,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    add_compile_definitions(NOMINMAX)
+endif()
+
 # Tell LLVM clang-cl where to find Windows system headers so clangd and
 # clang-tidy can work. It works by passing the INCLUDE environment variable
 # (configured by vcvars64.bat) to include_directories().
@@ -122,7 +126,6 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_sources(amj_keyring PRIVATE src/keyring/keyring_windows.cpp)
     target_link_libraries(amj_keyring PRIVATE advapi32 crypt32)
-    target_compile_definitions(amj_keyring PRIVATE NOMINMAX)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_sources(amj_keyring PRIVATE src/keyring/keyring_darwin.cpp)
     find_library(AMJ_KEYRING_COREFOUNDATION CoreFoundation REQUIRED)

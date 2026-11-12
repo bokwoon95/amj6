@@ -44,104 +44,125 @@ constexpr std::size_t requestBodyLimit = 32U << 20U /* 32 MiB */;
 std::mutex fetchResponseClassIDMutex = {};
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
-// Curl callbacks only mutate native state. Never invoke QuickJS from here.
+// Passed as CURLOPT_HEADERFUNCTION to read the response headers.
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
-std::size_t curlHeaderFunction(char* bytes, std::size_t size, std::size_t count, void* userdata) {
+std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
     FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (size != 0 && count > (64U << 10U /* 64 KiB */) / size) {
-        fetchState->error = errors::message("Response headers exceed 64 KiB");
-        return 0;
+    const std::size_t realsize = size * nitems;
+    const std::string_view line(buffer, realsize);
+
+    // If responseHeadersComplete, we are handling response trailers.
+    if (fetchState->responseHeadersComplete) {
+        if (fetchState->responseTrailersSize + realsize > (4U << 10U /* 4 KiB */)) {
+            fetchState->error = errors::message("Response trailers exceed 4 KiB");
+            return CURL_WRITEFUNC_ERROR;
+        }
+        fetchState->responseTrailersSize += realsize;
+        return realsize;
     }
-    const std::size_t length = size * count;
-    const std::string_view line(bytes, length);
-    if (line.starts_with("HTTP/")) {
-        // Each response gets a fresh header budget, including after redirects.
+
+    // Every fresh response following a redirect gets a new responseHeadersSize
+    // budget.
+    if (line.starts_with("HTTP/") && fetchState->responseRedirecting) {
         fetchState->responseHeadersSize = 0;
     }
-    if (length > (64U << 10U /* 64 KiB */) - fetchState->responseHeadersSize) {
-        fetchState->error = errors::message("Response headers exceed 64 KiB");
-        return 0;
+    if (fetchState->responseHeadersSize + realsize > (10U << 20U /* 10 MiB */)) {
+        fetchState->error = errors::message("Response headers exceed 10 MiB");
+        return CURL_WRITEFUNC_ERROR;
     }
-    fetchState->responseHeadersSize += length;
+    fetchState->responseHeadersSize += realsize;
+
+    // If it's a fresh response, reset the responseHeaders and the
+    // responseRedirecting flag.
     if (line.starts_with("HTTP/")) {
         fetchState->responseHeaders.clear();
-        fetchState->responseHeadersComplete = false;
         fetchState->responseRedirecting = false;
-        return length;
-    }
-    if (fetchState->responseHeadersComplete) {
-        return length; // Trailers are not part of the exposed header snapshot.
-    }
-    if (line != "\r\n" && line != "\n") {
-        return length;
+        return realsize;
     }
 
-    // Curl has parsed this response's headers. Query its status and headers
-    // instead of parsing the callback's raw header lines ourselves.
-    long statusCode = 0;
-    const CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &statusCode);
+    // Response headers are not done yet.
+    if (line != "\r\n" && line != "\n") {
+        return realsize;
+    }
+
+    // If we reach here, response headers are done. Get the responseCode.
+    long responseCode = 0;
+    CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &responseCode);
     if (curlCode != CURLE_OK) {
         fetchState->error = errors::message(curl_easy_strerror(curlCode));
-        return 0;
+        return CURL_WRITEFUNC_ERROR;
     }
-    fetchState->statusCode = statusCode;
-    if (statusCode == 101) {
-        fetchState->error = errors::message("HTTP protocol upgrades are not supported");
-        return 0;
+    if (responseCode >= 100 && responseCode < 200) {
+        if (responseCode == 101) {
+            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
+            return CURL_WRITEFUNC_ERROR;
+        }
+        return realsize;
     }
-    if (statusCode < 200) {
-        return length; // Informational responses precede the final response.
-    }
-    if (statusCode == 301 || statusCode == 302 || statusCode == 303 || statusCode == 307 || statusCode == 308) {
-        curl_header* location = nullptr;
-        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0, CURLH_HEADER, -1, &location);
-        if (curlHCode == CURLHE_OK && location != nullptr && location->value[0] != '\0') {
+    if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 || responseCode == 308) {
+        curl_header* curlHeader = nullptr;
+        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0, CURLH_HEADER, -1, &curlHeader);
+        if (curlHCode != CURLHE_OK) {
+            if (curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
+                fetchState->error = errors::message("Could not obtain response redirect header");
+                return CURL_WRITEFUNC_ERROR;
+            }
+        }
+        if (curlHeader != nullptr && curlHeader->value[0] != '\0') {
             fetchState->responseRedirecting = true;
-            return length;
+            return realsize;
         }
-        if (curlHCode != CURLHE_OK && curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
-            fetchState->error = errors::message("Could not obtain response redirect header");
-            return 0;
-        }
+    }
+    fetchState->responseCode = responseCode;
+
+    // Get the effectiveURL.
+    char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
+    curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
+    if (curlCode != CURLE_OK) {
+        fetchState->error = errors::message("Could not obtain response URL");
+        return CURL_WRITEFUNC_ERROR;
+    }
+    if (effectiveURL != nullptr) {
+        fetchState->effectiveURL = effectiveURL;
     }
 
-    // Snapshot ordinary headers from the latest request, excluding redirect
-    // history, informational responses, proxy CONNECT headers, and trailers.
-    curl_header* header = nullptr;
-    while ((header = curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, header)) != nullptr) {
-        std::string name(header->name);
+    // Get the responseHeaders.
+    curl_header* curlHeader = nullptr;
+    while ((curlHeader = curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, curlHeader)) != nullptr) {
+        std::string name(curlHeader->name);
         for (char& character : name) {
             if (character >= 'A' && character <= 'Z') {
                 character = static_cast<char>(character - 'A' + 'a');
             }
         }
-        fetchState->responseHeaders.push_back({name, std::string(header->value)});
+        fetchState->responseHeaders.push_back({name, std::string(curlHeader->value)});
     }
     fetchState->responseHeadersComplete = true;
-    return length;
+    return realsize;
 }
 
-std::size_t curlWriteFunction(char* bytes, std::size_t size, std::size_t count, const void* userdata) {
+// Passed as CURLOPT_WRITEFUNCTION  to read the response body.
+std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, const void* userdata) {
     FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (size != 0 && count > bodyBufferLimit / size) {
+    if (size != 0 && nmemb > bodyBufferLimit / size) {
         fetchState->error = errors::message("HTTP body block exceeds buffer capacity");
         return 0;
     }
-    const std::size_t length = size * count;
+    const std::size_t realsize = size * nmemb;
     if (fetchState->responseRedirecting) {
-        return length;
+        return realsize;
     }
-    if (length == 0) {
+    if (realsize == 0) {
         return 0;
     }
-    if (length > bodyBufferLimit - fetchState->responseBufferSize) {
+    if (realsize > bodyBufferLimit - fetchState->responseBufferSize) {
         fetchState->responseCurlStatus = CurlStatus::Paused;
         return CURL_WRITEFUNC_PAUSE; // Enqueue nothing: curl retries this block.
     }
     // Curl supplies exactly length readable bytes; snapshot before returning.
-    fetchState->responseBuffer.push_back(std::vector<uint8_t>(bytes, bytes + length));
-    fetchState->responseBufferSize += length;
-    return length;
+    fetchState->responseBuffer.push_back(std::vector<uint8_t>(ptr, ptr + realsize));
+    fetchState->responseBufferSize += realsize;
+    return realsize;
 }
 
 // Process curl transfers in response to socket activity or a timeout:
@@ -308,20 +329,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 continue;
             }
 
-            // Get the effective URL (the final URL we were redirected to).
-            char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
-            const CURLcode code = curl_easy_getinfo(curlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
-            if (code != CURLE_OK || effectiveURL == nullptr) {
-                fetchState.error = errors::message("Could not obtain response URL");
-                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
-                JS_FreeValue(fetchClient->jsContext, result);
-                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-                continue;
-            }
-
+            // The header callback has populated the final response metadata.
             // Resolve readyPromise.
-            fetchState.effectiveURL = effectiveURL;
             JSValue argument = JS_UNDEFINED;
             const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 1, &argument);
             JS_FreeValue(fetchClient->jsContext, result);
@@ -649,7 +658,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
-        return JS_NewInt64(jsContext, fetchState.statusCode);
+        return JS_NewInt64(jsContext, fetchState.responseCode);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -764,8 +773,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient->jsContext) {
-            return JS_ThrowInternalError(jsContext, "FetchClient belongs to another context");
+        if (jsContext != fetchClient->jsContext || fetchClient->shuttingDown) {
+            return JS_ThrowInternalError(jsContext, "FetchClient requires its live context and an active client");
         }
         JSClassID fetchResponseClassID = 0;
         {
@@ -1023,9 +1032,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, [](char* buffer, std::size_t size, std::size_t nitems, void* userdata) noexcept {
             try {
-                return curlHeaderFunction(bytes, size, count, userdata);
+                return curlHeaderFunction(buffer, size, nitems, userdata);
             } catch (...) {
                 return static_cast<std::size_t>(0);
             }
@@ -1104,6 +1113,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
+        fetchState.responseCurlStatus = CurlStatus::Running;
         return response.release();
     } catch (const std::bad_alloc&) {
         if (registeredHandle != nullptr) {
