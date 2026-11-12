@@ -32,7 +32,7 @@ struct FetchRequest {
     std::vector<uint8_t> body = {};
 };
 
-enum class FetchResponseStatus : std::uint8_t {
+enum class FetchStatus : std::uint8_t {
     Running,
     Paused,
     Done,
@@ -51,7 +51,7 @@ struct FetchState {
     curl_slist* ownedCurlRequestHeaders = nullptr;
     FetchRequest request = {};
 
-    FetchResponseStatus responseStatus = FetchResponseStatus::Running;
+    FetchStatus responseStatus = FetchStatus::Running;
     int64_t statusCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
