@@ -371,6 +371,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // If responseBodySize fell below half of bodyBufferLimit and
         // fetchStatus is currently paused, unpause it.
         if (fetchState.responseBufferSize <= bodyBufferLimit / 2 && fetchState.responseCurlStatus == CurlStatus::Paused) {
+            fetchState.responseCurlStatus = CurlStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
@@ -382,7 +383,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
                     fetchState.curlMultiHandle = nullptr;
                 }
             }
-            fetchState.responseCurlStatus = CurlStatus::Running;
             processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
         }
 
