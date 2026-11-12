@@ -364,9 +364,9 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Pop the oldest chunk from fetchState.chunks.
-        const std::vector<uint8_t> chunk = std::move(fetchState.responseBodyChunks.front());
+        const std::vector<uint8_t> responseBodyChunk = std::move(fetchState.responseBodyChunks.front());
         fetchState.responseBodyChunks.pop_front();
-        fetchState.responseBodySize -= chunk.size();
+        fetchState.responseBodySize -= responseBodyChunk.size();
 
         // Resume the paused transfer once bufferedBytes is at most half of
         // bodyBufferLimit. Set Running before resuming because curl callbacks
@@ -389,7 +389,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
         }
 
-        OwnedJSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
+        OwnedJSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, responseBodyChunk.data(), responseBodyChunk.size()));
         if (JS_IsException(uint8Array.get())) {
             OwnedJSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
             const JSValue result = JS_Call(fetchClient->jsContext, readPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
