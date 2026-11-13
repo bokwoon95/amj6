@@ -228,9 +228,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 // failure, leave transfers registered for host-coordinated shutdown and return.
 // The outer callback adapter stops the loop after curl unwinds.
 void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
-    if (fetchClient.shuttingDown || hasError(fetchClient.pendingError)) {
-        return;
-    }
+    // Callers check pendingError at the libuv boundary or after the last curl
+    // operation in the unpause path. No callbacks run between that check and here.
     // Tell curl to read and write socket data.
     int runningHandles = 0;
     const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
@@ -279,18 +278,18 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
     const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
     if (status != 0) {
         uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-        if (!hasError(fetchClient.pendingError)) {
-            *fetchClient.pendingError = std::error_code(status, uvErrorCategory);
-        }
+        // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
+        // this is the first error, so no second mailbox check is needed.
+        *fetchClient.pendingError = std::error_code(status, uvErrorCategory);
         return;
     }
 }
 
-// Settle pending fetch promises in the jsContext.
+// Called only by the async adapter, which checks pendingError before entry.
+// QuickJS allocations can run GC finalizers, and resolving an object can invoke
+// a user-defined `then` getter. Both can report errors, so check before pumping
+// more JS jobs. The loop checkpoint then checks errors reported by those jobs.
 void settlePendingPromises(FetchClient* fetchClient) {
-    if (fetchClient->shuttingDown || hasError(fetchClient->pendingError)) {
-        return;
-    }
     // Snapshot the fetchStateMap's CURL* keys + fetchStateID into an entries
     // list before looping over the entries. The fetchStateMap can be modified
     // during iteration, so we need a stable list to iterate over.
@@ -300,7 +299,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         entries.push_back({entry.first, entry.second.fetchStateID});
     }
 
-    // Loop over the fetchStateMap snapshotted entries.
+    // A previous iteration may have run JS jobs or destroyed an extracted
+    // FetchState (which invokes curl callbacks). Check before the next entry.
     for (const std::pair<CURL*, uint64_t>& entry : entries) {
         if (hasError(fetchClient->pendingError)) {
             return;
@@ -443,6 +443,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
         if (fetchState.responseStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
             fetchState.responseStatus = CurlTransferStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
+            // Unpausing can synchronously invoke curl callbacks. Do not remove
+            // handles or drive curl again if one of them reported a loop error.
+            if (hasError(fetchClient->pendingError)) {
+                fetchState.responseReadPromise = std::move(responseReadPromise);
+                return;
+            }
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
                 fetchState.responseStatus = CurlTransferStatus::Completed;
@@ -458,6 +464,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
                         return;
                     }
                     fetchState.curlMultiHandle = nullptr;
+                    // Removal also invokes curl callbacks; its return code is
+                    // not the mailbox, which retains their original failure.
+                    if (hasError(fetchClient->pendingError)) {
+                        fetchState.responseReadPromise = std::move(responseReadPromise);
+                        return;
+                    }
                 }
             }
             try {
@@ -513,12 +525,9 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
-    if (fetchClient->shuttingDown) {
-        return 0; // Teardown needs no new socket watches.
-    }
-    if (hasError(fetchClient->pendingError)) {
-        return -1;
-    }
+    // Curl also invokes this while removing/cleaning handles. A pending error
+    // must not block the watch updates needed to finish that cleanup. The host
+    // keeps libuv handles alive until curl teardown has returned.
     if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
         std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
         std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(
@@ -558,9 +567,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
-        if (fetchClient == nullptr || fetchClient->shuttingDown) {
-            return;
-        }
+        // uv_stop does not discard other callbacks in the current iteration.
         if (hasError(fetchClient->pendingError)) {
             uv_stop(fetchClient->uvLoop);
             return;
@@ -595,22 +602,19 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
 
 int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const void* userdata) {
     const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-    if (milliseconds < 0 || fetchClient->shuttingDown) {
+    // Like socket updates, timer updates can be requested during curl teardown.
+    // The timer remains initialized until all curl cleanup has returned.
+    if (milliseconds < 0) {
         const int status = uv_timer_stop(fetchClient->ownedUvTimerHandle);
         if (status != 0 && !hasError(fetchClient->pendingError)) {
             *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
         }
         return status == 0 ? 0 : -1;
     }
-    if (hasError(fetchClient->pendingError)) {
-        return -1;
-    }
     uv_update_time(fetchClient->uvLoop);
     const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        if (fetchClient == nullptr || fetchClient->shuttingDown) {
-            return;
-        }
+        // Another callback may already have stopped this loop iteration.
         if (hasError(fetchClient->pendingError)) {
             uv_stop(fetchClient->uvLoop);
             return;
@@ -669,8 +673,10 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
-        if (fetchClient->shuttingDown || hasError(fetchClient->pendingError)) {
-            return JS_ThrowInternalError(jsContext, "FetchResponse requires an active client with no pending loop error");
+        // JS can catch a native failure and call read again in the same job,
+        // before the host regains control to inspect pendingError.
+        if (hasError(fetchClient->pendingError)) {
+            return JS_ThrowInternalError(jsContext, "FetchResponse requires no pending loop error");
         }
         if (fetchState.responseReadPromise.has_value()) {
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
@@ -727,6 +733,8 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         if (jsContext != fetchClient->jsContext) {
             return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
+        // A JS catch block can request close in the same job that reported an
+        // error. Leave registered state intact for the host's recovery pass.
         if (hasError(fetchClient->pendingError)) {
             return JS_ThrowInternalError(jsContext, "FetchResponse cleanup deferred until the host handles the loop error");
         }
@@ -917,8 +925,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient->jsContext || fetchClient->shuttingDown || hasError(fetchClient->pendingError)) {
-            return JS_ThrowInternalError(jsContext, "FetchClient requires its live context, an active client, and no pending loop error");
+        // A caught JS exception does not end the current job: it can call send
+        // again after an earlier native operation reported a loop error.
+        if (jsContext != fetchClient->jsContext || hasError(fetchClient->pendingError)) {
+            return JS_ThrowInternalError(jsContext, "FetchClient requires its live context and no pending loop error");
         }
         JSClassID fetchResponseClassID = 0;
         {
@@ -1291,8 +1301,8 @@ FetchState::~FetchState() {
 }
 
 FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<std::error_code, std::exception_ptr>& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs) {
-    if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs || hasError(&pendingError)) {
-        throw std::invalid_argument("FetchClient requires a context, initialized loop, completion hook, and no pending loop error");
+    if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
+        throw std::invalid_argument("FetchClient requires a context, initialized loop, and completion hook");
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
@@ -1327,14 +1337,10 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<s
             std::unique_ptr<uv_async_t> uvAsyncHandle = std::make_unique<uv_async_t>();
             voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
             const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
-                if (uvAsyncHandle->data == nullptr) {
-                    return;
-                }
                 FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
                 uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
-                if (fetchClient->shuttingDown) {
-                    return;
-                }
+                // Another callback may have reported an error earlier in this
+                // iteration; uv_stop does not discard already-ready callbacks.
                 if (hasError(fetchClient->pendingError)) {
                     uv_stop(fetchClient->uvLoop);
                     return;
@@ -1449,8 +1455,8 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (this_thread::get_id() != fetchClient.ownerThreadID) {
             std::terminate();
         }
-        if (jsContext != fetchClient.jsContext || fetchClient.shuttingDown) {
-            JS_ThrowInternalError(jsContext, "FetchClient registration requires its live context and an active client");
+        if (jsContext != fetchClient.jsContext) {
+            JS_ThrowInternalError(jsContext, "FetchClient registration requires its live context");
             return nullptr;
         }
         JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
@@ -1502,10 +1508,15 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                         return;
                     }
                     fetchClient = fetchResponse.fetchClient;
-                    if (fetchClient->shuttingDown || hasError(fetchClient->pendingError)) {
+                    // Context destruction can run this finalizer after client
+                    // shutdown. The cleared map proves no work remains; do not
+                    // touch the loop, async handle, or mailbox in that case.
+                    if (!fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
                         return;
                     }
-                    if (!fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
+                    // An earlier failure already requires host cleanup; do not
+                    // schedule another settlement pass from this finalizer.
+                    if (hasError(fetchClient->pendingError)) {
                         return;
                     }
                     // GC can run while allocating promise results. Do

@@ -87,8 +87,9 @@ struct FetchState {
 // variant with std::error_code(). Promise rejection/recreation is a host decision.
 //
 // jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
-// QuickJS jobs until none remain, handling job exceptions too. It runs after
-// native promise settlement. It must not run/pump libuv or another event loop,
+// QuickJS jobs until none remain, handling job exceptions too. If a native JS
+// call reports pendingError, stop draining jobs and return to the adapter/host.
+// It runs after native promise settlement. It must not run/pump libuv or another event loop,
 // shut down or destroy any native module service, free the context/runtime, or
 // throw. Host teardown must wait until JS execution and native callbacks return;
 // JS must not resume after teardown begins. Captures must be native-only.
@@ -111,7 +112,7 @@ struct FetchClient {
     uint64_t fetchStateIDCounter = 0;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    bool shuttingDown = false;
+    bool shuttingDown = false; // Used only by shutdown for idempotency/reentrancy.
 
     FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<std::error_code, std::exception_ptr>& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
@@ -129,7 +130,7 @@ struct FetchClient {
 };
 
 // Owned by the opaque JS object. The client outlives all such objects.
-// A null easy handle means closed; shutdown clients reject all further access.
+// A null easy handle means closed. The host must not run JS after shutdown.
 struct FetchResponse {
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
