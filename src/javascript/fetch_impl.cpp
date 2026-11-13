@@ -48,7 +48,7 @@ std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
 std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
     FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    const std::size_t realsize = size * nitems;
+    const uint64_t realsize = static_cast<uint64_t>(size) * static_cast<uint64_t>(nitems);
     const std::string_view line(buffer, realsize);
 
     // If responseHeadersComplete, we are handling response trailers.
