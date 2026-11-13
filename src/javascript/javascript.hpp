@@ -16,16 +16,21 @@
 
 namespace amj::javascript {
 
-// Host-owned mailbox shared by modules on one loop; access only on its owner
-// thread. Either field being nonzero/non-null means an error is pending.
-// Preserve the first error. Callback adapters stop normal work and request
-// uv_stop; the host inspects this after uv_run or direct JS execution returns.
-// Keep it alive through module shutdown. Recover/shut down affected modules
-// before clearing it; clearing the mailbox alone does not repair their state.
-struct LoopErrorState {
-    std::error_code errorCode = {};
-    std::exception_ptr exception = nullptr;
-};
+// A null pointer, zero error code, or null exception pointer means no error.
+inline bool hasError(const std::variant<std::error_code, std::exception_ptr>* pendingError) noexcept {
+    if (pendingError == nullptr) {
+        return false;
+    }
+    const std::error_code* errorCode = std::get_if<std::error_code>(pendingError);
+    if (errorCode != nullptr) {
+        return static_cast<bool>(*errorCode);
+    }
+    const std::exception_ptr* exception = std::get_if<std::exception_ptr>(pendingError);
+    if (exception != nullptr) {
+        return *exception != nullptr;
+    }
+    return false;
+}
 
 // Owns one QuickJS reference and releases it on destruction unless release()
 // is called. Noncopyable. A default-constructed wrapper is empty and has no

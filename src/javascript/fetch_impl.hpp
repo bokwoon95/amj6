@@ -12,13 +12,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace amj::javascript {
@@ -77,10 +80,11 @@ struct FetchState {
 
 // Host-owned, one per context/loop pair, at a stable address. Borrows the context
 // and initialized loop. All use/destruction requires their owner thread.
-// Borrows the host's LoopErrorState for the same loop. After uv_run or direct
-// JS execution returns, the host must inspect it before resuming work. Pending
-// loop errors suspend fetch work; this client must be shut down before the host
-// clears the mailbox. Promise rejection/recreation is a host recovery decision.
+// Borrows the host's pendingError variant shared by modules on the same loop.
+// Preserve the first error; use hasError() to check its value. After uv_run or
+// direct JS execution returns, the host must inspect it before resuming work.
+// Pending errors suspend fetch work; shut down this client before clearing the
+// variant with std::error_code(). Promise rejection/recreation is a host decision.
 //
 // jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
 // QuickJS jobs until none remain, handling job exceptions too. It runs after
@@ -96,7 +100,7 @@ struct FetchState {
 struct FetchClient {
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr; // Owns the wrapper, which borrows this client.
     uv_loop_t* uvLoop = nullptr;
-    LoopErrorState* loopErrorState = nullptr; // Borrowed; outlives shutdown.
+    std::variant<std::error_code, std::exception_ptr>* pendingError = nullptr; // Borrowed; outlives shutdown.
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
@@ -109,7 +113,7 @@ struct FetchClient {
     std::thread::id ownerThreadID = {};
     bool shuttingDown = false;
 
-    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, LoopErrorState& loopErrorState, std::function<void(JSContext*)> jsExecutePendingJobs);
+    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<std::error_code, std::exception_ptr>& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
     FetchClient& operator=(const FetchClient&) = delete;

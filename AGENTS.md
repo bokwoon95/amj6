@@ -66,6 +66,7 @@
 - Use emplacement only where modernize-use-emplace requires it; do not disable or suppress that check.
 - Preserve bulk/range operations such as .insert(end(), first, last); do not replace them with single-element loops.
 - Preserve existing semantics: guard writes with .contains() when existing entries must not be overwritten.
+- DO NOT declare or assign variables in conditions or control-statement initializer clauses. Use a separate statement, then check the value.
 
 ## JavaScript
 - JSDoc: Use () => Type, not { (): Type }, for plain function types.
