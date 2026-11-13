@@ -437,18 +437,20 @@ struct PollData {
     curl_socket_t socket = CURL_SOCKET_BAD;
 };
 
-int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int action, const void* userdata, void* /* socketData */) {
-    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-    if (action == CURL_POLL_REMOVE) {
-        const std::map<curl_socket_t, uv_poll_t*>::node_type socketNode = fetchClient->ownedUvPollHandleMap.extract(socket);
-        if (!socketNode.empty()) {
-            uv_close(reinterpret_cast<uv_handle_t*>(socketNode.mapped()), [](uv_handle_t* uvHandle) {
+int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, void* clientp, void* /* socketp */) {
+    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+
+    if (what == CURL_POLL_REMOVE) {
+        const std::map<curl_socket_t, uv_poll_t*>::node_type mapNode = fetchClient->ownedUvPollHandleMap.extract(socket);
+        if (!mapNode.empty()) {
+            uv_close(reinterpret_cast<uv_handle_t*>(mapNode.mapped()), [](uv_handle_t* uvHandle) {
                 delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
                 delete reinterpret_cast<uv_poll_t*>(uvHandle);
             });
         }
         return 0;
     }
+
     if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
         std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
         std::unique_ptr<PollData> pollData = std::make_unique<PollData>();
@@ -464,11 +466,12 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
         uvPollHandle->data = voidPtr.release();
         fetchClient->ownedUvPollHandleMap.at(socket) = uvPollHandle.release();
     }
+
     unsigned int events = 0;
-    if (action == CURL_POLL_IN || action == CURL_POLL_INOUT) {
+    if (what == CURL_POLL_IN || what == CURL_POLL_INOUT) {
         events |= static_cast<unsigned int>(UV_READABLE);
     }
-    if (action == CURL_POLL_OUT || action == CURL_POLL_INOUT) {
+    if (what == CURL_POLL_OUT || what == CURL_POLL_INOUT) {
         events |= static_cast<unsigned int>(UV_WRITABLE);
     }
     uv_poll_t* uvPollHandle = fetchClient->ownedUvPollHandleMap.at(socket);
@@ -491,7 +494,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
                 curlEvents |= CURL_CSELECT_OUT;
             }
-            // processCurlTransfers() may close this poll handle. Do not use pollData after it.
+            // driveCurlTransfers() may close this poll handle. Do not use pollData after it.
             driveCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
         } catch (...) {
             std::terminate();
@@ -1225,33 +1228,33 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::function<
             ownedUvAsyncHandle = uvAsyncHandle.release();
             uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
         }
-        CURLMcode err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata, void* socketData) noexcept {
+        CURLMcode curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata, void* socketData) noexcept {
             try {
                 return curlSocketFunction(curlEasyHandle, socket, action, userdata, socketData);
             } catch (...) {
                 return -1;
             }
         });
-        if (err != CURLM_OK) {
-            throw std::runtime_error(curl_multi_strerror(err));
+        if (curlMCode != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->selfVoidPtr.get());
-        if (err != CURLM_OK) {
-            throw std::runtime_error(curl_multi_strerror(err));
+        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->selfVoidPtr.get());
+        if (curlMCode != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
+        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
             try {
                 return curlTimerFunction(curlMultiHandle, milliseconds, userdata);
             } catch (...) {
                 return -1;
             }
         });
-        if (err != CURLM_OK) {
-            throw std::runtime_error(curl_multi_strerror(err));
+        if (curlMCode != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        err = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->selfVoidPtr.get());
-        if (err != CURLM_OK) {
-            throw std::runtime_error(curl_multi_strerror(err));
+        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->selfVoidPtr.get());
+        if (curlMCode != CURLM_OK) {
+            throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
     } catch (...) {
         shutdown();
