@@ -90,6 +90,27 @@ set(amj_test_libraries)
 set(amj_test_sources)
 set(amj_test_filters)
 
+## == src/intlimit == ##
+
+# Include-only sources give standalone headers their own compilation context.
+add_library(amj_intlimit STATIC src/intlimit/intlimit.cpp)
+list(APPEND amj_libraries amj_intlimit)
+
+## == src/void_ptr == ##
+
+add_library(amj_void_ptr STATIC src/void_ptr/void_ptr.cpp)
+list(APPEND amj_libraries amj_void_ptr)
+
+## == src/owned == ##
+
+add_library(amj_owned STATIC
+    src/owned/quickjs.cpp
+    src/owned/uv.cpp
+    src/owned/curl.cpp
+)
+list(APPEND amj_libraries amj_owned)
+target_link_libraries(amj_owned PUBLIC amj_void_ptr qjs CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+
 ## == src/errors == ##
 
 add_library(amj_errors STATIC src/errors/errors.cpp)
@@ -170,7 +191,7 @@ add_library(amj_javascript STATIC
     src/javascript/fetch_impl.d.ts
 )
 list(APPEND amj_libraries amj_javascript)
-target_link_libraries(amj_javascript PUBLIC amj_errors qjs PRIVATE Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+target_link_libraries(amj_javascript PUBLIC amj_errors qjs amj_void_ptr PRIVATE amj_intlimit Threads::Threads ada::ada httplib::httplib OpenSSL::SSL OpenSSL::Crypto CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
 if(BUILD_TESTING)
     list(APPEND amj_test_libraries amj_javascript)
     list(APPEND amj_test_sources src/javascript/text_test.cpp)

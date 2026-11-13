@@ -3,16 +3,29 @@
 #include <quickjs.h>
 
 #include <cstddef>
+#include <exception>
 #include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace amj::javascript {
+
+// Host-owned mailbox shared by modules on one loop; access only on its owner
+// thread. Either field being nonzero/non-null means an error is pending.
+// Preserve the first error. Callback adapters stop normal work and request
+// uv_stop; the host inspects this after uv_run or direct JS execution returns.
+// Keep it alive through module shutdown. Recover/shut down affected modules
+// before clearing it; clearing the mailbox alone does not repair their state.
+struct LoopErrorState {
+    std::error_code errorCode = {};
+    std::exception_ptr exception = nullptr;
+};
 
 // Owns one QuickJS reference and releases it on destruction unless release()
 // is called. Noncopyable. A default-constructed wrapper is empty and has no
