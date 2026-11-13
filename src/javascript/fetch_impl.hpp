@@ -25,11 +25,11 @@ namespace amj::javascript {
 namespace errors = amj::errors;
 namespace void_ptr = amj::void_ptr;
 
-enum class CurlStatus : std::uint8_t {
+enum class CurlTransferStatus : std::uint8_t {
     NotStarted,
     Running,
     Paused,
-    Done,
+    Completed,
 };
 
 struct FetchRequest {
@@ -54,7 +54,7 @@ struct FetchState {
     FetchRequest request = {};
 
     // Response.
-    CurlStatus responseCurlStatus = CurlStatus::NotStarted;
+    CurlTransferStatus responseStatus = CurlTransferStatus::NotStarted;
     int64_t responseCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};

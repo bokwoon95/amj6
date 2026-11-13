@@ -91,12 +91,12 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
         return realsize;
     }
 
-    // Response headers are not done yet.
+    // Response headers have not yet completed.
     if (line != "\r\n" && line != "\n") {
         return realsize;
     }
 
-    // If we reach here, response headers are done. Get the responseCode.
+    // If we reach here, response headers have completed. Get the responseCode.
     long responseCode = 0;
     CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &responseCode);
     if (curlCode != CURLE_OK) {
@@ -151,7 +151,7 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
             break;
         }
         std::string name(curlHeader->name);
-        std::string value(curlHeader->value);
+        const std::string value(curlHeader->value);
         for (char& ch : name) {
             if (ch >= 'A' && ch <= 'Z') {
                 ch = static_cast<char>(ch - 'A' + 'a');
@@ -187,7 +187,7 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
         return CURL_WRITEFUNC_ERROR;
     }
     if (fetchState->responseBufferSize + realsize > bodyBufferLimit) {
-        fetchState->responseCurlStatus = CurlStatus::Paused;
+        fetchState->responseStatus = CurlTransferStatus::Paused;
         return CURL_WRITEFUNC_PAUSE;
     }
 
@@ -197,8 +197,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
     return realsize;
 }
 
-// Process curl transfers in response to socket activity or a timeout:
-void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+// Drive curl transfers, then mark the ones that have completed.
+void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
     // Tell curl to read and write socket data.
     int runningHandles = 0;
     const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
@@ -208,7 +208,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         for (std::pair<CURL* const, FetchState>& entry : fetchClient.fetchStateMap) {
             CURL* curlEasyHandle = entry.first;
             FetchState& fetchState = entry.second;
-            fetchState.responseCurlStatus = CurlStatus::Done;
+            fetchState.responseStatus = CurlTransferStatus::Completed;
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
                 fetchState.error.errorMessage.append(": ");
@@ -226,7 +226,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
         }
     }
 
-    // Mark which fetchStates are done.
+    // Mark the fetchStates that have completed.
     while (true) {
         int msgsInQueue = 0;
         const CURLMsg* curlMsg = curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
@@ -237,10 +237,10 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
             continue;
         }
         if (!fetchClient.fetchStateMap.contains(curlMsg->easy_handle)) {
-            throw std::logic_error("Curl transfer is done but has no FetchState");
+            throw std::logic_error("Curl transfer has completed but has no FetchState");
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.responseCurlStatus = CurlStatus::Done;
+        fetchState.responseStatus = CurlTransferStatus::Completed;
         if (curlMsg->data.result != CURLE_OK) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
@@ -266,14 +266,7 @@ void processCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int ev
     }
 }
 
-// Settle pending promises:
-//
-// 1. Reject pending promises for abandoned responses.
-//
-// 2. Resolve or reject ready promises.
-//
-// 3. Resolve or reject pending read promises with an error, end-of-stream, or
-// a buffered body chunk.
+// Settle pending fetch promises in the jsContext.
 void settlePendingPromises(FetchClient* fetchClient) {
     // Snapshot the fetchStateMap's CURL* keys + fetchStateID into an entries
     // list before looping over the entries. The fetchStateMap can be modified
@@ -320,12 +313,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 continue;
             }
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
-            // Reject readyPromise.
+            // Reject responseReadyPromise.
             if (readyPromiseState == JS_PROMISE_PENDING) {
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
-            // Reject readPromise.
+            // Reject responseReadPromise.
             if (fetchState.responseReadPromise.has_value()) {
                 const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadPromise.value().promise.get());
                 if (readPromiseState == JS_PROMISE_PENDING) {
@@ -337,17 +330,18 @@ void settlePendingPromises(FetchClient* fetchClient) {
             continue;
         }
 
-        // If readyPromise has not yet been settled, settle it first.
+        // If responseReadyPromise has not yet been settled, settle it first.
         const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
         if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersComplete) {
-                // The transfer is not yet done, don't settle the readyPromise.
-                if (fetchState.responseCurlStatus != CurlStatus::Done) {
+                // The transfer has not yet completed, don't settle the
+                // responseReadyPromise.
+                if (fetchState.responseStatus != CurlTransferStatus::Completed) {
                     continue;
                 }
 
-                // The transfer was done without receiving any response
-                // headers. Reject readyPromise.
+                // The transfer completed without receiving any response
+                // headers. Reject responseReadyPromise.
                 OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
@@ -355,62 +349,62 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 continue;
             }
 
-            // The header callback has populated the final response metadata.
-            // Resolve readyPromise.
-            JSValue argument = JS_UNDEFINED;
-            const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 1, &argument);
+            // Resolve resonseReadyPromise.
+            const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0, nullptr);
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
-        // No readPromise needs settling.
+        // No responseReadPromise needs settling.
         if (!fetchState.responseReadPromise.has_value()) {
             continue;
         }
 
-        // No error, buffered data, or end-of-stream to settle the readPromise with.
-        if (!fetchState.error.errorCode && fetchState.responseBuffer.empty() && fetchState.responseCurlStatus != CurlStatus::Done) {
+        // No error, buffered data, or end-of-stream to settle the
+        // responseReadPromise with.
+        if (!fetchState.error.errorCode && fetchState.responseBuffer.empty() && fetchState.responseStatus != CurlTransferStatus::Completed) {
             continue;
         }
 
-        // Move fetchState.readPromise out to a local variable and reset it so
-        // JS can request another read.
-        OwnedJSPromise readPromise = std::move(fetchState.responseReadPromise.value());
+        // Move fetchState.responseReadPromise out to a local variable and
+        // reset it so JS can request another read.
+        OwnedJSPromise responseReadPromise = std::move(fetchState.responseReadPromise.value());
         fetchState.responseReadPromise.reset();
 
-        // Reject the readPromise if the transfer encountered an error.
+        // Reject the responseReadPromise if the transfer encountered an error.
         if (fetchState.error.errorCode) {
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
-            const JSValue result = JS_Call(fetchClient->jsContext, readPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
-        // No error or buffered chunks remain, and the transfer is done.
-        // Resolve the readPromise with null to indicate end-of-stream.
+        // No error or buffered chunks remain, and the transfer has completed.
+        // Resolve the responseReadPromise with null to indicate end-of-stream.
         if (fetchState.responseBuffer.empty()) {
-            JSValue endOfStream = JS_NULL;
-            const JSValue result = JS_Call(fetchClient->jsContext, readPromise.resolveFunction.get(), JS_UNDEFINED, 1, &endOfStream);
+            JSValue jsNull = JS_NULL;
+            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
-        // Pop the oldest chunk from fetchState.chunks.
-        const std::vector<uint8_t> responseBodyChunk = std::move(fetchState.responseBuffer.front());
+        // Pop the oldest chunk from fetchState.responseBuffer.
+        const std::vector<uint8_t> chunk = std::move(fetchState.responseBuffer.front());
         fetchState.responseBuffer.pop_front();
-        fetchState.responseBufferSize -= responseBodyChunk.size();
+        fetchState.responseBufferSize -= chunk.size();
 
-        // If responseBodySize fell below half of bodyBufferLimit and
-        // fetchStatus is currently paused, unpause it.
-        if (fetchState.responseCurlStatus == CurlStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
-            fetchState.responseCurlStatus = CurlStatus::Running;
+        // If curl is currently paused and popping that chunk from the
+        // responseBuffer dropped responseBufferSize to less than half of
+        // bodyBufferLimit, unpause curl.
+        if (fetchState.responseStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
+            fetchState.responseStatus = CurlTransferStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
-                fetchState.responseCurlStatus = CurlStatus::Done;
+                fetchState.responseStatus = CurlTransferStatus::Completed;
                 if (fetchState.curlMultiHandle != nullptr) {
                     if (curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle) != CURLM_OK) {
                         std::terminate();
@@ -418,19 +412,21 @@ void settlePendingPromises(FetchClient* fetchClient) {
                     fetchState.curlMultiHandle = nullptr;
                 }
             }
-            processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
         }
 
-        OwnedJSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, responseBodyChunk.data(), responseBodyChunk.size()));
+        // Convert the chunk into a JS Uint8Array.
+        OwnedJSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
         if (JS_IsException(uint8Array.get())) {
             OwnedJSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
-            const JSValue result = JS_Call(fetchClient->jsContext, readPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
-        const JSValue result = JS_Call(fetchClient->jsContext, readPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
+        // Reject the responseReadPromise with the Uint8Array chunk.
+        const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
         JS_FreeValue(fetchClient->jsContext, result);
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
@@ -496,7 +492,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int act
                 curlEvents |= CURL_CSELECT_OUT;
             }
             // processCurlTransfers() may close this poll handle. Do not use pollData after it.
-            processCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
+            driveCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
         } catch (...) {
             std::terminate();
         }
@@ -514,7 +510,7 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
         try {
             FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
             if (fetchClient != nullptr) {
-                processCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+                driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             }
         } catch (...) {
             std::terminate();
@@ -1139,7 +1135,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
-        fetchState.responseCurlStatus = CurlStatus::Running;
+        fetchState.responseStatus = CurlTransferStatus::Running;
         return response.release();
     } catch (const std::bad_alloc&) {
         if (registeredHandle != nullptr) {
