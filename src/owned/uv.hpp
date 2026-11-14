@@ -4,6 +4,7 @@
 
 #include <uv.h>
 
+#include <type_traits>
 #include <utility>
 
 namespace amj::owned {
@@ -28,6 +29,11 @@ namespace void_ptr = amj::void_ptr;
 // elsewhere while this wrapper owns it. reset before destroying dependencies.
 template <typename T>
 class UvHandle {
+    static_assert(
+        std::is_same_v<T, uv_poll_t> || std::is_same_v<T, uv_timer_t> || std::is_same_v<T, uv_async_t>,
+        "UvHandle only supports uv_poll_t, uv_timer_t, and uv_async_t"
+    );
+
   public:
     UvHandle() = default;
 
