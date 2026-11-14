@@ -8,6 +8,12 @@ bool intlimit::subtractOverflows(a, b)
 bool intlimit::subtractUnderflows(a, b)
 bool intlimit::divisionOverflows(a, b)
 
+if (hasLoopError(fetchClient.loopError)) {
+}
+
+if (hasError(fetchClient.pendingError)) {
+}
+
 urlParse
 urlWithComponent
 queryStringParse

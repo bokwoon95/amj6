@@ -9,15 +9,19 @@
 namespace amj::owned {
 namespace void_ptr = amj::void_ptr;
 
-// Owns an individually new-allocated, successfully initialized libuv handle T.
+// Owns an individually new-allocated libuv handle T, initially uninitialized.
 // Not for loops, requests, embedded handles, or handles already being closed.
-// data must be null or an owned VoidPtr wrapper. Its payload may be borrowed.
+// For initialized handles, data must be null or an owned VoidPtr wrapper.
+// Its payload may be borrowed. Uninitialized handles are deleted directly;
+// their data is not inspected or freed.
 //
-// Adopt immediately after successful initialization, before anything can throw.
-// Before initialization succeeds, use an ordinary unique_ptr<T> instead.
-// Moves transfer the pointer; initialized handle storage is never relocated.
+// Call setInitialized() immediately after successful libuv initialization,
+// before anything can throw. When adopting an already initialized handle,
+// likewise call setInitialized() immediately after construction or reset.
+// Construction and reset always set initialized to false; release clears it.
+// Moves transfer both pointer and state; handle storage is never relocated.
 //
-// reset/destruction schedules uv_close, not immediate deletion. The borrowed
+// For initialized handles, reset/destruction schedules uv_close. The borrowed
 // loop must remain alive and run until the close callback frees the allocation.
 // Borrowed callback payloads must remain valid while callbacks can still run.
 // All operations require the loop's owner thread. Do not close the handle
@@ -27,25 +31,46 @@ class UvHandle {
   public:
     UvHandle() = default;
 
-    explicit UvHandle(T* initializedUvHandle) noexcept {
-        this->ownedUvHandle = initializedUvHandle;
+    explicit UvHandle(T* uvHandle) noexcept {
+        this->ownedUvHandle = uvHandle;
     }
 
     ~UvHandle() {
-        reset();
+        if (ownedUvHandle == nullptr) {
+            return;
+        }
+        if (!initialized) {
+            delete ownedUvHandle;
+            return;
+        }
+        uv_close(reinterpret_cast<uv_handle_t*>(ownedUvHandle), [](uv_handle_t* uvHandle) noexcept {
+            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+            delete reinterpret_cast<T*>(uvHandle);
+        });
     }
 
     UvHandle(const UvHandle&) = delete;
     UvHandle& operator=(const UvHandle&) = delete;
 
     UvHandle(UvHandle&& uvHandle) noexcept {
-        this->ownedUvHandle = uvHandle.release();
+        this->ownedUvHandle = std::exchange(uvHandle.ownedUvHandle, nullptr);
+        this->initialized = std::exchange(uvHandle.initialized, false);
     }
 
     UvHandle& operator=(UvHandle&& uvHandle) noexcept {
         if (this != &uvHandle) {
-            reset();
-            this->ownedUvHandle = uvHandle.release();
+            if (ownedUvHandle != nullptr) {
+                if (initialized) {
+                    uv_close(reinterpret_cast<uv_handle_t*>(ownedUvHandle), [](uv_handle_t* uvHandle) noexcept {
+                        delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+                        delete reinterpret_cast<T*>(uvHandle);
+                    });
+                } else {
+                    delete ownedUvHandle;
+                }
+            }
+            this->ownedUvHandle = std::exchange(uvHandle.ownedUvHandle, nullptr);
+            this->initialized = std::exchange(uvHandle.initialized, false);
         }
         return *this;
     }
@@ -54,24 +79,39 @@ class UvHandle {
         return ownedUvHandle;
     }
 
-    void reset() noexcept {
-        T* uvHandle = std::exchange(ownedUvHandle, nullptr);
-        if (uvHandle == nullptr) {
+    // Only call for a nonnull, successfully initialized handle.
+    void setInitialized() noexcept {
+        initialized = true;
+    }
+
+    // The replacement must not be the currently owned pointer, unless null.
+    // Adopts the replacement as uninitialized, even if it was initialized before.
+    void reset(T* uvHandle) noexcept {
+        T* previousUvHandle = std::exchange(ownedUvHandle, uvHandle);
+        const bool previousInitialized = std::exchange(initialized, false);
+        if (previousUvHandle == nullptr) {
             return;
         }
-        uv_close(reinterpret_cast<uv_handle_t*>(uvHandle), [](uv_handle_t* closingUvHandle) noexcept {
-            delete static_cast<void_ptr::VoidPtr*>(closingUvHandle->data);
-            delete reinterpret_cast<T*>(closingUvHandle);
+        if (!previousInitialized) {
+            delete previousUvHandle;
+            return;
+        }
+        uv_close(reinterpret_cast<uv_handle_t*>(previousUvHandle), [](uv_handle_t* uvHandle) noexcept {
+            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+            delete reinterpret_cast<T*>(uvHandle);
         });
     }
 
-    // The recipient becomes responsible for uv_close and eventual deletion.
+    // Transfers responsibility for deletion or uv_close, according to state.
+    // The recipient must already know whether initialization succeeded.
     T* release() noexcept {
+        initialized = false;
         return std::exchange(ownedUvHandle, nullptr);
     }
 
   private:
     T* ownedUvHandle = nullptr;
+    bool initialized = false;
 };
 
 } // namespace amj::owned
