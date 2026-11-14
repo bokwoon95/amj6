@@ -510,6 +510,9 @@ void settlePendingPromises(FetchClient* fetchClient) {
     }
 }
 
+// curl calls this function whenever it needs to watch a socket for readability
+// (incoming data) or writability (its send buffer has space). Or when it wants
+// to stop watching a socket completely.
 int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
     struct PollData {
         FetchClient* fetchClient = nullptr;
@@ -522,9 +525,6 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
-    // Curl also invokes this while removing/cleaning handles. A pending error
-    // must not block the watch updates needed to finish that cleanup. The host
-    // keeps libuv handles alive until curl teardown has returned.
     if (!fetchClient->uvPollHandleMap.contains(socket)) {
         owned::UvHandle<uv_poll_t> uvPollHandle(std::make_unique<uv_poll_t>());
         const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
