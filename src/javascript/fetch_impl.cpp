@@ -59,6 +59,8 @@ class UvErrorCategory final : public std::error_category {
     }
 };
 
+const UvErrorCategory uvErrorCategory; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+
 class CurlMultiErrorCategory final : public std::error_category {
   public:
     const char* name() const noexcept override {
@@ -70,7 +72,6 @@ class CurlMultiErrorCategory final : public std::error_category {
     }
 };
 
-const UvErrorCategory uvErrorCategory; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 const CurlMultiErrorCategory curlMultiErrorCategory; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
 // Passed as CURLOPT_HEADERFUNCTION to read the response headers.
