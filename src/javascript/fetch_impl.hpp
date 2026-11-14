@@ -2,6 +2,7 @@
 
 #include "errors/errors.hpp"
 #include "javascript.hpp"
+#include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <curl/curl.h>
@@ -26,6 +27,7 @@
 
 namespace amj::javascript {
 namespace errors = amj::errors;
+namespace owned = amj::owned;
 namespace void_ptr = amj::void_ptr;
 
 enum class CurlTransferStatus : std::uint8_t {
@@ -105,9 +107,9 @@ struct FetchClient {
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
-    uv_timer_t* ownedUvTimerHandle = nullptr;
-    uv_async_t* ownedUvAsyncHandle = nullptr;
-    std::map<curl_socket_t, uv_poll_t*> ownedUvPollHandleMap = {};
+    owned::UvHandle<uv_timer_t> uvTimerHandle = {};
+    owned::UvHandle<uv_async_t> uvAsyncHandle = {};
+    std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
     std::map<CURL*, FetchState> fetchStateMap = {};
     uint64_t fetchStateIDCounter = 0;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};

@@ -4,6 +4,7 @@
 
 #include <uv.h>
 
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -37,8 +38,8 @@ class UvHandle {
   public:
     UvHandle() = default;
 
-    explicit UvHandle(T* uvHandle) noexcept {
-        this->ownedUvHandle = uvHandle;
+    explicit UvHandle(std::unique_ptr<T> uvHandle) noexcept {
+        this->ownedUvHandle = uvHandle.release();
     }
 
     ~UvHandle() {
@@ -92,8 +93,8 @@ class UvHandle {
 
     // The replacement must not be the currently owned pointer, unless null.
     // Adopts the replacement as uninitialized, even if it was initialized before.
-    void reset(T* uvHandle) noexcept {
-        T* previousUvHandle = std::exchange(ownedUvHandle, uvHandle);
+    void reset(std::unique_ptr<T> uvHandle) noexcept {
+        T* previousUvHandle = std::exchange(ownedUvHandle, uvHandle.release());
         const bool previousInitialized = std::exchange(initialized, false);
         if (previousUvHandle == nullptr) {
             return;

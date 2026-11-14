@@ -3,6 +3,7 @@
 #include "errors/errors.hpp"
 #include "intlimit/intlimit.hpp"
 #include "javascript.hpp"
+#include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <curl/curl.h>
@@ -36,6 +37,7 @@
 namespace amj::javascript {
 namespace errors = amj::errors;
 namespace intlimit = amj::intlimit;
+namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
 
@@ -275,10 +277,10 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
     }
 
     // Signal the uv async handle, which triggers settlePendingPromises().
-    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
-    const int status = uv_async_send(fetchClient.ownedUvAsyncHandle);
+    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle.get()));
+    const int status = uv_async_send(fetchClient.uvAsyncHandle.get());
     if (status != 0) {
-        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.ownedUvAsyncHandle));
+        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle.get()));
         // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
         // this is the first error, so no second mailbox check is needed.
         *fetchClient.pendingError = std::error_code(status, uvErrorCategory);
@@ -516,38 +518,30 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
 
     if (what == CURL_POLL_REMOVE) {
-        const std::map<curl_socket_t, uv_poll_t*>::node_type mapNode = fetchClient->ownedUvPollHandleMap.extract(socket);
-        if (!mapNode.empty()) {
-            uv_close(reinterpret_cast<uv_handle_t*>(mapNode.mapped()), [](uv_handle_t* uvHandle) {
-                delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
-                delete reinterpret_cast<uv_poll_t*>(uvHandle);
-            });
-        }
+        fetchClient->uvPollHandleMap.erase(socket);
         return 0;
     }
 
     // Curl also invokes this while removing/cleaning handles. A pending error
     // must not block the watch updates needed to finish that cleanup. The host
     // keeps libuv handles alive until curl teardown has returned.
-    if (!fetchClient->ownedUvPollHandleMap.contains(socket)) {
-        std::unique_ptr<uv_poll_t> uvPollHandle = std::make_unique<uv_poll_t>();
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(
-            std::make_unique<PollData>(PollData{
-                .fetchClient = fetchClient,
-                .socket = socket,
-            })
-        );
-        fetchClient->ownedUvPollHandleMap.insert_or_assign(socket, nullptr);
+    if (!fetchClient->uvPollHandleMap.contains(socket)) {
+        owned::UvHandle<uv_poll_t> uvPollHandle(std::make_unique<uv_poll_t>());
         const int status = uv_poll_init_socket(fetchClient->uvLoop, uvPollHandle.get(), socket);
         if (status != 0) {
-            fetchClient->ownedUvPollHandleMap.erase(socket);
             if (!hasError(fetchClient->pendingError)) {
                 *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
             }
             return -1;
         }
-        uvPollHandle->data = voidPtr.release();
-        fetchClient->ownedUvPollHandleMap.at(socket) = uvPollHandle.release();
+        uvPollHandle.setInitialized();
+        uvPollHandle.get()->data = new void_ptr::VoidPtr(
+            std::make_unique<PollData>(PollData{
+                .fetchClient = fetchClient,
+                .socket = socket,
+            })
+        );
+        fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(uvPollHandle));
     }
 
     unsigned int events = 0;
@@ -557,7 +551,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     if (what == CURL_POLL_OUT || what == CURL_POLL_INOUT) {
         events |= static_cast<unsigned int>(UV_WRITABLE);
     }
-    uv_poll_t* uvPollHandle = fetchClient->ownedUvPollHandleMap.at(socket);
+    uv_poll_t* uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     if (events == 0) {
         const int status = uv_poll_stop(uvPollHandle);
         if (status != 0 && !hasError(fetchClient->pendingError)) {
@@ -606,14 +600,14 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
     // Like socket updates, timer updates can be requested during curl teardown.
     // The timer remains initialized until all curl cleanup has returned.
     if (milliseconds < 0) {
-        const int status = uv_timer_stop(fetchClient->ownedUvTimerHandle);
+        const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
         if (status != 0 && !hasError(fetchClient->pendingError)) {
             *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
         }
         return status == 0 ? 0 : -1;
     }
     uv_update_time(fetchClient->uvLoop);
-    const int status = uv_timer_start(fetchClient->ownedUvTimerHandle, [](uv_timer_t* uvTimerHandle) noexcept {
+    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
         // Another callback may already have stopped this loop iteration.
         if (hasError(fetchClient->pendingError)) {
@@ -692,10 +686,10 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
         };
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
-        const int status = uv_async_send(fetchClient->ownedUvAsyncHandle);
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
+        const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
         if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
             if (!hasError(fetchClient->pendingError)) {
                 *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
             }
@@ -1323,20 +1317,18 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<s
         if (ownedCurlMultiHandle == nullptr) {
             throw std::bad_alloc();
         }
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr;
         {
-            std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-            voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
+            owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
             const int status = uv_timer_init(uvLoop, uvTimerHandle.get());
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvTimerHandle->data = voidPtr.release();
-            ownedUvTimerHandle = uvTimerHandle.release();
+            uvTimerHandle.setInitialized();
+            uvTimerHandle.get()->data = new void_ptr::VoidPtr(this);
+            this->uvTimerHandle = std::move(uvTimerHandle);
         }
         {
-            std::unique_ptr<uv_async_t> uvAsyncHandle = std::make_unique<uv_async_t>();
-            voidPtr = std::make_unique<void_ptr::VoidPtr>(this);
+            owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
             const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
                 FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
                 uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
@@ -1361,9 +1353,10 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<s
             if (status != 0) {
                 throw std::runtime_error(uv_strerror(status));
             }
-            uvAsyncHandle->data = voidPtr.release();
-            ownedUvAsyncHandle = uvAsyncHandle.release();
-            uv_unref(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle));
+            uvAsyncHandle.setInitialized();
+            uvAsyncHandle.get()->data = new void_ptr::VoidPtr(this);
+            uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
+            this->uvAsyncHandle = std::move(uvAsyncHandle);
         }
         CURLMcode curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata, void* socketData) noexcept {
             try {
@@ -1427,28 +1420,9 @@ void FetchClient::shutdown() {
         ownedCurlMultiHandle = nullptr;
     }
     this->selfVoidPtr.reset();
-    for (const std::pair<const curl_socket_t, uv_poll_t*>& entry : ownedUvPollHandleMap) {
-        uv_close(reinterpret_cast<uv_handle_t*>(entry.second), [](uv_handle_t* uvHandle) {
-            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
-            delete reinterpret_cast<uv_poll_t*>(uvHandle);
-        });
-    }
-    ownedUvPollHandleMap.clear();
-    if (ownedUvTimerHandle != nullptr) {
-        uv_close(reinterpret_cast<uv_handle_t*>(ownedUvTimerHandle), [](uv_handle_t* uvHandle) {
-            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
-            delete reinterpret_cast<uv_timer_t*>(uvHandle);
-        });
-        ownedUvTimerHandle = nullptr;
-    }
-    if (ownedUvAsyncHandle != nullptr) {
-        delete static_cast<void_ptr::VoidPtr*>(ownedUvAsyncHandle->data);
-        ownedUvAsyncHandle->data = nullptr;
-        uv_close(reinterpret_cast<uv_handle_t*>(ownedUvAsyncHandle), [](uv_handle_t* uvHandle) {
-            delete reinterpret_cast<uv_async_t*>(uvHandle);
-        });
-        ownedUvAsyncHandle = nullptr;
-    }
+    uvPollHandleMap.clear();
+    uvTimerHandle.reset(nullptr);
+    uvAsyncHandle.reset(nullptr);
 }
 
 JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient) {
@@ -1525,10 +1499,10 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                     // by settlePendingPromises(), and do not settle promises
                     // from inside a QuickJS finalizer.
                     fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned = true;
-                    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
-                    const int status = uv_async_send(fetchClient->ownedUvAsyncHandle);
+                    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
+                    const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
                     if (status != 0) {
-                        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->ownedUvAsyncHandle));
+                        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
                         if (!hasError(fetchClient->pendingError)) {
                             *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
                         }
