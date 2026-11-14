@@ -511,7 +511,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 }
 
 // curl calls this function whenever it needs to watch a socket for readability
-// (incoming data) or writability (its send buffer has space). Or when it wants
+// (incoming data) or writability (its send buffer has space). Or, when it wants
 // to stop watching a socket completely.
 int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
     struct PollData {
@@ -543,23 +543,27 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         );
         fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(uvPollHandle));
     }
-
-    unsigned int events = 0;
-    if (what == CURL_POLL_IN || what == CURL_POLL_INOUT) {
-        events |= static_cast<unsigned int>(UV_READABLE);
-    }
-    if (what == CURL_POLL_OUT || what == CURL_POLL_INOUT) {
-        events |= static_cast<unsigned int>(UV_WRITABLE);
-    }
     uv_poll_t* uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
-    if (events == 0) {
+
+    int events = CURL_POLL_NONE;
+    if (what == CURL_POLL_IN) {
+        events = UV_READABLE;
+    } else if (what == CURL_POLL_OUT) {
+        events = UV_WRITABLE;
+    } else if (what == CURL_POLL_INOUT) {
+        events = UV_READABLE | UV_WRITABLE;
+    } else {
         const int status = uv_poll_stop(uvPollHandle);
-        if (status != 0 && !hasError(fetchClient->pendingError)) {
-            *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
         }
-        return status == 0 ? 0 : -1;
+        return 0;
     }
-    const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
+
+    const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
         // uv_stop does not discard other callbacks in the current iteration.
@@ -588,7 +592,9 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         if (hasError(fetchClient->pendingError)) {
             uv_stop(fetchClient->uvLoop);
         }
-    });
+    };
+
+    const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), uvPollCallback);
     if (status != 0 && !hasError(fetchClient->pendingError)) {
         *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
     }
