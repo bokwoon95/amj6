@@ -510,8 +510,21 @@ void settlePendingPromises(FetchClient* fetchClient) {
     }
 }
 
-// curl calls this function whenever it changes its socket watching
-// requirements.
+// curl calls this function to specify which socket events should trigger
+// driveCurlTransfers().
+//
+// 1. CURL_POLL_NONE: Stop scheduling driveCurlTransfers() for socket events,
+// retaining the poll handle.
+//
+// 2. CURL_POLL_IN: Call driveCurlTransfers() when this socket becomes readable.
+//
+// 3. CURL_POLL_OUT: Call driveCurlTransfers() when this socket becomes writable.
+//
+// 4. CURL_POLL_INOUT: Call driveCurlTransfers() when this socket becomes
+// readable or writable.
+//
+// 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
+// and close the poll handle.
 int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
     struct PollData {
         FetchClient* fetchClient = nullptr;
@@ -545,15 +558,14 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     }
 
     // libuv calls this when the socket is readable, writable, or encounters an error.
-    // Translate the events into curl flags and let curl advance its transfers.
     const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
         const curl_socket_t socket = pollData.socket;
+        if (hasError(fetchClient->pendingError)) {
+            return;
+        }
         try {
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             unsigned int eventBitmask = 0;
             if (status < 0) {
                 eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
@@ -572,6 +584,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         }
     };
 
+    // Stop watching this socket, retaining its poll handle.
     if (what == CURL_POLL_NONE) {
         const int status = uv_poll_stop(uvPollHandle);
         if (status != 0) {
@@ -583,6 +596,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
+    // Watch this socket for readability.
     if (what == CURL_POLL_IN) {
         const int status = uv_poll_start(uvPollHandle, UV_READABLE, uvPollCallback);
         if (status != 0) {
@@ -594,6 +608,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
+    // Watch this socket for writability.
     if (what == CURL_POLL_OUT) {
         const int status = uv_poll_start(uvPollHandle, UV_WRITABLE, uvPollCallback);
         if (status != 0) {
@@ -605,6 +620,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
+    // Watch this socket for readability and writability.
     if (what == CURL_POLL_INOUT) {
         const int status = uv_poll_start(uvPollHandle, UV_READABLE | UV_WRITABLE, uvPollCallback);
         if (status != 0) {
@@ -616,6 +632,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         return 0;
     }
 
+    // Stop watching this socket and close its poll handle.
     if (what == CURL_POLL_REMOVE) {
         fetchClient->uvPollHandleMap.erase(socket);
         return 0;
@@ -624,21 +641,32 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     return -1;
 }
 
-int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const void* userdata) {
-    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-    // Like socket updates, timer updates can be requested during curl teardown.
-    // The timer remains initialized until all curl cleanup has returned.
-    if (milliseconds < 0) {
+// curl calls this function to update its timeout requirements.
+//
+// 1. timeout_ms < 0: Cancel the scheduled call to driveCurlTransfers().
+//
+// 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
+int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
+    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+
+    // Cancel the current timer.
+    if (timeout_ms < 0) {
         const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
-        if (status != 0 && !hasError(fetchClient->pendingError)) {
-            *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
         }
-        return status == 0 ? 0 : -1;
+        return 0;
     }
+
+    // Refresh libuv's cached time so the delay starts from now.
     uv_update_time(fetchClient->uvLoop);
-    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), [](uv_timer_t* uvTimerHandle) noexcept {
+
+    // libuv calls this when the timer expires.
+    const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        // Another callback may have recorded an error earlier in this iteration.
         if (hasError(fetchClient->pendingError)) {
             return;
         }
@@ -649,12 +677,16 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
                 *fetchClient->pendingError = std::current_exception();
             }
         }
-    },
-        static_cast<uint64_t>(milliseconds), 0);
-    if (status != 0 && !hasError(fetchClient->pendingError)) {
-        *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+    };
+
+    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
+    if (status != 0) {
+        if (!hasError(fetchClient->pendingError)) {
+            *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+        }
+        return -1;
     }
-    return status == 0 ? 0 : -1;
+    return 0;
 }
 
 } // namespace
