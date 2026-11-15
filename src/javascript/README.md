@@ -70,8 +70,15 @@ Completing a tool invocation does not end a persistent session.
 Do not nest `uv_run()` to await a JS Promise, or pump Qt and libuv from each
 other. The backend performs QuickJS job checkpoints after JS execution/completions
 and drains pending jobs before waiting in libuv; pending JS jobs alone do not
-wake libuv. Network concurrency does not make JavaScript parallel; CPU-bound JS
-still blocks its owner thread.
+wake libuv. The host-provided `jsExecutePendingJobs()` must check both native
+`pendingError` and pending QuickJS exceptions before each `JS_ExecutePendingJob()`
+call, including the first. If either is present, stop without executing more jobs
+and preserve the error for host handling. Handle exceptions reported by
+`JS_ExecutePendingJob()` as well. Callers need not duplicate checks whose only
+purpose is guarding this job pump.
+
+Network concurrency does not make JavaScript parallel; CPU-bound JS still blocks
+its owner thread.
 
 The host must also provide a monotonic `performance.now()` for abort deadlines.
 Native `context::Context` does not automatically become a JS `AbortSignal`.

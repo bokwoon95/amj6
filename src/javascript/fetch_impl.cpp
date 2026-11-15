@@ -55,7 +55,6 @@ class UvErrorCategory final : public std::error_category {
     const char* name() const noexcept override {
         return "libuv";
     }
-
     std::string message(int code) const override {
         return uv_strerror(code);
     }
@@ -68,7 +67,6 @@ class CurlMultiErrorCategory final : public std::error_category {
     const char* name() const noexcept override {
         return "curl.multi";
     }
-
     std::string message(int code) const override {
         return curl_multi_strerror(static_cast<CURLMcode>(code));
     }
@@ -193,7 +191,7 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
     return realsize;
 }
 
-// Passed as CURLOPT_WRITEFUNCTION  to read the response body.
+// Passed as CURLOPT_WRITEFUNCTION to read the response body.
 std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, const void* userdata) {
     FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (intlimit::multiplyOverflows(size, nmemb)) {
@@ -231,17 +229,20 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 // failure, leave transfers registered for host-coordinated shutdown and return.
 // The host handles the error after uv_run() returns.
 void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
-    // Callers check pendingError at the libuv boundary or after the last curl
-    // operation in the unpause path. No callbacks run between that check and here.
     // Tell curl to read and write socket data.
     int runningHandles = 0;
     const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
-    // Preserve the original error if a curl callback already recorded one.
-    if (hasError(fetchClient.pendingError)) {
+    if (curlMCode != CURLM_OK) {
+        if (!hasError(fetchClient.pendingError)) {
+            *fetchClient.pendingError = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+        }
         return;
     }
-    if (curlMCode != CURLM_OK) {
-        *fetchClient.pendingError = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+
+    // curl_multi_socket_action() can call curlSocketFunction() or
+    // curlTimerFunction(), which may set the pendingError. Check it before
+    // proceeding.
+    if (hasError(fetchClient.pendingError)) {
         return;
     }
 
@@ -467,10 +468,8 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
     return 0;
 }
 
-// Called only by the async adapter, which checks pendingError before entry.
-// QuickJS allocations can run GC finalizers, and resolving an object can invoke
-// a user-defined `then` getter. Both can report errors, so check before pumping
-// more JS jobs. The loop checkpoint then checks errors reported by those jobs.
+// Settle pending promises with response readiness, body chunks, end-of-stream,
+// or errors.
 void settlePendingPromises(FetchClient* fetchClient) {
     // Snapshot the fetchStateMap's CURL* keys + fetchStateID into an entries
     // list before looping over the entries. The fetchStateMap can be modified
@@ -481,8 +480,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
         entries.push_back({entry.first, entry.second.fetchStateID});
     }
 
-    // A previous iteration may have run JS jobs or destroyed an extracted
-    // FetchState (which invokes curl callbacks). Check before the next entry.
+    // Loop over the entries.
     for (const std::pair<CURL*, uint64_t>& entry : entries) {
         if (hasError(fetchClient->pendingError)) {
             return;
@@ -534,9 +532,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
                     JS_FreeValue(fetchClient->jsContext, result);
                 }
             }
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
@@ -556,9 +551,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
-                if (hasError(fetchClient->pendingError)) {
-                    return;
-                }
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
                 continue;
             }
@@ -566,9 +558,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
             // Resolve resonseReadyPromise.
             const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0, nullptr);
             JS_FreeValue(fetchClient->jsContext, result);
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
@@ -594,9 +583,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
@@ -607,9 +593,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
             JSValue jsNull = JS_NULL;
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
             JS_FreeValue(fetchClient->jsContext, result);
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
@@ -672,9 +655,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
             OwnedJSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
@@ -682,9 +662,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // Reject the responseReadPromise with the Uint8Array chunk.
         const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
         JS_FreeValue(fetchClient->jsContext, result);
-        if (hasError(fetchClient->pendingError)) {
-            return;
-        }
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
 }
