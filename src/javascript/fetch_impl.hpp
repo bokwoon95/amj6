@@ -59,7 +59,7 @@ struct FetchState {
     FetchRequest request = {};
 
     // Response.
-    CurlTransferStatus responseStatus = CurlTransferStatus::NotStarted;
+    CurlTransferStatus responseCurlTransferStatus = CurlTransferStatus::NotStarted;
     int64_t responseCode = 0;
     std::string effectiveURL = "";
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};

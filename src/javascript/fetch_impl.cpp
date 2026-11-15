@@ -215,7 +215,7 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
         return CURL_WRITEFUNC_ERROR;
     }
     if (fetchState->responseBufferSize + realsize > bodyBufferLimit) {
-        fetchState->responseStatus = CurlTransferStatus::Paused;
+        fetchState->responseCurlTransferStatus = CurlTransferStatus::Paused;
         return CURL_WRITEFUNC_PAUSE;
     }
 
@@ -260,7 +260,7 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
             std::terminate(); // A completed transfer must have registered callback storage.
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.responseStatus = CurlTransferStatus::Completed;
+        fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
         if (curlMsg->data.result != CURLE_OK) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
             if (!fetchState.error.errorMessage.empty()) {
@@ -542,7 +542,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             if (!fetchState.responseHeadersComplete) {
                 // The transfer has not yet completed, don't settle the
                 // responseReadyPromise.
-                if (fetchState.responseStatus != CurlTransferStatus::Completed) {
+                if (fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
                     continue;
                 }
 
@@ -569,7 +569,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // No error, buffered data, or end-of-stream to settle the
         // responseReadPromise with.
-        if (!fetchState.error.errorCode && fetchState.responseBuffer.empty() && fetchState.responseStatus != CurlTransferStatus::Completed) {
+        if (!fetchState.error.errorCode && fetchState.responseBuffer.empty() && fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
             continue;
         }
 
@@ -605,8 +605,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // If curl is currently paused and popping that chunk from the
         // responseBuffer dropped responseBufferSize to less than half of
         // bodyBufferLimit, unpause curl.
-        if (fetchState.responseStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
-            fetchState.responseStatus = CurlTransferStatus::Running;
+        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
+            fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             // Unpausing can synchronously invoke curl callbacks. Do not remove
             // handles or drive curl again if one of them reported a loop error.
@@ -616,7 +616,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             }
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
-                fetchState.responseStatus = CurlTransferStatus::Completed;
+                fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
                 if (fetchState.curlMultiHandle != nullptr) {
                     const CURLMcode curlMCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                     if (curlMCode != CURLM_OK) {
@@ -1296,7 +1296,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
-        fetchState.responseStatus = CurlTransferStatus::Running;
+        fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
         return response.release();
     } catch (const std::bad_alloc&) {
         if (registeredHandle != nullptr) {
