@@ -1,7 +1,6 @@
 #pragma once
 
 #include "errors/errors.hpp"
-#include "javascript.hpp"
 #include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
