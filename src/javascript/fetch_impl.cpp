@@ -225,10 +225,16 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
     return realsize;
 }
 
-// Drive curl transfers, then mark the ones that have completed. On a loop
-// failure, leave transfers registered for host-coordinated shutdown and return.
-// The host handles the error after uv_run() returns.
-void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+// Drive curl transfers, then mark the ones that have completed. Returns true
+// on success, or false if a fatal error is recorded in pendingError. On a loop
+// failure, leave transfers registered for host-coordinated shutdown and
+// return. The host handles the error after uv_run() returns.
+[[nodiscard]] bool driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+    // Check for pendingErrors before we call curl_multi_socket_action().
+    if (hasError(fetchClient.pendingError)) {
+        return false;
+    }
+
     // Tell curl to read and write socket data.
     int runningHandles = 0;
     const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
@@ -236,14 +242,14 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
         if (!hasError(fetchClient.pendingError)) {
             *fetchClient.pendingError = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
         }
-        return;
+        return false;
     }
 
-    // curl_multi_socket_action() can call curlSocketFunction() or
-    // curlTimerFunction(), which may set the pendingError. Check it before
+    // curl_multi_socket_action() may invoke curlSocketFunction or
+    // curlTimerFunction, which may have set pendingError. Check before
     // proceeding.
     if (hasError(fetchClient.pendingError)) {
-        return;
+        return false;
     }
 
     // Mark the fetchStates that have completed.
@@ -285,8 +291,9 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
         // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
         // this is the first error, so no second mailbox check is needed.
         *fetchClient.pendingError = std::error_code(status, uvErrorCategory);
-        return;
+        return false;
     }
+    return true;
 }
 
 // curl calls this function to specify which socket events should trigger
@@ -341,9 +348,6 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
         const curl_socket_t socket = pollData.socket;
-        if (hasError(fetchClient->pendingError)) {
-            return;
-        }
         try {
             unsigned int eventBitmask = 0;
             if (status < 0) {
@@ -355,7 +359,10 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
                 eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
             }
-            driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
+            const bool ok = driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
+            if (!ok) {
+                return;
+            }
         } catch (...) {
             if (!hasError(fetchClient->pendingError)) {
                 *fetchClient->pendingError = std::current_exception();
@@ -446,11 +453,11 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
     // libuv calls this when the timer expires.
     const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        if (hasError(fetchClient->pendingError)) {
-            return;
-        }
         try {
-            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            const bool ok = driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            if (!ok) {
+                return;
+            }
         } catch (...) {
             if (!hasError(fetchClient->pendingError)) {
                 *fetchClient->pendingError = std::current_exception();
@@ -458,6 +465,7 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
         }
     };
 
+    // Schedule driveCurlTransfers() to run after this delay.
     const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
     if (status != 0) {
         if (!hasError(fetchClient->pendingError)) {
@@ -622,14 +630,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
                     fetchState.curlMultiHandle = nullptr;
                 }
             }
-            // Calling curl_easy_pause() or curl_multi_remove_handle() may
-            // invoke curlSocketFunction and curlTimerFunction, which may set
-            // pendingError. Check for it.
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
-            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-            if (hasError(fetchClient->pendingError)) {
+            const bool ok = driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+            if (!ok) {
                 return;
             }
         }
