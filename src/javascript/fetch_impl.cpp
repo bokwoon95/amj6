@@ -229,7 +229,7 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 
 // Drive curl transfers, then mark the ones that have completed. On a loop
 // failure, leave transfers registered for host-coordinated shutdown and return.
-// The outer callback adapter stops the loop after curl unwinds.
+// The host handles the error after uv_run() returns.
 void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
     // Callers check pendingError at the libuv boundary or after the last curl
     // operation in the unpause path. No callbacks run between that check and here.
@@ -510,9 +510,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
     }
 }
 
-// curl calls this function whenever it needs to watch a socket for readability
-// (incoming data) or writability (its send buffer has space). Or, when it wants
-// to stop watching a socket completely.
+// curl calls this function whenever it changes its socket watching
+// requirements.
 int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
     struct PollData {
         FetchClient* fetchClient = nullptr;
@@ -520,6 +519,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     };
     FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
 
+    // Get the uvPollHandle associated with this socket, creating it if not
+    // exists.
     uv_poll_t* uvPollHandle = nullptr;
     if (fetchClient->uvPollHandleMap.contains(socket)) {
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
@@ -543,12 +544,11 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     }
 
+    // libuv calls this when the socket is readable, writable, or encounters an error.
+    // Translate the events into curl flags and let curl advance its transfers.
     const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
-        FetchClient* fetchClient = pollData.fetchClient;
-        // uv_stop does not discard other callbacks in the current iteration.
-        if (hasError(fetchClient->pendingError)) {
-            uv_stop(fetchClient->uvLoop);
+        if (hasError(pollData.fetchClient->pendingError)) {
             return;
         }
         try {
@@ -563,14 +563,11 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
                 curlEvents |= CURL_CSELECT_OUT;
             }
             // driveCurlTransfers() may close this poll handle. Do not use pollData after it.
-            driveCurlTransfers(*fetchClient, pollData.socket, static_cast<int>(curlEvents));
+            driveCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
         } catch (...) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::current_exception();
+            if (!hasError(pollData.fetchClient->pendingError)) {
+                *pollData.fetchClient->pendingError = std::current_exception();
             }
-        }
-        if (hasError(fetchClient->pendingError)) {
-            uv_stop(fetchClient->uvLoop);
         }
     };
 
@@ -640,9 +637,8 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
     uv_update_time(fetchClient->uvLoop);
     const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        // Another callback may already have stopped this loop iteration.
+        // Another callback may have recorded an error earlier in this iteration.
         if (hasError(fetchClient->pendingError)) {
-            uv_stop(fetchClient->uvLoop);
             return;
         }
         try {
@@ -651,9 +647,6 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long milliseconds, const voi
             if (!hasError(fetchClient->pendingError)) {
                 *fetchClient->pendingError = std::current_exception();
             }
-        }
-        if (hasError(fetchClient->pendingError)) {
-            uv_stop(fetchClient->uvLoop);
         }
     },
         static_cast<uint64_t>(milliseconds), 0);
@@ -1363,10 +1356,8 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<s
             const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
                 FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
                 uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
-                // Another callback may have reported an error earlier in this
-                // iteration; uv_stop does not discard already-ready callbacks.
+                // Another callback may have recorded an error earlier in this iteration.
                 if (hasError(fetchClient->pendingError)) {
-                    uv_stop(fetchClient->uvLoop);
                     return;
                 }
                 try {
@@ -1375,9 +1366,6 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, std::variant<s
                     if (!hasError(fetchClient->pendingError)) {
                         *fetchClient->pendingError = std::current_exception();
                     }
-                }
-                if (hasError(fetchClient->pendingError)) {
-                    uv_stop(fetchClient->uvLoop);
                 }
             };
             const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), uvAsyncCallback);

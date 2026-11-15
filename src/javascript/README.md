@@ -55,12 +55,23 @@ Keep the backend independent of Qt. The intended host has one backend thread
 owning `JSRuntime*`, its `JSContext*` objects, and an initialized `uv_loop_t`.
 The GUI thread communicates through owned native messages and a queue awakened
 with `uv_async_send()`. Never pass JS values or GUI objects across that boundary.
-Drain queued messages on wakeup: libuv notifications can coalesce.
+Drain queued messages on wakeup: libuv notifications can coalesce. Keep the
+command receiver referenced while accepting commands so an idle backend or
+persistent session waits for new commands instead of exiting.
+
+The host repeatedly calls `uv_run(..., UV_RUN_ONCE)`, checking `pendingError`
+before and after each call. Modules record fatal errors and skip application
+work when an error is pending; they do not call `uv_stop()`. Other ready
+callbacks can still run within the same iteration, so their entry checks remain
+necessary. The host owns error handling and coordinated shutdown. Ordinary
+operation failures reject their own Promises rather than failing the runtime.
+Completing a tool invocation does not end a persistent session.
 
 Do not nest `uv_run()` to await a JS Promise, or pump Qt and libuv from each
-other. The backend runs libuv and performs QuickJS job checkpoints after JS
-execution/completions. Network concurrency does not make JavaScript parallel;
-CPU-bound JS still blocks its owner thread.
+other. The backend performs QuickJS job checkpoints after JS execution/completions
+and drains pending jobs before waiting in libuv; pending JS jobs alone do not
+wake libuv. Network concurrency does not make JavaScript parallel; CPU-bound JS
+still blocks its owner thread.
 
 The host must also provide a monotonic `performance.now()` for abort deadlines.
 Native `context::Context` does not automatically become a JS `AbortSignal`.
@@ -106,11 +117,12 @@ on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
    `uv_async_t` handle. Shutdown must be
    idempotent and must not execute JS or disturb pending JS exceptions.
 3. **Finish native asynchronous cleanup.** Keep driving the `uv_loop_t` with
-   `uv_run()` so `uv_close()` callbacks can free handle storage and outstanding
-   digest workers can deliver native-only completion cleanup. Close the host's
-   `uv_async_t` command receiver and other persistent handles too; otherwise
-   `UV_RUN_DEFAULT` may never return. Storage must remain valid until the last
-   callback using it finishes. Do not execute application JS during this drain.
+   `uv_run(..., UV_RUN_ONCE)` even when `pendingError` is set, so `uv_close()`
+   callbacks can free handle storage and outstanding digest workers can deliver
+   native-only completion cleanup. Close the host's `uv_async_t` command receiver
+   and other persistent handles too; otherwise the loop remains alive and draining
+   cannot finish. Storage must remain valid until the last callback using it
+   finishes. Do not execute application JS during this drain.
 4. **Destroy QuickJS.** Release remaining host-owned JS values, call
    `JS_FreeContext()` for every `JSContext*`, then `JS_FreeRuntime()` for the
    `JSRuntime*`. Native objects borrowed by JS carriers must still exist because
