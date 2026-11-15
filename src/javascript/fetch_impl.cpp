@@ -605,14 +605,9 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // If curl is currently paused and popping that chunk from the
         // responseBuffer dropped responseBufferSize to less than half of
         // bodyBufferLimit, unpause curl.
-        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize <= bodyBufferLimit / 2) {
+        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize < bodyBufferLimit / 2) {
             fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
-            // Unpausing can synchronously invoke curl callbacks. Do not remove
-            // handles or drive curl again if one of them reported a loop error.
-            if (hasError(fetchClient->pendingError)) {
-                return;
-            }
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
                 fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
@@ -622,17 +617,16 @@ void settlePendingPromises(FetchClient* fetchClient) {
                         if (!hasError(fetchClient->pendingError)) {
                             *fetchClient->pendingError = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
                         }
-                        // Keep FetchState registered because curl may still reference
-                        // its callback storage until host-coordinated shutdown.
                         return;
                     }
                     fetchState.curlMultiHandle = nullptr;
-                    // Removal also invokes curl callbacks; its return code is
-                    // not the mailbox, which retains their original failure.
-                    if (hasError(fetchClient->pendingError)) {
-                        return;
-                    }
                 }
+            }
+            // Calling curl_easy_pause() or curl_multi_remove_handle() may
+            // invoke curlSocketFunction and curlTimerFunction, which may set
+            // pendingError. Check for it.
+            if (hasError(fetchClient->pendingError)) {
+                return;
             }
             driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             if (hasError(fetchClient->pendingError)) {
@@ -650,7 +644,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             continue;
         }
 
-        // Reject the responseReadPromise with the Uint8Array chunk.
+        // Resolve the responseReadPromise with the Uint8Array chunk.
         const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
         JS_FreeValue(fetchClient->jsContext, result);
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
