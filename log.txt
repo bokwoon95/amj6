@@ -1,18 +1,6 @@
 TODO: make context::Context compose well with other context::Context types, just like in Go.
 
-bool intlimit::multiplyOverflows(a, b)
-bool intlimit::multiplyUnderflows(a, b)
-bool intlimit::addOverflows(a, b)
-bool intlimit::addUnderflows(a, b)
-bool intlimit::subtractOverflows(a, b)
-bool intlimit::subtractUnderflows(a, b)
-bool intlimit::divisionOverflows(a, b)
-
-if (hasLoopError(fetchClient.loopError)) {
-}
-
-if (hasError(fetchClient.pendingError)) {
-}
+TODO: touch up owned/curl.hpp then make fetch_impl.hpp/.cpp use it instead of raw pointers.
 
 urlParse
 urlWithComponent
