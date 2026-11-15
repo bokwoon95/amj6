@@ -514,13 +514,13 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 std::terminate(); // An extracted abandoned state must exist.
             }
             const FetchState& fetchState = mapNode.mapped();
-            const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
-            if (readyPromiseState != JS_PROMISE_PENDING && !fetchState.responseReadPromise.has_value()) {
+            const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
+            if (responseReadyPromiseState != JS_PROMISE_PENDING && !fetchState.responseReadPromise.has_value()) {
                 continue;
             }
             OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             // Reject responseReadyPromise.
-            if (readyPromiseState == JS_PROMISE_PENDING) {
+            if (responseReadyPromiseState == JS_PROMISE_PENDING) {
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
@@ -537,8 +537,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // If responseReadyPromise has not yet been settled, settle it first.
-        const JSPromiseStateEnum readyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
-        if (readyPromiseState != JS_PROMISE_FULFILLED && readyPromiseState != JS_PROMISE_REJECTED) {
+        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersComplete) {
                 // The transfer has not yet completed, don't settle the
                 // responseReadyPromise.
@@ -611,7 +611,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
             // Unpausing can synchronously invoke curl callbacks. Do not remove
             // handles or drive curl again if one of them reported a loop error.
             if (hasError(fetchClient->pendingError)) {
-                fetchState.responseReadPromise = std::move(responseReadPromise);
                 return;
             }
             if (curlCode != CURLE_OK) {
@@ -623,28 +622,20 @@ void settlePendingPromises(FetchClient* fetchClient) {
                         if (!hasError(fetchClient->pendingError)) {
                             *fetchClient->pendingError = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
                         }
-                        // Preserve callback storage and the pending promise
-                        // until the host can safely coordinate shutdown.
-                        fetchState.responseReadPromise = std::move(responseReadPromise);
+                        // Keep FetchState registered because curl may still reference
+                        // its callback storage until host-coordinated shutdown.
                         return;
                     }
                     fetchState.curlMultiHandle = nullptr;
                     // Removal also invokes curl callbacks; its return code is
                     // not the mailbox, which retains their original failure.
                     if (hasError(fetchClient->pendingError)) {
-                        fetchState.responseReadPromise = std::move(responseReadPromise);
                         return;
                     }
                 }
             }
-            try {
-                driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-            } catch (...) {
-                fetchState.responseReadPromise = std::move(responseReadPromise);
-                throw;
-            }
+            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             if (hasError(fetchClient->pendingError)) {
-                fetchState.responseReadPromise = std::move(responseReadPromise);
                 return;
             }
         }
