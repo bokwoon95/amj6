@@ -666,11 +666,11 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             }
             fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
         }
-        const void* responseData = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
-        if (responseData == nullptr) {
+        const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
+        if (opaque == nullptr) {
             return JS_EXCEPTION;
         }
-        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(responseData)->cast<FetchResponse>();
+        const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
         FetchClient* fetchClient = fetchResponse.fetchClient;
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
