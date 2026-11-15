@@ -548,25 +548,26 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     // Translate the events into curl flags and let curl advance its transfers.
     const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
-        if (hasError(pollData.fetchClient->pendingError)) {
-            return;
-        }
+        FetchClient* fetchClient = pollData.fetchClient;
+        const curl_socket_t socket = pollData.socket;
         try {
-            unsigned int curlEvents = 0;
+            if (hasError(fetchClient->pendingError)) {
+                return;
+            }
+            unsigned int eventBitmask = 0;
             if (status < 0) {
-                curlEvents |= CURL_CSELECT_ERR;
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
             }
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
-                curlEvents |= CURL_CSELECT_IN;
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_IN);
             }
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
-                curlEvents |= CURL_CSELECT_OUT;
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
             }
-            // driveCurlTransfers() may close this poll handle. Do not use pollData after it.
-            driveCurlTransfers(*pollData.fetchClient, pollData.socket, static_cast<int>(curlEvents));
+            driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
         } catch (...) {
-            if (!hasError(pollData.fetchClient->pendingError)) {
-                *pollData.fetchClient->pendingError = std::current_exception();
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::current_exception();
             }
         }
     };
