@@ -1,12 +1,13 @@
 #pragma once
 
+#include "owned/quickjs.hpp"
+
 #include <quickjs.h>
 
 #include <cstddef>
 #include <exception>
 #include <map>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -15,6 +16,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 
 // A null pointer, zero error code, or null exception pointer means no error.
 inline bool hasError(const std::variant<std::error_code, std::exception_ptr>* pendingError) noexcept {
@@ -32,66 +34,7 @@ inline bool hasError(const std::variant<std::error_code, std::exception_ptr>* pe
     return false;
 }
 
-// Owns one QuickJS reference and releases it on destruction unless release()
-// is called. Noncopyable. A default-constructed wrapper is empty and has no
-// context. Otherwise, the context must outlive this wrapper. Serialize QuickJS
-// operations across the entire runtime.
-class OwnedJSValue {
-  public:
-    OwnedJSValue() = default;
-    OwnedJSValue(JSContext* jsContext, JSValue jsValue) {
-        this->jsContext = jsContext;
-        this->jsValue = jsValue;
-    }
-    ~OwnedJSValue() {
-        if (jsContext != nullptr) {
-            JS_FreeValue(jsContext, jsValue);
-        }
-    }
-    OwnedJSValue(const OwnedJSValue&) = delete;
-    OwnedJSValue& operator=(const OwnedJSValue&) = delete;
-    OwnedJSValue(OwnedJSValue&& ownedJSValue) noexcept {
-        this->jsContext = ownedJSValue.jsContext;
-        this->jsValue = ownedJSValue.release();
-    }
-    OwnedJSValue& operator=(OwnedJSValue&& ownedJSValue) noexcept {
-        if (this != &ownedJSValue) {
-            const OwnedJSValue previous(this->jsContext, this->release());
-            this->jsContext = ownedJSValue.jsContext;
-            this->jsValue = ownedJSValue.release();
-        }
-        return *this;
-    }
-    JSValue& get() {
-        return jsValue;
-    }
-    const JSValue& get() const {
-        return jsValue;
-    }
-    void reset(JSValue jsValue) {
-        if (jsContext == nullptr) {
-            throw std::logic_error("Cannot reset an OwnedJSValue without a context; assign a context-bound wrapper instead");
-        }
-        JS_FreeValue(jsContext, std::exchange(this->jsValue, jsValue));
-    }
-    JSValue release() {
-        return std::exchange(jsValue, JS_UNDEFINED);
-    }
-
-  private:
-    JSContext* jsContext = nullptr;
-    JSValue jsValue = JS_UNDEFINED;
-};
-
-OwnedJSValue jsNewError(JSContext* jsContext, std::string name, std::string message);
-
-// Owns a promise and its settlement functions. Duplicate the promise when passing
-// ownership to JavaScript. Callers release its settlement functions when used.
-struct OwnedJSPromise {
-    OwnedJSValue promise = {};
-    OwnedJSValue resolveFunction = {};
-    OwnedJSValue rejectFunction = {};
-};
+owned::JSValue jsNewError(JSContext* jsContext, std::string name, std::string message);
 
 // An in-memory JSON tree, not serialized JSON text. Numbers must be finite.
 // MSVC map moves can allocate; implicit moves may throw and callers handle allocation failures.

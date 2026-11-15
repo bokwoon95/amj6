@@ -1,6 +1,7 @@
 #include "console_impl.hpp"
 
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <quickjs.h>
@@ -12,6 +13,7 @@
 #include <string>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 namespace void_ptr = amj::void_ptr;
 
 JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) {
@@ -87,7 +89,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
+        owned::JSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -100,7 +102,7 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         }
 
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:console_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const owned::JSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

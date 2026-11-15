@@ -1,5 +1,7 @@
 #include "javascript.hpp"
 
+#include "owned/quickjs.hpp"
+
 #include <quickjs.h>
 
 #include <cmath>
@@ -18,6 +20,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 namespace {
 
 JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int depth) {
@@ -47,7 +50,7 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
         if (array->size() > std::numeric_limits<uint32_t>::max()) {
             return JS_ThrowRangeError(jsContext, "JSON array exceeds the JS array length limit");
         }
-        OwnedJSValue result(jsContext, JS_NewArray(jsContext));
+        owned::JSValue result(jsContext, JS_NewArray(jsContext));
         if (JS_IsException(result.get())) {
             return JS_EXCEPTION;
         }
@@ -64,12 +67,12 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
     }
     const std::map<std::string, JSONValue>* object = std::get_if<std::map<std::string, JSONValue>>(&jsonValue.value);
     if (object != nullptr) {
-        OwnedJSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
+        owned::JSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
         if (JS_IsException(result.get())) {
             return JS_EXCEPTION;
         }
         for (const std::pair<const std::string, JSONValue>& field : *object) {
-            OwnedJSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
+            owned::JSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
             if (JS_IsException(element.get())) {
                 return JS_EXCEPTION;
             }
@@ -90,29 +93,29 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
 
 } // namespace
 
-OwnedJSValue jsNewError(JSContext* jsContext, std::string name, std::string message) {
+owned::JSValue jsNewError(JSContext* jsContext, std::string name, std::string message) {
     // Create error.
-    OwnedJSValue error(jsContext, JS_NewError(jsContext));
+    owned::JSValue error(jsContext, JS_NewError(jsContext));
     if (JS_IsException(error.get())) {
-        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+        return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     // Set name property.
-    OwnedJSValue nameString(jsContext, JS_NewStringLen(jsContext, name.data(), name.size()));
+    owned::JSValue nameString(jsContext, JS_NewStringLen(jsContext, name.data(), name.size()));
     if (JS_IsException(nameString.get())) {
-        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+        return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     int status = JS_DefinePropertyValueStr(jsContext, error.get(), "name", nameString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     if (status < 0) {
-        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+        return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     // Set message property.
-    OwnedJSValue messageString(jsContext, JS_NewStringLen(jsContext, message.data(), message.size()));
+    owned::JSValue messageString(jsContext, JS_NewStringLen(jsContext, message.data(), message.size()));
     if (JS_IsException(messageString.get())) {
-        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+        return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     status = JS_DefinePropertyValueStr(jsContext, error.get(), "message", messageString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     if (status < 0) {
-        return OwnedJSValue(jsContext, JS_GetException(jsContext));
+        return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     return error;
 }

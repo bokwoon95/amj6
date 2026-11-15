@@ -3,6 +3,7 @@
 #include "errors/errors.hpp"
 #include "intlimit/intlimit.hpp"
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
@@ -526,7 +527,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
             if (responseReadyPromiseState != JS_PROMISE_PENDING && !fetchState.responseReadPromise.has_value()) {
                 continue;
             }
-            OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
+            owned::JSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             // Reject responseReadyPromise.
             if (responseReadyPromiseState == JS_PROMISE_PENDING) {
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
@@ -556,7 +557,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
                 // The transfer completed without receiving any response
                 // headers. Reject responseReadyPromise.
-                OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
+                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -583,12 +584,12 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // Move fetchState.responseReadPromise out to a local variable and
         // reset it so JS can request another read.
-        OwnedJSPromise responseReadPromise = std::move(fetchState.responseReadPromise.value());
+        owned::JSPromise responseReadPromise = std::move(fetchState.responseReadPromise.value());
         fetchState.responseReadPromise.reset();
 
         // Reject the responseReadPromise if the transfer encountered an error.
         if (fetchState.error.errorCode) {
-            OwnedJSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
+            owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -637,9 +638,9 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Convert the chunk into a JS Uint8Array.
-        OwnedJSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
+        owned::JSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
         if (JS_IsException(uint8Array.get())) {
-            OwnedJSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
+            owned::JSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -698,14 +699,14 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowTypeError(jsContext, "Only one outstanding read is supported");
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        OwnedJSValue promise(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        owned::JSValue promise(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
-        fetchState.responseReadPromise = OwnedJSPromise{
+        fetchState.responseReadPromise = owned::JSPromise{
             .promise = std::move(promise),
-            .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
-            .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
+            .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
+            .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
         uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
         const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
@@ -766,7 +767,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
             if (!fetchState.responseReadPromise.has_value() && readyPromiseState != JS_PROMISE_PENDING) {
                 return JS_UNDEFINED;
             }
-            OwnedJSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
+            owned::JSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             if (readyPromiseState == JS_PROMISE_PENDING) {
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
@@ -959,10 +960,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
         }
         FetchRequest fetchRequest;
-        const OwnedJSValue url(jsContext, JS_GetPropertyStr(jsContext, argv[0], "url"));
-        const OwnedJSValue method(jsContext, JS_GetPropertyStr(jsContext, argv[0], "method"));
-        const OwnedJSValue headers(jsContext, JS_GetPropertyStr(jsContext, argv[0], "headers"));
-        const OwnedJSValue body(jsContext, JS_GetPropertyStr(jsContext, argv[0], "body"));
+        const owned::JSValue url(jsContext, JS_GetPropertyStr(jsContext, argv[0], "url"));
+        const owned::JSValue method(jsContext, JS_GetPropertyStr(jsContext, argv[0], "method"));
+        const owned::JSValue headers(jsContext, JS_GetPropertyStr(jsContext, argv[0], "headers"));
+        const owned::JSValue body(jsContext, JS_GetPropertyStr(jsContext, argv[0], "body"));
         if (JS_IsException(url.get()) || JS_IsException(method.get()) || JS_IsException(headers.get()) || JS_IsException(body.get())) {
             return JS_EXCEPTION;
         }
@@ -1004,7 +1005,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
                 return JS_ThrowTypeError(jsContext, "URL credentials are not supported");
             }
         }
-        const OwnedJSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headers.get(), "length"));
+        const owned::JSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headers.get(), "length"));
         uint32_t headerCount = 0;
         if (JS_IsException(headerCountValue.get()) || JS_ToUint32(jsContext, &headerCount, headerCountValue.get()) < 0) {
             return JS_EXCEPTION;
@@ -1014,14 +1015,14 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         }
         std::size_t headerBytes = 0;
         for (uint32_t index = 0; index < headerCount; index++) {
-            const OwnedJSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headers.get(), index));
+            const owned::JSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headers.get(), index));
             if (JS_IsException(pair.get())) {
                 return JS_EXCEPTION;
             }
             if (!JS_IsArray(pair.get())) {
                 return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
             }
-            const OwnedJSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
+            const owned::JSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
             uint32_t pairLength = 0;
             if (JS_IsException(pairLengthValue.get()) || JS_ToUint32(jsContext, &pairLength, pairLengthValue.get()) < 0) {
                 return JS_EXCEPTION;
@@ -1029,8 +1030,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             if (pairLength != 2) {
                 return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
             }
-            const OwnedJSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
-            const OwnedJSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
+            const owned::JSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
+            const owned::JSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
             if (JS_IsException(name.get()) || JS_IsException(value.get())) {
                 return JS_EXCEPTION;
             }
@@ -1076,7 +1077,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         } else {
             std::size_t byteOffset = 0;
             std::size_t byteLength = 0;
-            const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
+            const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
             if (JS_IsException(buffer.get())) {
                 return JS_EXCEPTION;
             }
@@ -1246,17 +1247,17 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             throw std::runtime_error(curl_easy_strerror(methodStatus));
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        OwnedJSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        owned::JSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(ready.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
         }
-        fetchState.responseReadyPromise = OwnedJSPromise{
+        fetchState.responseReadyPromise = owned::JSPromise{
             .promise = std::move(ready),
-            .resolveFunction = OwnedJSValue(jsContext, resolvingFunctions.at(0)),
-            .rejectFunction = OwnedJSValue(jsContext, resolvingFunctions.at(1)),
+            .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
+            .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
-        OwnedJSValue response(jsContext, JS_NewObjectClass(jsContext, fetchResponseClassID));
+        owned::JSValue response(jsContext, JS_NewObjectClass(jsContext, fetchResponseClassID));
         if (JS_IsException(response.get())) {
             fetchClient->fetchStateMap.erase(registeredHandle);
             return JS_EXCEPTION;
@@ -1540,7 +1541,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        OwnedJSValue client(jsContext, JS_NewObjectClass(jsContext, clientClassID));
+        owned::JSValue client(jsContext, JS_NewObjectClass(jsContext, clientClassID));
         if (JS_IsException(client.get())) {
             return nullptr;
         }
@@ -1555,7 +1556,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         if (JS_IsException(send) || JS_DefinePropertyValueStr(jsContext, client.get(), "send", send, JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }
-        OwnedJSValue prototype(jsContext, JS_NewObject(jsContext));
+        owned::JSValue prototype(jsContext, JS_NewObject(jsContext));
         if (JS_IsException(prototype.get())) {
             return nullptr;
         }

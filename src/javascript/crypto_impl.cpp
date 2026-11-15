@@ -1,6 +1,7 @@
 #include "crypto_impl.hpp"
 
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <openssl/err.h>
@@ -25,6 +26,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
 
@@ -53,11 +55,11 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
             std::terminate();
         }
         JSContext* jsContext = crypto->jsContext;
-        const std::map<uv_work_t*, OwnedJSValue>::node_type completionNode = crypto->pendingDigests.extract(uvWork);
+        const std::map<uv_work_t*, owned::JSValue>::node_type completionNode = crypto->pendingDigests.extract(uvWork);
         if (completionNode.empty()) {
             std::terminate();
         }
-        const OwnedJSValue& completion = completionNode.mapped();
+        const owned::JSValue& completion = completionNode.mapped();
         digestWork.crypto = nullptr;
 
         JSValue outputValue = JS_EXCEPTION;
@@ -83,7 +85,7 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
         } catch (...) {
             JS_ThrowInternalError(jsContext, "cryptoDigest: unexpected native failure");
         }
-        const OwnedJSValue output(jsContext, outputValue);
+        const owned::JSValue output(jsContext, outputValue);
         JSValue errorValue = JS_NULL;
         if (JS_IsException(output.get())) {
             errorValue = JS_GetException(jsContext);
@@ -92,13 +94,13 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
                 errorValue = JS_GetException(jsContext);
             }
         }
-        const OwnedJSValue error(jsContext, errorValue);
+        const owned::JSValue error(jsContext, errorValue);
         std::array<JSValue, 2> arguments = {error.get(), JS_NULL};
         if (!JS_IsException(output.get())) {
             arguments.at(1) = output.get();
         }
         {
-            const OwnedJSValue result(jsContext, JS_Call(jsContext, completion.get(), JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
+            const owned::JSValue result(jsContext, JS_Call(jsContext, completion.get(), JS_UNDEFINED, static_cast<int>(arguments.size()), arguments.data()));
         }
         crypto->jsExecutePendingJobs(jsContext);
     } catch (...) {
@@ -136,9 +138,9 @@ void Crypto::shutdown() {
         return; // Safe even after the context/runtime have been destroyed.
     }
     shuttingDown = true;
-    std::map<uv_work_t*, OwnedJSValue> detached;
+    std::map<uv_work_t*, owned::JSValue> detached;
     detached.swap(pendingDigests);
-    for (const std::pair<uv_work_t* const, OwnedJSValue>& entry : detached) {
+    for (const std::pair<uv_work_t* const, owned::JSValue>& entry : detached) {
         DigestWork& digestWork = static_cast<void_ptr::VoidPtr*>(entry.first->data)->cast<DigestWork>();
         digestWork.crypto = nullptr;
     }
@@ -148,7 +150,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
     try {
         const int arrayType = argc > 0 ? JS_GetTypedArrayType(argv[0]) : -1;
         if (arrayType < JS_TYPED_ARRAY_UINT8C || arrayType > JS_TYPED_ARRAY_BIG_UINT64) {
-            OwnedJSValue error(jsContext, JS_NewError(jsContext));
+            owned::JSValue error(jsContext, JS_NewError(jsContext));
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -159,7 +161,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr));
+        const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr));
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -174,7 +176,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
             return JS_ThrowTypeError(jsContext, "getRandomValues cannot modify an immutable buffer");
         }
         if (byteLength > 65536) {
-            OwnedJSValue error(jsContext, JS_NewError(jsContext));
+            owned::JSValue error(jsContext, JS_NewError(jsContext));
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -240,7 +242,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const OwnedJSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr));
+        const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr));
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -267,7 +269,7 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         DigestWork* submittedWork = digestWork.get();
         std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
-        OwnedJSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
+        owned::JSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
             DigestWork& digestWork = static_cast<void_ptr::VoidPtr*>(uvWork->data)->cast<DigestWork>();
@@ -324,7 +326,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID));
+        owned::JSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -344,7 +346,7 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
             if (status < 0) {
                 return -1;
             }
-            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const owned::JSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

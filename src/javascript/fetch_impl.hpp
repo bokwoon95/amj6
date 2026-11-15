@@ -2,6 +2,7 @@
 
 #include "errors/errors.hpp"
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
@@ -69,8 +70,8 @@ struct FetchState {
     std::deque<std::vector<uint8_t>> responseBuffer = {};
     std::size_t responseBufferSize = 0;
     bool responseRedirecting = false; // Currently processing a redirect response.
-    OwnedJSPromise responseReadyPromise = {};
-    std::optional<OwnedJSPromise> responseReadPromise = {};
+    owned::JSPromise responseReadyPromise = {};
+    std::optional<owned::JSPromise> responseReadPromise = {};
 
     FetchState() = default;
     ~FetchState();

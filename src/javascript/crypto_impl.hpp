@@ -1,6 +1,7 @@
 #pragma once
 
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 
 #include <quickjs.h>
 #include <uv.h>
@@ -10,6 +11,7 @@
 #include <thread>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 
 // Host-owned digest service, constructed on the context/loop's owner thread.
 // Neither the context nor the initialized libuv loop is owned or run here.
@@ -35,7 +37,7 @@ struct Crypto {
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    std::map<uv_work_t*, OwnedJSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
+    std::map<uv_work_t*, owned::JSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
     Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);

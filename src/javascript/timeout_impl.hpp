@@ -1,6 +1,7 @@
 #pragma once
 
 #include "javascript.hpp"
+#include "owned/quickjs.hpp"
 
 #include <quickjs.h>
 #include <uv.h>
@@ -11,6 +12,7 @@
 #include <thread>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 
 // Owner-managed, one per context/loop pair. Neither the context nor the loop is
 // owned or run here. All operations and destruction require the constructing
@@ -36,7 +38,7 @@ namespace amj::javascript {
 struct Timeout {
     // One setTimeout() registration.
     struct Timer {
-        OwnedJSValue callback = {};
+        owned::JSValue callback = {};
         uv_timer_t* ownedUvTimerHandle = nullptr;
 
         ~Timer();
