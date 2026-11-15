@@ -288,6 +288,185 @@ void driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int even
     }
 }
 
+// curl calls this function to specify which socket events should trigger
+// driveCurlTransfers().
+//
+// 1. CURL_POLL_NONE: Stop scheduling driveCurlTransfers() for socket events,
+// retaining the poll handle.
+//
+// 2. CURL_POLL_IN: Call driveCurlTransfers() when this socket becomes readable.
+//
+// 3. CURL_POLL_OUT: Call driveCurlTransfers() when this socket becomes writable.
+//
+// 4. CURL_POLL_INOUT: Call driveCurlTransfers() when this socket becomes
+// readable or writable.
+//
+// 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
+// and close the poll handle.
+int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
+    struct PollData {
+        FetchClient* fetchClient = nullptr;
+        curl_socket_t socket = CURL_SOCKET_BAD;
+    };
+    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+
+    // Get the uvPollHandle associated with this socket, creating it if not
+    // exists.
+    uv_poll_t* uvPollHandle = nullptr;
+    if (fetchClient->uvPollHandleMap.contains(socket)) {
+        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
+    } else {
+        owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
+        const int status = uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        ownedUvPollHandle.setInitialized();
+        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(
+            std::make_unique<PollData>(PollData{
+                .fetchClient = fetchClient,
+                .socket = socket,
+            })
+        );
+        fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
+        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
+    }
+
+    // libuv calls this when the socket is readable, writable, or encounters an error.
+    const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
+        const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
+        FetchClient* fetchClient = pollData.fetchClient;
+        const curl_socket_t socket = pollData.socket;
+        if (hasError(fetchClient->pendingError)) {
+            return;
+        }
+        try {
+            unsigned int eventBitmask = 0;
+            if (status < 0) {
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
+            }
+            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_IN);
+            }
+            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
+                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
+            }
+            driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
+        } catch (...) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::current_exception();
+            }
+        }
+    };
+
+    // Stop watching this socket, retaining its poll handle.
+    if (what == CURL_POLL_NONE) {
+        const int status = uv_poll_stop(uvPollHandle);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    // Watch this socket for readability.
+    if (what == CURL_POLL_IN) {
+        const int status = uv_poll_start(uvPollHandle, UV_READABLE, uvPollCallback);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    // Watch this socket for writability.
+    if (what == CURL_POLL_OUT) {
+        const int status = uv_poll_start(uvPollHandle, UV_WRITABLE, uvPollCallback);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    // Watch this socket for readability and writability.
+    if (what == CURL_POLL_INOUT) {
+        const int status = uv_poll_start(uvPollHandle, UV_READABLE | UV_WRITABLE, uvPollCallback);
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    // Stop watching this socket and close its poll handle.
+    if (what == CURL_POLL_REMOVE) {
+        fetchClient->uvPollHandleMap.erase(socket);
+        return 0;
+    }
+
+    return -1;
+}
+
+// curl calls this function to update its timeout requirements.
+//
+// 1. timeout_ms < 0: Cancel the scheduled call to driveCurlTransfers().
+//
+// 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
+int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
+    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+
+    // Cancel the current timer.
+    if (timeout_ms < 0) {
+        const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
+        if (status != 0) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    }
+
+    // Refresh libuv's cached time so the delay starts from now.
+    uv_update_time(fetchClient->uvLoop);
+
+    // libuv calls this when the timer expires.
+    const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
+        FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
+        if (hasError(fetchClient->pendingError)) {
+            return;
+        }
+        try {
+            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
+        } catch (...) {
+            if (!hasError(fetchClient->pendingError)) {
+                *fetchClient->pendingError = std::current_exception();
+            }
+        }
+    };
+
+    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
+    if (status != 0) {
+        if (!hasError(fetchClient->pendingError)) {
+            *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
+        }
+        return -1;
+    }
+    return 0;
+}
+
 // Called only by the async adapter, which checks pendingError before entry.
 // QuickJS allocations can run GC finalizers, and resolving an object can invoke
 // a user-defined `then` getter. Both can report errors, so check before pumping
@@ -508,185 +687,6 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
-}
-
-// curl calls this function to specify which socket events should trigger
-// driveCurlTransfers().
-//
-// 1. CURL_POLL_NONE: Stop scheduling driveCurlTransfers() for socket events,
-// retaining the poll handle.
-//
-// 2. CURL_POLL_IN: Call driveCurlTransfers() when this socket becomes readable.
-//
-// 3. CURL_POLL_OUT: Call driveCurlTransfers() when this socket becomes writable.
-//
-// 4. CURL_POLL_INOUT: Call driveCurlTransfers() when this socket becomes
-// readable or writable.
-//
-// 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
-// and close the poll handle.
-int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
-    struct PollData {
-        FetchClient* fetchClient = nullptr;
-        curl_socket_t socket = CURL_SOCKET_BAD;
-    };
-    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
-
-    // Get the uvPollHandle associated with this socket, creating it if not
-    // exists.
-    uv_poll_t* uvPollHandle = nullptr;
-    if (fetchClient->uvPollHandleMap.contains(socket)) {
-        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
-    } else {
-        owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
-        const int status = uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        ownedUvPollHandle.setInitialized();
-        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(
-            std::make_unique<PollData>(PollData{
-                .fetchClient = fetchClient,
-                .socket = socket,
-            })
-        );
-        fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
-        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
-    }
-
-    // libuv calls this when the socket is readable, writable, or encounters an error.
-    const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
-        const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
-        FetchClient* fetchClient = pollData.fetchClient;
-        const curl_socket_t socket = pollData.socket;
-        if (hasError(fetchClient->pendingError)) {
-            return;
-        }
-        try {
-            unsigned int eventBitmask = 0;
-            if (status < 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
-            }
-            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_IN);
-            }
-            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
-            }
-            driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
-        } catch (...) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::current_exception();
-            }
-        }
-    };
-
-    // Stop watching this socket, retaining its poll handle.
-    if (what == CURL_POLL_NONE) {
-        const int status = uv_poll_stop(uvPollHandle);
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Watch this socket for readability.
-    if (what == CURL_POLL_IN) {
-        const int status = uv_poll_start(uvPollHandle, UV_READABLE, uvPollCallback);
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Watch this socket for writability.
-    if (what == CURL_POLL_OUT) {
-        const int status = uv_poll_start(uvPollHandle, UV_WRITABLE, uvPollCallback);
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Watch this socket for readability and writability.
-    if (what == CURL_POLL_INOUT) {
-        const int status = uv_poll_start(uvPollHandle, UV_READABLE | UV_WRITABLE, uvPollCallback);
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Stop watching this socket and close its poll handle.
-    if (what == CURL_POLL_REMOVE) {
-        fetchClient->uvPollHandleMap.erase(socket);
-        return 0;
-    }
-
-    return -1;
-}
-
-// curl calls this function to update its timeout requirements.
-//
-// 1. timeout_ms < 0: Cancel the scheduled call to driveCurlTransfers().
-//
-// 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
-int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
-    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
-
-    // Cancel the current timer.
-    if (timeout_ms < 0) {
-        const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
-        if (status != 0) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Refresh libuv's cached time so the delay starts from now.
-    uv_update_time(fetchClient->uvLoop);
-
-    // libuv calls this when the timer expires.
-    const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
-        FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        if (hasError(fetchClient->pendingError)) {
-            return;
-        }
-        try {
-            driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-        } catch (...) {
-            if (!hasError(fetchClient->pendingError)) {
-                *fetchClient->pendingError = std::current_exception();
-            }
-        }
-    };
-
-    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
-    if (status != 0) {
-        if (!hasError(fetchClient->pendingError)) {
-            *fetchClient->pendingError = std::error_code(status, uvErrorCategory);
-        }
-        return -1;
-    }
-    return 0;
 }
 
 } // namespace
