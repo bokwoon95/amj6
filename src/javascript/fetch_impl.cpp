@@ -336,7 +336,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     }
 
-    // libuv calls this when the socket is readable, writable, or encounters an error.
+    // libuv calls uvPollCallback when the socket is readable, writable, or
+    // encounters an error.
     const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
         const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
@@ -428,7 +429,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
 int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
     const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
 
-    // Cancel the current timer.
+    // Cancel the scheduled call to driveCurlTransfers().
     if (timeout_ms < 0) {
         const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
         if (status != 0) {
@@ -443,7 +444,8 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
     // Refresh libuv's cached time so the delay starts from now.
     uv_update_time(fetchClient->uvLoop);
 
-    // libuv calls this when the timer expires.
+    // libuv calls uvTimerCallback when the timer expires, which calls
+    // driveCurlTransfers().
     const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
         FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
         if (hasError(fetchClient->pendingError)) {
@@ -458,6 +460,7 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
         }
     };
 
+    // Schedule driveCurlTransfers() to run after this delay.
     const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
     if (status != 0) {
         if (!hasError(fetchClient->pendingError)) {
