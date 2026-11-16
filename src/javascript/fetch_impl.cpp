@@ -1319,14 +1319,14 @@ FetchState::~FetchState() {
 }
 
 errors::Error FetchState::close() {
-    errors::Error closeError;
+    errors::Error error;
     if (curlMultiHandle != nullptr) {
         const CURLMcode curlMCode = curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle);
         if (curlMCode != CURLM_OK) {
             if (curlMCode != CURLM_ABORTED_BY_CALLBACK && curlMCode != CURLM_OUT_OF_MEMORY) {
                 std::terminate();
             }
-            closeError.errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+            error.errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
         }
         curlMultiHandle = nullptr;
     }
@@ -1339,7 +1339,7 @@ errors::Error FetchState::close() {
     selfVoidPtr.reset();
     responseReadPromise.reset();
     responseReadyPromise = {};
-    return closeError;
+    return error;
 }
 
 FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs) {
