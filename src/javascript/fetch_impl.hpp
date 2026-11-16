@@ -1,7 +1,7 @@
 #pragma once
 
 #include "errors/errors.hpp"
-#include "javascript.hpp"
+#include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
@@ -49,7 +49,7 @@ struct FetchRequest {
 struct FetchState {
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
     uint64_t fetchStateID = 0;
-    CURLM* curlMultiHandle = nullptr;
+    CURLM* curlMultiHandle = nullptr; // Borrowed while registered.
     CURL* ownedCurlEasyHandle = nullptr;
     errors::Error error = {};
     bool abandoned = false; // JavaScript code stopped referencing it before the fetchResponse was closed.
@@ -69,8 +69,8 @@ struct FetchState {
     std::deque<std::vector<uint8_t>> responseBuffer = {};
     std::size_t responseBufferSize = 0;
     bool responseRedirecting = false; // Currently processing a redirect response.
-    OwnedJSPromise responseReadyPromise = {};
-    std::optional<OwnedJSPromise> responseReadPromise = {};
+    owned::JSPromise responseReadyPromise = {};
+    std::optional<owned::JSPromise> responseReadPromise = {};
 
     FetchState() = default;
     ~FetchState();

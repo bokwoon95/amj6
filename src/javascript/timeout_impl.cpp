@@ -1,6 +1,7 @@
 #include "timeout_impl.hpp"
 
-#include "javascript.hpp"
+#include "owned/quickjs.hpp"
+#include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <quickjs.h>
@@ -22,6 +23,7 @@
 #include <vector>
 
 namespace amj::javascript {
+namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
 
@@ -97,7 +99,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (!JS_IsFunction(jsContext, argv[0])) {
             return JS_ThrowTypeError(jsContext, "timeoutSet: arg0: callback not a function");
         }
-        OwnedJSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
+        owned::JSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
 
         // Get delayMs number.
         if (!JS_IsNumber(argv[1])) {
@@ -129,21 +131,21 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         }
         const int32_t timerID = timeout.timerIDCounter;
 
-        // Finish allocations before initializing the libuv handle.
-        std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-        std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
-        timerData->timeout = &timeout;
-        timerData->timerID = timerID;
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
+        owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
+        status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
+        if (status != 0) {
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
+        }
+        uvTimerHandle.setInitialized();
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(
+            std::make_unique<TimerData>(TimerData{
+                .timeout = &timeout,
+                .timerID = timerID,
+            })
+        );
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
-        status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
-        if (status != 0) {
-            timeout.timerMap.erase(timerID);
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
-        }
-        uvTimerHandle->data = voidPtr.release();
         timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
@@ -164,7 +166,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 // Call the callback and discard the result.
                 const JSValue result = JS_Call(timeout->jsContext, timer.callback.get(), JS_UNDEFINED, 0, nullptr);
                 JS_FreeValue(timeout->jsContext, result);
-                timer.callback.reset(JS_UNDEFINED);
+                timer.callback.reset();
 
                 // Let the host report any JS exceptions and execute pending Promise jobs.
                 timeout->jsExecutePendingJobs(timeout->jsContext);
@@ -282,7 +284,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         }
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
-        OwnedJSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
+        owned::JSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -316,7 +318,7 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         // Create a new JS module.
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
             // Extract the modulePrivateValue from the jsContext.
-            const OwnedJSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
+            const owned::JSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
             if (JS_IsException(modulePrivateValue.get())) {
                 return -1;
             }

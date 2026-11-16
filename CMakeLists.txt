@@ -106,7 +106,6 @@ list(APPEND amj_libraries amj_void_ptr)
 add_library(amj_owned STATIC
     src/owned/quickjs.cpp
     src/owned/uv.cpp
-    src/owned/curl.cpp
 )
 list(APPEND amj_libraries amj_owned)
 target_link_libraries(amj_owned PUBLIC amj_void_ptr qjs CURL::libcurl $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)

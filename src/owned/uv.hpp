@@ -19,8 +19,8 @@ namespace void_ptr = amj::void_ptr;
 //
 // Call setInitialized() immediately after successful libuv initialization,
 // before anything can throw. When adopting an already initialized handle,
-// likewise call setInitialized() immediately after construction or reset.
-// Construction and reset always set initialized to false; release clears it.
+// likewise call setInitialized() immediately after construction.
+// Construction, reset, and release set initialized to false.
 // Moves transfer both pointer and state; handle storage is never relocated.
 //
 // For initialized handles, reset/destruction schedules uv_close. The borrowed
@@ -91,10 +91,9 @@ class UvHandle {
         initialized = true;
     }
 
-    // The replacement must not be the currently owned pointer, unless null.
-    // Adopts the replacement as uninitialized, even if it was initialized before.
-    void reset(std::unique_ptr<T> uvHandle) noexcept {
-        T* previousUvHandle = std::exchange(ownedUvHandle, uvHandle.release());
+    // Releases the handle and clears initialization state.
+    void reset() noexcept {
+        T* previousUvHandle = std::exchange(ownedUvHandle, nullptr);
         const bool previousInitialized = std::exchange(initialized, false);
         if (previousUvHandle == nullptr) {
             return;
