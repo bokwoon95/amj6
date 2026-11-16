@@ -1,6 +1,7 @@
 #include "timeout_impl.hpp"
 
 #include "owned/quickjs.hpp"
+#include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
 
 #include <quickjs.h>
@@ -130,21 +131,21 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         }
         const int32_t timerID = timeout.timerIDCounter;
 
-        // Finish allocations before initializing the libuv handle.
-        std::unique_ptr<uv_timer_t> uvTimerHandle = std::make_unique<uv_timer_t>();
-        std::unique_ptr<TimerData> timerData = std::make_unique<TimerData>();
-        timerData->timeout = &timeout;
-        timerData->timerID = timerID;
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr = std::make_unique<void_ptr::VoidPtr>(std::move(timerData));
+        owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
+        status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
+        if (status != 0) {
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
+        }
+        uvTimerHandle.setInitialized();
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(
+            std::make_unique<TimerData>(TimerData{
+                .timeout = &timeout,
+                .timerID = timerID,
+            })
+        );
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
-        status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
-        if (status != 0) {
-            timeout.timerMap.erase(timerID);
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
-        }
-        uvTimerHandle->data = voidPtr.release();
         timer.ownedUvTimerHandle = uvTimerHandle.release();
         // Libuv caches loop time. Refresh it so delays start at registration,
         // even if the host has been executing JS for a long time this turn.
