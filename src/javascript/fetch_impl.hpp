@@ -49,7 +49,7 @@ struct FetchRequest {
 struct FetchState {
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
     uint64_t fetchStateID = 0;
-    CURLM* curlMultiHandle = nullptr;
+    CURLM* curlMultiHandle = nullptr; // Borrowed while registered.
     CURL* ownedCurlEasyHandle = nullptr;
     errors::Error error = {};
     bool abandoned = false; // JavaScript code stopped referencing it before the fetchResponse was closed.
