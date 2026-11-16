@@ -1,22 +1,24 @@
 #pragma once
 
 #include <curl/curl.h>
-
 #include <curl/easy.h>
 #include <curl/multi.h>
+
 #include <exception>
 #include <utility>
 
 namespace amj::owned {
 
-// Owns an easy handle, including its registration with a borrowed multi handle.
-// Adopt only unregistered handles. Use these registration methods exclusively;
-// direct curl_multi_add_handle/remove_handle calls would invalidate tracking.
-// The multi handle must outlive registration. Callback data, request headers,
-// and borrowed request-body storage must remain valid through reset/destruction.
+// Owns an easy handle and removes any tracked registration before cleanup.
+// Adopt only unregistered handles. After successful raw curl add/remove calls,
+// immediately update curlMultiHandle before anything can throw. The borrowed
+// multi handle must outlive registration. Callback data, request headers, and
+// borrowed request-body storage must remain valid through reset/destruction.
 // Operations and destruction require the handle's owner thread.
 class CurlEasyHandle {
   public:
+    CURLM* curlMultiHandle = nullptr; // Borrowed; nonnull only while successfully registered.
+
     CurlEasyHandle() = default;
 
     explicit CurlEasyHandle(CURL* curlEasyHandle) noexcept {
@@ -24,7 +26,14 @@ class CurlEasyHandle {
     }
 
     ~CurlEasyHandle() {
-        reset();
+        if (curlMultiHandle != nullptr) {
+            if (curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle) != CURLM_OK) {
+                std::terminate(); // Never destroy callback storage still registered with curl.
+            }
+        }
+        if (ownedCurlEasyHandle != nullptr) {
+            curl_easy_cleanup(ownedCurlEasyHandle);
+        }
     }
 
     CurlEasyHandle(const CurlEasyHandle&) = delete;
@@ -37,7 +46,14 @@ class CurlEasyHandle {
 
     CurlEasyHandle& operator=(CurlEasyHandle&& curlEasyHandle) noexcept {
         if (this != &curlEasyHandle) {
-            reset();
+            if (curlMultiHandle != nullptr) {
+                if (curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle) != CURLM_OK) {
+                    std::terminate(); // Never destroy callback storage still registered with curl.
+                }
+            }
+            if (ownedCurlEasyHandle != nullptr) {
+                curl_easy_cleanup(ownedCurlEasyHandle);
+            }
             this->ownedCurlEasyHandle = std::exchange(curlEasyHandle.ownedCurlEasyHandle, nullptr);
             this->curlMultiHandle = std::exchange(curlEasyHandle.curlMultiHandle, nullptr);
         }
@@ -48,42 +64,29 @@ class CurlEasyHandle {
         return ownedCurlEasyHandle;
     }
 
-    CURLMcode addToMulti(CURLM* curlMultiHandle) noexcept {
-        if (this->curlMultiHandle != nullptr) {
-            return CURLM_ADDED_ALREADY;
-        }
-        const CURLMcode curlMCode = curl_multi_add_handle(curlMultiHandle, ownedCurlEasyHandle);
-        if (curlMCode == CURLM_OK) {
-            this->curlMultiHandle = curlMultiHandle;
-        }
-        return curlMCode;
-    }
-
-    CURLMcode removeFromMulti() noexcept {
-        if (curlMultiHandle == nullptr) {
-            return CURLM_OK;
-        }
-        const CURLMcode curlMCode = curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle);
-        if (curlMCode == CURLM_OK) {
-            curlMultiHandle = nullptr;
-        }
-        return curlMCode;
-    }
-
+    // Unregisters and cleans up the handle, clearing both pointers.
     void reset() noexcept {
-        if (removeFromMulti() != CURLM_OK) {
-            // Never destroy callback storage while still registered with curl.
-            std::terminate();
+        if (curlMultiHandle != nullptr) {
+            if (curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle) != CURLM_OK) {
+                std::terminate(); // Never destroy callback storage still registered with curl.
+            }
+            curlMultiHandle = nullptr;
         }
         if (ownedCurlEasyHandle != nullptr) {
             curl_easy_cleanup(ownedCurlEasyHandle);
-            ownedCurlEasyHandle = nullptr;
         }
+        ownedCurlEasyHandle = nullptr;
+    }
+
+    // Transfers cleanup and unregistration responsibility. The recipient must
+    // already know the registered multi handle; this clears tracking only.
+    CURL* release() noexcept {
+        curlMultiHandle = nullptr;
+        return std::exchange(ownedCurlEasyHandle, nullptr);
     }
 
   private:
     CURL* ownedCurlEasyHandle = nullptr;
-    CURLM* curlMultiHandle = nullptr; // Borrowed while registered.
 };
 
 // Owns a multi handle, not the easy handles registered with it.
@@ -100,20 +103,28 @@ class CurlMultiHandle {
     }
 
     ~CurlMultiHandle() {
-        reset();
+        if (ownedCurlMultiHandle != nullptr) {
+            if (curl_multi_cleanup(ownedCurlMultiHandle) != CURLM_OK) {
+                std::terminate();
+            }
+        }
     }
 
     CurlMultiHandle(const CurlMultiHandle&) = delete;
     CurlMultiHandle& operator=(const CurlMultiHandle&) = delete;
 
     CurlMultiHandle(CurlMultiHandle&& curlMultiHandle) noexcept {
-        this->ownedCurlMultiHandle = curlMultiHandle.release();
+        this->ownedCurlMultiHandle = std::exchange(curlMultiHandle.ownedCurlMultiHandle, nullptr);
     }
 
     CurlMultiHandle& operator=(CurlMultiHandle&& curlMultiHandle) noexcept {
         if (this != &curlMultiHandle) {
-            reset();
-            this->ownedCurlMultiHandle = curlMultiHandle.release();
+            if (ownedCurlMultiHandle != nullptr) {
+                if (curl_multi_cleanup(ownedCurlMultiHandle) != CURLM_OK) {
+                    std::terminate();
+                }
+            }
+            this->ownedCurlMultiHandle = std::exchange(curlMultiHandle.ownedCurlMultiHandle, nullptr);
         }
         return *this;
     }
@@ -122,12 +133,12 @@ class CurlMultiHandle {
         return ownedCurlMultiHandle;
     }
 
+    // Cleans up and clears the handle. Remove all easy handles first.
     void reset() noexcept {
-        if (ownedCurlMultiHandle == nullptr) {
-            return;
-        }
-        if (curl_multi_cleanup(ownedCurlMultiHandle) != CURLM_OK) {
-            std::terminate();
+        if (ownedCurlMultiHandle != nullptr) {
+            if (curl_multi_cleanup(ownedCurlMultiHandle) != CURLM_OK) {
+                std::terminate();
+            }
         }
         ownedCurlMultiHandle = nullptr;
     }

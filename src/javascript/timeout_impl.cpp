@@ -166,7 +166,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 // Call the callback and discard the result.
                 const JSValue result = JS_Call(timeout->jsContext, timer.callback.get(), JS_UNDEFINED, 0, nullptr);
                 JS_FreeValue(timeout->jsContext, result);
-                timer.callback.reset(timeout->jsContext, JS_UNDEFINED);
+                timer.callback.reset();
 
                 // Let the host report any JS exceptions and execute pending Promise jobs.
                 timeout->jsExecutePendingJobs(timeout->jsContext);

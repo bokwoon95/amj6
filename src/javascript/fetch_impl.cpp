@@ -1438,8 +1438,8 @@ void FetchClient::shutdown() {
     }
     this->selfVoidPtr.reset();
     uvPollHandleMap.clear();
-    uvTimerHandle.reset(nullptr);
-    uvAsyncHandle.reset(nullptr);
+    uvTimerHandle.reset();
+    uvAsyncHandle.reset();
 }
 
 JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient) {

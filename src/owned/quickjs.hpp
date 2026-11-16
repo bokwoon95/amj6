@@ -54,16 +54,13 @@ class JSValue {
         return jsValue;
     }
 
-    // Adopts a reference and its context. Does not duplicate the reference.
-    void reset(JSContext* jsContext, ::JSValue jsValue) {
-        if (jsContext == nullptr) {
-            throw std::invalid_argument("JSValue requires a context");
+    // Frees the reference and clears the borrowed context.
+    void reset() noexcept {
+        if (jsContext != nullptr) {
+            JS_FreeValue(jsContext, jsValue);
         }
-        if (this->jsContext != nullptr) {
-            JS_FreeValue(this->jsContext, this->jsValue);
-        }
-        this->jsContext = jsContext;
-        this->jsValue = jsValue;
+        jsContext = nullptr;
+        jsValue = JS_UNDEFINED;
     }
 
     ::JSValue release() noexcept {
