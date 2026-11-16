@@ -1318,6 +1318,38 @@ FetchState::~FetchState() {
     curl_slist_free_all(ownedCurlRequestHeaders);
 }
 
+errors::Error FetchState::close() {
+    errors::Error closeError;
+    if (curlMultiHandle != nullptr) {
+        const CURLMcode curlMCode = curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle);
+        // Verified against libcurl 8.22.0, lib/multi.c and lib/multi_ev.c:
+        // timer updates and wakeup socket assessment run after detachment.
+        // They can report callback failure or allocation failure. Entry/ownership
+        // errors and internal failures are fatal, not incomplete cleanup results.
+        switch (curlMCode) {
+            case CURLM_OK:
+                break;
+            case CURLM_ABORTED_BY_CALLBACK:
+            case CURLM_OUT_OF_MEMORY:
+                closeError.errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+                break;
+            default:
+                std::terminate();
+        }
+        curlMultiHandle = nullptr;
+    }
+    if (ownedCurlEasyHandle != nullptr) {
+        curl_easy_cleanup(ownedCurlEasyHandle);
+        ownedCurlEasyHandle = nullptr;
+    }
+    curl_slist_free_all(ownedCurlRequestHeaders);
+    ownedCurlRequestHeaders = nullptr;
+    selfVoidPtr.reset();
+    responseReadPromise.reset();
+    responseReadyPromise = {};
+    return closeError;
+}
+
 FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
         throw std::invalid_argument("FetchClient requires a context, initialized loop, and completion hook");
@@ -1441,6 +1473,52 @@ void FetchClient::shutdown() {
     uvPollHandleMap.clear();
     uvTimerHandle.reset();
     uvAsyncHandle.reset();
+}
+
+errors::Error FetchClient::close() {
+    if (this_thread::get_id() != ownerThreadID) {
+        std::terminate();
+    }
+    if (shuttingDown) {
+        return {};
+    }
+    shuttingDown = true;
+    const bool errorPendingBeforeClose = static_cast<bool>(*pendingError);
+    errors::Error closeError;
+    for (std::pair<CURL* const, FetchState>& entry : fetchStateMap) {
+        const errors::Error stateCloseError = entry.second.close();
+        if (!closeError) {
+            // Prefer the callback's original error over ABORTED_BY_CALLBACK.
+            // A pre-existing host error is not a new close error and stays intact.
+            if (!errorPendingBeforeClose && *pendingError) {
+                closeError.errorCode = pendingError->errorCode;
+                closeError.exceptionPtr = pendingError->exceptionPtr;
+            } else {
+                closeError.errorCode = stateCloseError.errorCode;
+                closeError.exceptionPtr = stateCloseError.exceptionPtr;
+            }
+        }
+    }
+    fetchStateMap.clear();
+    if (ownedCurlMultiHandle != nullptr) {
+        // In libcurl 8.22.0, cleanup's non-OK returns are API contract/internal
+        // failures. Operational callback errors can instead enter pendingError.
+        const CURLMcode curlMCode = curl_multi_cleanup(ownedCurlMultiHandle);
+        if (curlMCode != CURLM_OK) {
+            std::terminate();
+        }
+        ownedCurlMultiHandle = nullptr;
+    }
+    if (!closeError && !errorPendingBeforeClose && *pendingError) {
+        closeError.errorCode = pendingError->errorCode;
+        closeError.exceptionPtr = pendingError->exceptionPtr;
+    }
+    // Multi cleanup can invoke socket callbacks; release their dependencies last.
+    selfVoidPtr.reset();
+    uvPollHandleMap.clear();
+    uvTimerHandle.reset();
+    uvAsyncHandle.reset();
+    return closeError;
 }
 
 JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient) {
