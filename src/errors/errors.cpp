@@ -3,6 +3,7 @@
 #include <cpptrace/basic.hpp>
 
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -56,6 +57,14 @@ std::string Error::toString() const {
         }
         if (!current->errorMessage.empty()) {
             text += current->errorMessage;
+        } else if (current->exceptionPtr != nullptr) {
+            try {
+                std::rethrow_exception(current->exceptionPtr);
+            } catch (const std::exception& exception) {
+                text += exception.what();
+            } catch (...) {
+                text += "Unknown non-standard exception";
+            }
         } else {
             text += current->errorCode.message();
         }

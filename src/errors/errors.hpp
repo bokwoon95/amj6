@@ -2,6 +2,7 @@
 
 #include <any>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -17,18 +18,23 @@ enum class ErrorCode : std::uint8_t {
 
 [[nodiscard]] std::error_code make_error_code(ErrorCode errorCode);
 
-// A zero errorCode represents success; every failure must have a nonzero code.
+// Success means both errorCode and exceptionPtr are empty.
 // All modules share this type. Module-specific enums use their own error
 // categories; detail may hold any copyable module-specific error struct.
 // Treat published errors and their cause chains as immutable and acyclic.
 struct Error {
     std::error_code errorCode = {};
+    std::exception_ptr exceptionPtr = nullptr;
     std::string errorMessage = "";
     std::any detail = {};
     std::shared_ptr<const Error> cause = nullptr;
 
     // (file, line, description); empty unless explicitly captured.
     std::vector<std::tuple<std::string, std::uint_least32_t, std::string>> stacktrace = {};
+
+    explicit operator bool() const noexcept {
+        return errorCode.value() != 0 || exceptionPtr != nullptr;
+    }
 
     // Searches this error and its cause chain for an exact code match.
     [[nodiscard]] bool is(std::error_code targetErrorCode) const;

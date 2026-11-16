@@ -59,8 +59,11 @@ Drain queued messages on wakeup: libuv notifications can coalesce. Keep the
 command receiver referenced while accepting commands so an idle backend or
 persistent session waits for new commands instead of exiting.
 
-The host repeatedly calls `uv_run(..., UV_RUN_ONCE)`, checking `pendingError`
-before and after each call. Modules record fatal errors and skip application
+The host shares an `errors::Error` as `pendingError` and checks its bool conversion
+before and after each `uv_run(..., UV_RUN_ONCE)` call. Both a zero error code and
+an empty exception pointer mean no error. Callback error reporting assigns only
+`errorCode` or `exceptionPtr`, preserving the first error without allocating or
+formatting messages. Modules record fatal errors and skip application
 work when an error is pending; they do not call `uv_stop()`. Other ready
 callbacks can still run within the same iteration, so their entry checks remain
 necessary. The host owns error handling and coordinated shutdown. Ordinary

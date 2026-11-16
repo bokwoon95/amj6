@@ -5,34 +5,16 @@
 #include <quickjs.h>
 
 #include <cstddef>
-#include <exception>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace amj::javascript {
 namespace owned = amj::owned;
-
-// A null pointer, zero error code, or null exception pointer means no error.
-inline bool hasError(const std::variant<std::error_code, std::exception_ptr>* pendingError) noexcept {
-    if (pendingError == nullptr) {
-        return false;
-    }
-    const std::error_code* errorCode = std::get_if<std::error_code>(pendingError);
-    if (errorCode != nullptr) {
-        return static_cast<bool>(*errorCode);
-    }
-    const std::exception_ptr* exception = std::get_if<std::exception_ptr>(pendingError);
-    if (exception != nullptr) {
-        return *exception != nullptr;
-    }
-    return false;
-}
 
 owned::JSValue jsNewError(JSContext* jsContext, std::string name, std::string message);
 
