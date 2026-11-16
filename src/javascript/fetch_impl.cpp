@@ -1322,19 +1322,11 @@ errors::Error FetchState::close() {
     errors::Error closeError;
     if (curlMultiHandle != nullptr) {
         const CURLMcode curlMCode = curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle);
-        // Verified against libcurl 8.22.0, lib/multi.c and lib/multi_ev.c:
-        // timer updates and wakeup socket assessment run after detachment.
-        // They can report callback failure or allocation failure. Entry/ownership
-        // errors and internal failures are fatal, not incomplete cleanup results.
-        switch (curlMCode) {
-            case CURLM_OK:
-                break;
-            case CURLM_ABORTED_BY_CALLBACK:
-            case CURLM_OUT_OF_MEMORY:
-                closeError.errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
-                break;
-            default:
+        if (curlMCode != CURLM_OK) {
+            if (curlMCode != CURLM_ABORTED_BY_CALLBACK && curlMCode != CURLM_OUT_OF_MEMORY) {
                 std::terminate();
+            }
+            closeError.errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
         }
         curlMultiHandle = nullptr;
     }
