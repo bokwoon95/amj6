@@ -1488,8 +1488,6 @@ errors::Error FetchClient::close() {
     }
     fetchStateMap.clear();
     if (ownedCurlMultiHandle != nullptr) {
-        // In libcurl 8.22.0, cleanup's non-OK returns are API contract/internal
-        // failures. Operational callback errors can instead enter pendingError.
         const CURLMcode curlMCode = curl_multi_cleanup(ownedCurlMultiHandle);
         if (curlMCode != CURLM_OK) {
             std::terminate();
