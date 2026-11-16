@@ -1477,13 +1477,12 @@ errors::Error FetchClient::close() {
     shuttingDown = true;
     errors::Error error = *pendingError;
     for (std::pair<CURL* const, FetchState>& entry : fetchStateMap) {
-        const errors::Error stateCloseError = entry.second.close();
+        const errors::Error closeError = entry.second.close();
         if (!error.hasValue()) {
-            // Prefer the callback's original error over ABORTED_BY_CALLBACK.
             if (pendingError->hasValue()) {
                 error = *pendingError;
-            } else if (stateCloseError.hasValue()) {
-                error = stateCloseError;
+            } else if (closeError.hasValue()) {
+                error = closeError;
             }
         }
     }
