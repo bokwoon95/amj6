@@ -31,8 +31,9 @@ TEST(Context, ExpiredDeadlineTimesOut) {
     }
     const errors::Error& error = optionalError.value();
     EXPECT_EQ(error.errorCode, std::make_error_code(std::errc::timed_out));
-    EXPECT_EQ(error.errorMessage, "context deadline exceeded");
-    EXPECT_TRUE(error.stacktrace.empty());
+    ASSERT_NE(error.errorMessage, nullptr);
+    EXPECT_EQ(*error.errorMessage, "context deadline exceeded");
+    EXPECT_EQ(error.stacktrace, nullptr);
 }
 
 TEST(Context, CancellationTakesPrecedenceOverTimeout) {
@@ -49,8 +50,9 @@ TEST(Context, CancellationTakesPrecedenceOverTimeout) {
     }
     const errors::Error& error = optionalError.value();
     EXPECT_EQ(error.errorCode, std::make_error_code(std::errc::operation_canceled));
-    EXPECT_EQ(error.errorMessage, "context canceled");
-    EXPECT_TRUE(error.stacktrace.empty());
+    ASSERT_NE(error.errorMessage, nullptr);
+    EXPECT_EQ(*error.errorMessage, "context canceled");
+    EXPECT_EQ(error.stacktrace, nullptr);
 }
 
 } // namespace

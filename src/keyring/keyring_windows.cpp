@@ -29,6 +29,7 @@
 #include "errors/errors.hpp"
 
 #include <algorithm>
+#include <any>
 #include <array>
 #include <cstddef>
 #include <expected>
@@ -81,13 +82,13 @@ errors::Error makeError(DWORD code) {
     if (code == ERROR_NOT_FOUND) {
         error.errorCode = ErrorCode::NotFound;
     }
-    error.detail = static_cast<int>(code);
-    error.errorMessage = "Windows error " + std::to_string(code);
+    error.detail = std::make_shared<const std::any>(static_cast<int>(code));
+    error.errorMessage = std::make_shared<const std::string>("Windows error " + std::to_string(code));
     // System text uses the active code page; the numeric code is always retained.
     std::array<char, 1024> buffer = {};
     const DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, buffer.data(), static_cast<DWORD>(buffer.size()), nullptr);
     if (length != 0) {
-        error.errorMessage.assign(buffer.data(), length);
+        error.errorMessage = std::make_shared<const std::string>(buffer.data(), length);
     }
     return error;
 }
@@ -118,7 +119,7 @@ std::expected<std::wstring, errors::Error> makeTargetName(const std::string& ser
     }
     if (targetResult.value().size() > CRED_MAX_GENERIC_TARGET_NAME_LENGTH) {
         errors::Error error = makeError(ERROR_INVALID_PARAMETER);
-        error.errorMessage = "Credential target name too long";
+        error.errorMessage = std::make_shared<const std::string>("Credential target name too long");
         return std::unexpected(error);
     }
     return targetResult;
@@ -139,7 +140,7 @@ errors::Error save(const std::string& service, const std::string& user, const st
     if (value.size() > maxEncryptedSize) {
         return errors::Error{
             .errorCode = ErrorCode::SecretTooLong,
-            .errorMessage = "Secret exceeds the 18,944-byte encrypted credential capacity",
+            .errorMessage = std::make_shared<const std::string>("Secret exceeds the 18,944-byte encrypted credential capacity"),
         };
     }
 
@@ -167,7 +168,7 @@ errors::Error save(const std::string& service, const std::string& user, const st
         if (output.blob.cbData > maxEncryptedSize) {
             return errors::Error{
                 .errorCode = ErrorCode::SecretTooLong,
-                .errorMessage = "DPAPI-encrypted secret exceeds 18,944 bytes",
+                .errorMessage = std::make_shared<const std::string>("DPAPI-encrypted secret exceeds 18,944 bytes"),
             };
         }
         if (output.blob.pbData == nullptr || output.blob.cbData <= CRED_MAX_CREDENTIAL_BLOB_SIZE) {

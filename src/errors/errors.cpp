@@ -9,6 +9,7 @@
 #include <system_error>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace amj::errors {
 namespace {
@@ -55,8 +56,8 @@ std::string Error::toString() const {
         if (!text.empty()) {
             text += ": ";
         }
-        if (!current->errorMessage.empty()) {
-            text += current->errorMessage;
+        if (current->errorMessage != nullptr && !current->errorMessage->empty()) {
+            text += *current->errorMessage;
         } else if (current->exceptionPtr != nullptr) {
             try {
                 std::rethrow_exception(current->exceptionPtr);
@@ -70,7 +71,10 @@ std::string Error::toString() const {
         }
     }
     for (const Error* current = this; current != nullptr; current = current->cause.get()) {
-        for (const std::tuple<std::string, std::uint_least32_t, std::string>& frame : current->stacktrace) {
+        if (current->stacktrace == nullptr) {
+            continue;
+        }
+        for (const std::tuple<std::string, std::uint_least32_t, std::string>& frame : *current->stacktrace) {
             const std::string& file = std::get<0>(frame);
             const std::uint_least32_t line = std::get<1>(frame);
             const std::string& description = std::get<2>(frame);
@@ -86,23 +90,25 @@ std::string Error::toString() const {
 Error message(std::string errorMessage) {
     return Error{
         .errorCode = ErrorCode::GenericError,
-        .errorMessage = std::move(errorMessage),
+        .errorMessage = std::make_shared<const std::string>(std::move(errorMessage)),
     };
 }
 
 Error withStackTrace(Error error) {
     for (const Error* current = &error; current != nullptr; current = current->cause.get()) {
-        if (!current->stacktrace.empty()) {
+        if (current->stacktrace != nullptr && !current->stacktrace->empty()) {
             return error;
         }
     }
     const cpptrace::stacktrace stacktrace = cpptrace::generate_trace(1, 30);
+    const std::shared_ptr<std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>> stacktraceFrames = std::make_shared<std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>();
     for (const cpptrace::stacktrace_frame& frame : stacktrace.frames) {
-        if (error.stacktrace.size() >= 30) {
+        if (stacktraceFrames->size() >= 30) {
             break;
         }
-        error.stacktrace.push_back({frame.filename, frame.line.value_or(0), frame.symbol});
+        stacktraceFrames->push_back({frame.filename, frame.line.value_or(0), frame.symbol});
     }
+    error.stacktrace = stacktraceFrames;
     return error;
 }
 

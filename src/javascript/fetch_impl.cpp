@@ -267,19 +267,25 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
         }
         FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
         fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
-        if (curlMsg->data.result != CURLE_OK) {
+        if (curlMsg->data.result != CURLE_OK || !fetchState.responseHeadersComplete) {
             fetchState.error.errorCode = errors::ErrorCode::GenericError;
-            if (!fetchState.error.errorMessage.empty()) {
-                fetchState.error.errorMessage.append(": ");
+            std::string errorMessage;
+            if (fetchState.error.errorMessage != nullptr) {
+                errorMessage = *fetchState.error.errorMessage;
             }
-            fetchState.error.errorMessage.append(curl_easy_strerror(curlMsg->data.result));
-        }
-        if (!fetchState.responseHeadersComplete) {
-            fetchState.error.errorCode = errors::ErrorCode::GenericError;
-            if (!fetchState.error.errorMessage.empty()) {
-                fetchState.error.errorMessage.append(": ");
+            if (curlMsg->data.result != CURLE_OK) {
+                if (!errorMessage.empty()) {
+                    errorMessage.append(": ");
+                }
+                errorMessage.append(curl_easy_strerror(curlMsg->data.result));
             }
-            fetchState.error.errorMessage.append("HTTP response ended without final headers");
+            if (!fetchState.responseHeadersComplete) {
+                if (!errorMessage.empty()) {
+                    errorMessage.append(": ");
+                }
+                errorMessage.append("HTTP response ended without final headers");
+            }
+            fetchState.error.errorMessage = std::make_shared<const std::string>(std::move(errorMessage));
         }
     }
 
@@ -558,7 +564,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
                 // The transfer completed without receiving any response
                 // headers. Reject responseReadyPromise.
-                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
+                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage : std::string());
                 const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
@@ -590,7 +596,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // Reject the responseReadPromise if the transfer encountered an error.
         if (fetchState.error.hasValue()) {
-            owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage);
+            owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage : std::string());
             const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);

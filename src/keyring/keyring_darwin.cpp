@@ -30,9 +30,11 @@
 
 #include "errors/errors.hpp"
 
+#include <any>
 #include <cstddef>
 #include <expected>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -69,14 +71,14 @@ struct ScopedCFRef {
 
 errors::Error makeError(OSStatus status) {
     errors::Error error;
-    error.detail = static_cast<int>(status);
+    error.detail = std::make_shared<const std::any>(static_cast<int>(status));
     error.errorCode = errors::ErrorCode::GenericError;
     if (status == errSecItemNotFound) {
         error.errorCode = ErrorCode::NotFound;
     } else if (status == errSecUserCanceled || status == errSecAuthFailed || status == errSecInteractionRequired) {
         error.errorCode = ErrorCode::AccessDenied;
     }
-    error.errorMessage = "Security error " + std::to_string(status);
+    error.errorMessage = std::make_shared<const std::string>("Security error " + std::to_string(status));
     const ScopedCFRef<CFStringRef> message(SecCopyErrorMessageString(status, nullptr));
     if (message.value == nullptr) {
         return error;
@@ -88,7 +90,7 @@ errors::Error makeError(OSStatus status) {
     }
     std::vector<char> buffer(static_cast<std::size_t>(capacity + 1), '\0');
     if (CFStringGetCString(message.value, buffer.data(), capacity + 1, kCFStringEncodingUTF8) != 0) {
-        error.errorMessage = buffer.data();
+        error.errorMessage = std::make_shared<const std::string>(buffer.data());
     }
     return error;
 }

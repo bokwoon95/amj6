@@ -21,16 +21,17 @@ enum class ErrorCode : std::uint8_t {
 // Success means both errorCode and exceptionPtr are empty.
 // All modules share this type. Module-specific enums use their own error
 // categories; detail may hold any copyable module-specific error struct.
+// Default construction and copying do not allocate. Creating optional payloads may allocate.
 // Treat published errors and their cause chains as immutable and acyclic.
 struct Error {
     std::error_code errorCode = {};
     std::exception_ptr exceptionPtr = nullptr;
-    std::string errorMessage = "";
-    std::any detail = {};
+    std::shared_ptr<const std::string> errorMessage = nullptr;
+    std::shared_ptr<const std::any> detail = nullptr;
     std::shared_ptr<const Error> cause = nullptr;
 
-    // (file, line, description); empty unless explicitly captured.
-    std::vector<std::tuple<std::string, std::uint_least32_t, std::string>> stacktrace = {};
+    // (file, line, description); null unless explicitly captured.
+    std::shared_ptr<const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>> stacktrace = nullptr;
 
     [[nodiscard]] bool hasValue() const noexcept {
         return errorCode.value() != 0 || exceptionPtr != nullptr;

@@ -31,6 +31,7 @@
 
 #include <libsecret/secret.h>
 
+#include <any>
 #include <expected>
 #include <memory>
 #include <string>
@@ -56,13 +57,13 @@ errors::Error makeError(GError* error) {
     if (error == nullptr) {
         return errors::Error{
             .errorCode = ErrorCode::NotFound,
-            .errorMessage = "Secret not found.",
+            .errorMessage = std::make_shared<const std::string>("Secret not found."),
         };
     }
     errors::Error result = {
         .errorCode = errors::ErrorCode::GenericError,
-        .errorMessage = error->message,
-        .detail = error->code,
+        .errorMessage = std::make_shared<const std::string>(error->message),
+        .detail = std::make_shared<const std::any>(error->code),
     };
     g_error_free(error);
     return result;
@@ -117,7 +118,7 @@ std::expected<bool, errors::Error> isAvailable() {
         }
         errors::Error result = {
             .errorCode = ErrorCode::Unavailable,
-            .errorMessage = "Secret Service unavailable",
+            .errorMessage = std::make_shared<const std::string>("Secret Service unavailable"),
         };
         if (error != nullptr) {
             result = makeError(error);
