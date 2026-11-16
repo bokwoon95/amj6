@@ -32,7 +32,7 @@ struct Error {
     // (file, line, description); empty unless explicitly captured.
     std::vector<std::tuple<std::string, std::uint_least32_t, std::string>> stacktrace = {};
 
-    explicit operator bool() const noexcept {
+    [[nodiscard]] bool hasValue() const noexcept {
         return errorCode.value() != 0 || exceptionPtr != nullptr;
     }
 

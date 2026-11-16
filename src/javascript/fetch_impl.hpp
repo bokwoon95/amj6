@@ -87,7 +87,7 @@ struct FetchState {
 // Host-owned, one per context/loop pair, at a stable address. Borrows the context
 // and initialized loop. All use/destruction requires their owner thread.
 // Borrows the host's pendingError shared by modules on the same loop.
-// Preserve the first error; use its bool conversion to check its value. After uv_run or
+// Preserve the first error; use hasValue() to check its value. After uv_run or
 // direct JS execution returns, the host must inspect it before resuming work.
 // Pending errors suspend fetch work; shut down this client before clearing the
 // error with errors::Error(). Promise rejection/recreation is a host decision.

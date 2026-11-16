@@ -12,7 +12,7 @@ namespace {
 
 TEST(Errors, DefaultHasNoCode) {
     const Error error;
-    EXPECT_TRUE(!error.errorCode);
+    EXPECT_FALSE(error.hasValue());
     EXPECT_TRUE(error.stacktrace.empty());
 }
 
@@ -27,7 +27,7 @@ TEST(Errors, MatchesCauseWithoutOuterCode) {
         .errorMessage = "operation failed",
         .cause = std::make_shared<const Error>(causeError),
     };
-    EXPECT_FALSE(static_cast<bool>(error.errorCode));
+    EXPECT_FALSE(error.hasValue());
     EXPECT_TRUE(error.is(causeErrorCode));
     EXPECT_FALSE(error.is(std::make_error_code(std::errc::timed_out)));
     const Error* asError = error.as(causeErrorCode);

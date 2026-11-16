@@ -59,7 +59,7 @@ Drain queued messages on wakeup: libuv notifications can coalesce. Keep the
 command receiver referenced while accepting commands so an idle backend or
 persistent session waits for new commands instead of exiting.
 
-The host shares an `errors::Error` as `pendingError` and checks its bool conversion
+The host shares an `errors::Error` as `pendingError` and checks `hasValue()`
 before and after each `uv_run(..., UV_RUN_ONCE)` call. Both a zero error code and
 an empty exception pointer mean no error. Callback error reporting assigns only
 `errorCode` or `exceptionPtr`, preserving the first error without allocating or
