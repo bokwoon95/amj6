@@ -66,7 +66,7 @@ an empty exception pointer mean no error. Callback error reporting assigns only
 formatting messages. Modules record fatal errors and skip application
 work when an error is pending; they do not call `uv_stop()`. Other ready
 callbacks can still run within the same iteration, so their entry checks remain
-necessary. The host owns error handling and coordinated shutdown. Ordinary
+necessary. The host owns error handling and coordinated teardown. Ordinary
 operation failures reject their own Promises rather than failing the runtime.
 Completing a tool invocation does not end a persistent session.
 
@@ -92,40 +92,41 @@ arbitrary cancellation thread.
 
 ## Ownership decision
 
-Use **host-owned native objects, borrowed module bindings, and explicit shutdown**.
+Use **host-owned native objects, borrowed module bindings, and explicit cleanup**.
 Pass each module its own dependency, not an unrestricted pointer to the entire
 backend host. A module's JS carrier must not delete a
 host-owned object.
 
 Host-owned references to JS callbacks/Promise functions are external retained
-references. Release them explicitly during shutdown. Do not keep a JS-owned
+references. Release them explicitly during cleanup. Do not keep a JS-owned
 carrier's cycle-marking arrangement after changing ownership: for a carrier that
 only borrows the host-owned object, use `.gc_mark = nullptr`.
 
-QuickJS has no general “shut down all modules” operation. The host calls native
-shutdown methods itself. Registering a borrowed dependency does not extend its
+QuickJS has no general module-cleanup operation. The host calls native cleanup
+methods itself. Registering a borrowed dependency does not extend its
 lifetime; keep the native object alive through JS finalization.
 
 Console, timeout, crypto, and fetch use borrowed bindings. The console sink has
-no asynchronous work to shut down; keep it alive until JS teardown finishes.
+no asynchronous work to close; keep it alive until JS teardown finishes.
 
-## Shutdown contract
+## Cleanup contract
 
-This is the shutdown contract for the host-owned implementation. All steps run
+This is the cleanup contract for the host-owned implementation. All steps run
 on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
 
 1. **Stop executing application JavaScript.** Stop accepting scripts/commands
    that run JS. Finish the current callback before beginning teardown. Do not
    subsequently use `JS_Eval()`, `JS_Call()`, or `JS_ExecutePendingJob()` to run
    application code. Native completion hooks must stop delivering JS too.
-2. **Call native shutdown methods while QuickJS is alive.** For example,
+2. **Call native cleanup methods while QuickJS is alive.** For example,
    `Timeout::shutdown()` closes its `uv_timer_t` handles and releases timer
    callbacks. `Crypto::shutdown()` releases JS callbacks and detaches worker
    jobs; already-running hashing may continue without accessing JS.
-   `FetchClient::shutdown()` cancels curl transfers, releases retained JS values,
+   `FetchClient::close()` cancels curl transfers, releases retained JS values,
    and starts closing its libuv socket watchers, curl deadline timer, and delivery
-   `uv_async_t` handle. Shutdown must be
-   idempotent and must not execute JS or disturb pending JS exceptions.
+   `uv_async_t` handle. Inspect its returned error without overwriting an existing
+   `pendingError`. Cleanup must be idempotent and must not execute JS or disturb
+   pending JS exceptions.
 3. **Finish native asynchronous cleanup.** Keep driving the `uv_loop_t` with
    `uv_run(..., UV_RUN_ONCE)` even when `pendingError` is set, so `uv_close()`
    callbacks can free handle storage and outstanding digest workers can deliver
@@ -139,9 +140,9 @@ on the thread owning the `JSRuntime*`, `JSContext*`, and `uv_loop_t`.
    JS finalizers can run during this step.
 5. **Destroy the native C++ objects.** For example, reset the host's
    `unique_ptr<Timeout>`, `unique_ptr<Crypto>`, and
-   `unique_ptr<FetchClient>`. They have already been shut down: their destructors
-   must not access the freed `JSContext*` or `JSRuntime*`, including through a
-   repeated `shutdown()` call.
+   `unique_ptr<FetchClient>`. They have already been cleaned up: their destructors
+   must not access the freed `JSContext*` or `JSRuntime*`, including through repeated
+   cleanup calls (`close()` for fetch, `shutdown()` for timeout and crypto).
 6. **Close the libuv loop.** Call `uv_loop_close()` on the `uv_loop_t*` and check
    the result. `UV_EBUSY` means cleanup is incomplete; do not free the loop's
    storage. Free dynamically allocated loop storage only after closure succeeds.
@@ -165,10 +166,10 @@ client-owned state. This prevents stale JS objects from addressing a new request
 if curl reuses an address. Network completion alone does not erase the state:
 unread buffered bytes must remain available. Callers must consume or cancel
 bodies, preferably in `finally`; merely releasing a reader lock is not cancellation.
-JS finalization is fallback cleanup, not the host's shutdown mechanism. Finalizers
+JS finalization is fallback cleanup, not the host's explicit cleanup mechanism. Finalizers
 mark state for deferred cleanup: delivery allocations can trigger GC, so a finalizer
 must not synchronously erase state being used by delivery or execute JS to settle
-Promises. After client shutdown, finalizers must not look up stale easy-handle keys.
+Promises. After client close(), finalizers must not look up stale easy-handle keys.
 
 The client shares connections across operations, not numeric request IDs with JS.
 It is currently bound to one `JSContext*` and initialized `uv_loop_t`, not a
@@ -185,7 +186,7 @@ circular helper dependencies. The handle is referenced while delivery is pending
 and unreferenced when that notification is consumed, so an idle client does not
 keep the loop running. Curl's deadline timer remains a `uv_timer_t`. Delivery drops map
 references before host job checkpoints because those jobs may close responses or
-shut down the client. Pause receiving when buffers fill, and enqueue nothing when
+close the client. Pause receiving when buffers fill, and enqueue nothing when
 returning curl's pause result: curl redelivers that entire block on resume.
 
 The public facade preserves the original JS abort reason, rather than exposing
@@ -193,173 +194,59 @@ native close's generic rejection. Native readiness ends at the final response's
 headers, not at an informational/redirect header block. No fixed body deadline
 is imposed. An invocation host must run libuv to drive fetch, timers, and digests.
 
-## Unresolved curl cleanup error handling (handoff)
+## Curl cleanup contract
 
-**This is an unresolved safety/design issue, not an implemented recovery plan.**
-Do not replace cleanup-time `std::terminate()` with a `pendingError` assignment
-and claim that cleanup is now safe. Do not claim that returning an error or
-retrying on another event-loop iteration guarantees eventual cleanup either.
+Fetch uses raw curl handles: `FetchState::ownedCurlEasyHandle` owns an easy
+handle, `FetchState::curlMultiHandle` borrows its multi handle while registered,
+and `FetchClient::ownedCurlMultiHandle` owns the multi handle. Keep curl calls
+visible rather than hiding registration behind additional ownership wrappers.
 
-### Current code and user intent
+`FetchState::close()` and `FetchClient::close()` are idempotent, nonthrowing,
+and return `errors::Error`. A normal return means synchronous cleanup completed,
+including when an operational error is returned. It does not mean libuv close
+callbacks have finished; the host must still drain the loop. Programmer/API
+contract errors and libcurl internal failures terminate.
 
-Fetch currently uses raw owned `CURL*` and `CURLM*` fields:
+Call state `close()` explicitly before map erasure or extracted-node destruction
+and preserve the first `pendingError`. Response close and deferred abandoned-state
+cleanup move retained Promise functions into locals before closing the state,
+then reject them with AbortError if no native error is pending. This makes all
+subsequent early returns and exceptions safe without relying on destructor cleanup.
+Destructors call `close()` as fallback and discard its returned error.
+The client constructor also closes partially initialized resources before rethrowing.
 
-- `FetchState::ownedCurlEasyHandle` owns the easy handle.
-- `FetchState::curlMultiHandle` borrows the multi handle while registered.
-- `FetchClient::ownedCurlMultiHandle` owns the multi handle.
-- A local `std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>` protects a newly
-  created, unregistered easy handle in `FetchClient::send()`, then releases
-  ownership to its `FetchState`.
+The client closes every state, clears its map, then calls `curl_multi_cleanup()`.
+Keep callback data, socket watchers, timer, and their dependencies alive until
+multi cleanup returns: it can synchronously invoke socket callbacks. Prefer a
+callback's original `pendingError` over curl's generic callback-failure code.
+Client `closed` guards repeated/reentrant closure; it does not describe a partial
+cleanup or retry protocol. Do not resume application JS after client close().
 
-The experimental `owned::CurlEasyHandle` and `owned::CurlMultiHandle` wrappers
-were removed, including `src/owned/curl.hpp`, `.cpp`, and their CMake entry.
-The user prefers raw curl calls and does not want registration APIs hidden by
-wrapper methods. Returning to raw handles simplifies the location of ownership
-coordination; it DOES NOT solve cleanup failures. Do not reintroduce wrappers
-as though that resolves this issue.
+### Verified libcurl behavior
 
-The current fail-fast behavior predates those wrappers and remains unresolved:
-
-- `FetchState::~FetchState()` calls `curl_multi_remove_handle()` when tracked as
-  registered and terminates on any non-`CURLM_OK` result. It then cleans up the
-  easy handle and frees request headers.
-- `FetchClient::shutdown()` sets `shuttingDown`, clears `fetchStateMap`, calls
-  `curl_multi_cleanup()`, and terminates on any non-`CURLM_OK` result. It then
-  releases client callback data and closes libuv handles.
-- The constructor catches failures, calls `shutdown()`, and rethrows. The
-  destructor also calls `shutdown()`.
-
-The user objects to unconditional process termination on curl cleanup errors.
-They are willing to use explicit, fallible cleanup rather than destructor-driven
-cleanup. This direction was discussed but HAS NOT been implemented. No complete
-recovery strategy for all cleanup failures has been established.
-
-### What was actually checked
-
-The installed header at
-`build/debug/vcpkg_installed/arm64-osx/include/curl/curlver.h` reported libcurl
-**8.22.0** during this investigation. Recheck the version before relying on
-implementation details. Sources inspected:
+The cleanup classification was checked against libcurl **8.22.0**:
 
 - https://curl.se/libcurl/c/curl_multi_remove_handle.html
 - https://curl.se/libcurl/c/curl_multi_cleanup.html
 - https://curl.se/libcurl/c/curl_easy_cleanup.html
+- https://github.com/curl/curl/blob/curl-8_22_0/lib/api.c
 - https://github.com/curl/curl/blob/curl-8_22_0/lib/multi.c
+- https://github.com/curl/curl/blob/curl-8_22_0/lib/multi_ev.c
 
-The public docs require removing easy handles before easy cleanup, then cleaning
-up the multi handle after its easy handles are removed. Removal is allowed
-mid-transfer, but not from inside a libcurl callback. Multi cleanup may invoke
-socket callbacks while shutting down its connection pool, so callback data and
-its dependencies must remain valid until cleanup returns.
+Removal's timer-update and wakeup-assessment paths run after detachment. Their
+`CURLM_ABORTED_BY_CALLBACK` and `CURLM_OUT_OF_MEMORY` results are reported while
+easy cleanup proceeds. Other removal failures are fatal under the chosen policy.
+Multi cleanup's non-OK results are programmer/internal failures and terminate;
+callbacks can still record operational errors even when its result is `CURLM_OK`.
+Add-handle failures in the inspected implementation occur before registration or
+undo the association before returning; send failure paths close the unregistered state.
+These are implementation-specific facts, not blanket cross-version guarantees;
+recheck the classification when changing supported libcurl versions.
 
-The public removal documentation describes success/error return codes but does
-not provide a blanket transactional guarantee about registration state after
-an error. In the inspected 8.22.0 implementation:
-
-- Removing an already unregistered easy handle returns `CURLM_OK`.
-- Wrong-multi and internal-consistency checks can reject removal BEFORE
-  detachment. API entry guards can also reject prohibited calls.
-- Removal clears the easy handle's multi association and removes it from the
-  multi's transfer tables BEFORE calling `Curl_update_timer()`.
-- `Curl_update_timer()` can invoke the application's timer callback. If that
-  returns `-1`, it returns `CURLM_ABORTED_BY_CALLBACK` AFTER detachment has
-  already happened. There is also a later wakeup-assessment failure path.
-
-Therefore, **a non-OK removal result does not universally mean the handle is
-still registered**. Conversely, it does not universally mean detachment
-succeeded. The existing termination comment ("Never destroy callback storage
-still registered with curl") assumes too much when applied to every error.
-A callback failure after successful detachment can currently cause needless
-termination. Any proposed classification of error codes must be verified
-against all relevant paths and supported versions; do not assume the inspected
-implementation is a documented cross-version API guarantee.
-
-In the inspected `curl_multi_cleanup()` implementation, the failure paths we
-identified concern invalid handles, prohibited API entry, or invalid internal
-handle state, rather than ordinary HTTP/network errors. Normal successful
-cleanup frees the multi allocation. We have NOT established a supported recovery
-procedure for every non-OK result, nor a general post-error ownership guarantee.
-Do not assume that another loop iteration or retry fixes invalid/corrupt state.
-
-### Why the existing pendingError path is different
-
-In `settlePendingPromises()`, failure to resume a paused transfer leads to an
-explicit removal attempt. A removal error preserves the first `pendingError`
-and returns WITHOUT destroying the state. This is different from reporting an
-error in a destructor and then allowing all callback storage to be destroyed.
-That path currently leaves `fetchState.curlMultiHandle` unchanged on ALL removal
-errors, even errors that the inspected implementation can return after
-successful detachment. Its registration bookkeeping also needs examination.
-
-There are existing checks of `pendingError` in `driveCurlTransfers()`, promise
-delivery, and callback/API entry points. These stop application work, not native
-ownership/destruction. The host contract elsewhere in this document requires
-checking before/after `uv_run()`, stopping JS work, and coordinating shutdown.
-During this investigation, no concrete host-loop implementation handling this
-fetch error recovery was found elsewhere in `src`. Do not describe the host
-contract as an already implemented cleanup-recovery mechanism.
-
-Setting `pendingError` is error reporting, NOT a proof that resources can now be
-freed. It also does not prevent the host from subsequently entering the current
-fail-fast teardown path. Preserve the first error rather than overwriting it
-with a secondary cleanup failure.
-
-### What a fallible cleanup design would need
-
-These are requirements to investigate, not a promise that all failures are
-recoverable:
-
-1. Perform fallible deregistration BEFORE destructive map erasure. Audit all
-   state-erasure paths, not only shutdown: response close, deferred GC cleanup,
-   send failures, and exception paths. Also audit add-handle failure semantics
-   rather than assuming failure always means no registration occurred.
-2. Establish when detachment has occurred. Track successful removal and any
-   specifically verified post-detachment error outcomes accurately. Do not
-   blindly clear registration on every failure or retain stale tracking forever.
-3. On an error for which safe detachment cannot be established, return control
-   before destroying the affected state, easy handle, headers, request body,
-   callback wrapper, or any other borrowed dependencies.
-4. Make client shutdown staged and explicitly fallible. Distinguish stopping new
-   application work from completion of native cleanup. The current
-   `shuttingDown` early return cannot represent partial cleanup and retries.
-5. Only release multi callback data, poll watchers, deadline timer, delivery
-   handle, and their dependencies at a point where curl can no longer use them.
-   Multi cleanup itself can call back into the client. Account for callbacks
-   recording errors even when the curl cleanup return value is successful.
-6. Keep the client, QuickJS context/runtime where still referenced, libuv loop,
-   pending-error storage, and other borrowed dependencies alive on incomplete
-   cleanup. Returning an error from a destructor or constructor catch does not
-   stop C++ member destruction. Constructor failure therefore needs separate
-   consideration; an incompletely constructed client cannot simply be retained
-   by the caller as a successfully constructed object.
-7. Decide how explicit cleanup results reach the host, including failures during
-   an already-in-progress shutdown. A result code and/or `pendingError` can
-   report failure, but neither provides recovery by itself. Do not pump the
-   event loop recursively from a curl callback to attempt recovery.
-8. Define a terminal policy when safe cleanup cannot be completed. Retaining
-   storage is only a temporary solution unless its eventual disposition is
-   defined. Leaking only a handle while destroying its callback dependencies is
-   not a safe retention strategy. Retrying blindly is not a recovery policy.
-
-### What remains unknown / must not be promised
-
-Explicit fallible cleanup CAN provide error propagation and a decision point
-before storage destruction. We do NOT yet know a general, guaranteed way to
-reclaim every resource safely after every possible curl cleanup failure.
-
-A prohibited recursive call can potentially be deferred until outside the
-callback. A specifically verified post-detachment callback error can potentially
-be reported while proceeding with easy cleanup. Invalid handles or inconsistent
-internal state have no established supported recovery procedure in this work.
-These categories must not be conflated.
-
-Before implementation, settle the supported libcurl guarantees, the error
-classification, the host ownership protocol, constructor-failure handling, and
-the final unrecoverable-error policy. The previous discussion overstated the
-benefit of raw handles and of merely introducing fallible shutdown; neither
-alone makes failed cleanup safe. Ask the user about unresolved policy choices
-rather than silently choosing termination, unsafe destruction, or indefinite
-retention.
+The separate paused-transfer resume-failure path still removes the easy handle
+without destroying its state, because response error delivery still needs the
+retained Promises. Its registration bookkeeping on removal errors remains a
+review item; do not replace that operation with full state `close()`.
 
 ## Declaration files and checking
 

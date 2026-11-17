@@ -89,25 +89,25 @@ struct FetchState {
 // Borrows the host's pendingError shared by modules on the same loop.
 // Preserve the first error; use hasValue() to check its value. After uv_run or
 // direct JS execution returns, the host must inspect it before resuming work.
-// Pending errors suspend fetch work; shut down this client before clearing the
+// Pending errors suspend fetch work; close this client before clearing the
 // error with errors::Error(). Promise rejection/recreation is a host decision.
 //
 // jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
 // QuickJS jobs until none remain, handling job exceptions too. If a native JS
 // call reports pendingError, stop draining jobs and return to the adapter/host.
 // It runs after native promise settlement. It must not run/pump libuv or another event loop,
-// shut down or destroy any native module service, free the context/runtime, or
+// close or destroy any native module service, free the context/runtime, or
 // throw. Host teardown must wait until JS execution and native callbacks return;
 // JS must not resume after teardown begins. Captures must be native-only.
 //
-// Explicitly shutdown while QuickJS is alive, drain native close callbacks, then
-// free the context/runtime before destroying this object. Repeated shutdown and
-// destruction after shutdown never access QuickJS. Detached libuv callbacks only
+// Explicitly close while QuickJS is alive, drain native close callbacks, then
+// free the context/runtime before destroying this object. Repeated close() and
+// destruction after close() never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
 struct FetchClient {
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr; // Owns the wrapper, which borrows this client.
     uv_loop_t* uvLoop = nullptr;
-    errors::Error* pendingError = nullptr; // Borrowed; outlives shutdown.
+    errors::Error* pendingError = nullptr; // Borrowed; outlives close().
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     CURLM* ownedCurlMultiHandle = nullptr;
@@ -118,7 +118,7 @@ struct FetchClient {
     uint64_t fetchStateIDCounter = 0;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    bool shuttingDown = false; // Used only by shutdown for idempotency/reentrancy.
+    bool closed = false; // Guards close() against repetition/reentrancy.
 
     FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
@@ -127,9 +127,10 @@ struct FetchClient {
     FetchClient(FetchClient&&) = delete;
     FetchClient& operator=(FetchClient&&) = delete;
 
-    // Explicit teardown for review; existing shutdown/destructor paths are unchanged.
-    // Same lifetime requirements as shutdown. Completes cleanup before returning
-    // the first operational error; programmer/internal failures terminate.
+    // Idempotent. Requires live QuickJS on the first call and never executes JS.
+    // Releases retained Promises without settling them and starts native handle closure.
+    // Completes synchronous cleanup before returning the first operational error;
+    // programmer/internal failures terminate. Destruction calls close() as fallback.
     [[nodiscard]] errors::Error close() noexcept;
 
     // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
@@ -137,7 +138,7 @@ struct FetchClient {
 };
 
 // Owned by the opaque JS object. The client outlives all such objects.
-// A null easy handle means closed. The host must not run JS after shutdown.
+// A null easy handle means closed. The host must not run JS after client close().
 struct FetchResponse {
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
