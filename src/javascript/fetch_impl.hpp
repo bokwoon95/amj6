@@ -13,13 +13,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <exception>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
