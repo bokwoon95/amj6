@@ -686,6 +686,192 @@ std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JS
 
 } // namespace
 
+std::expected<FetchRequest, JSValue> FetchRequest::create(JSContext* jsContext, JSValueConst jsObject) {
+    if (!JS_IsObject(jsObject)) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "send requires a FetchRequest object"));
+    }
+    FetchRequest fetchRequest;
+
+    // Get method string.
+    const owned::JSValue methodValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "method"));
+    if (JS_IsException(methodValue.get())) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    if (!JS_IsString(methodValue.get())) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "method property not a string"));
+    }
+    const std::optional<std::string> method = jsstring(jsContext, methodValue.get());
+    if (!method.has_value()) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    fetchRequest.method = method.value();
+    if (fetchRequest.method.empty() || fetchRequest.method.size() > 64 || fetchRequest.method.find_first_not_of("!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != std::string::npos || fetchRequest.method == "CONNECT" || fetchRequest.method == "TRACE" || fetchRequest.method == "TRACK") {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid HTTP method"));
+    }
+
+    // Get url string.
+    const owned::JSValue urlValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "url"));
+    if (JS_IsException(urlValue.get())) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    if (!JS_IsString(urlValue.get())) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "url property not a string"));
+    }
+    const std::optional<std::string> url = jsstring(jsContext, urlValue.get());
+    if (!url.has_value()) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    fetchRequest.url = url.value();
+    if (fetchRequest.url.empty() || fetchRequest.url.size() > (2U << 20U /* 2 MiB */) || fetchRequest.url.find('\0') != std::string::npos) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid or oversized HTTP URL"));
+    }
+    const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> curlURL(curl_url(), curl_url_cleanup);
+    if (curlURL == nullptr) {
+        return std::unexpected(JS_ThrowOutOfMemory(jsContext));
+    }
+    if (curl_url_set(curlURL.get(), CURLUPART_URL, fetchRequest.url.c_str(), 0) != CURLUE_OK) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid HTTP URL"));
+    }
+    char* component = nullptr;
+    CURLUcode curlUCode = curl_url_get(curlURL.get(), CURLUPART_SCHEME, &component, 0);
+    const std::unique_ptr<char, decltype(&curl_free)> scheme(component, curl_free);
+    if (curlUCode != CURLUE_OK || scheme == nullptr || (std::string_view(scheme.get()) != "http" && std::string_view(scheme.get()) != "https")) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "Only HTTP(S) URLs are supported"));
+    }
+    for (const CURLUPart part : {CURLUPART_USER, CURLUPART_PASSWORD}) {
+        component = nullptr;
+        curlUCode = curl_url_get(curlURL.get(), part, &component, 0);
+        const std::unique_ptr<char, decltype(&curl_free)> credential(component, curl_free);
+        if (curlUCode == CURLUE_OK) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "URL credentials are not supported"));
+        }
+    }
+
+    // Get headers array.
+    const owned::JSValue headersValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "headers"));
+    if (JS_IsException(headersValue.get())) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    if (!JS_IsArray(headersValue.get())) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "headers property not an array"));
+    }
+
+    const owned::JSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headersValue.get(), "length"));
+    uint32_t headerCount = 0;
+    if (JS_IsException(headerCountValue.get()) || JS_ToUint32(jsContext, &headerCount, headerCountValue.get()) < 0) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    if (headerCount > (64U << 10U /* 64 KiB */) / 4) {
+        return std::unexpected(JS_ThrowRangeError(jsContext, "Too many request headers"));
+    }
+    std::size_t headerBytes = 0;
+    for (uint32_t index = 0; index < headerCount; index++) {
+        const owned::JSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headersValue.get(), index));
+        if (JS_IsException(pair.get())) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (!JS_IsArray(pair.get())) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Headers must be two-string arrays"));
+        }
+        const owned::JSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
+        uint32_t pairLength = 0;
+        if (JS_IsException(pairLengthValue.get()) || JS_ToUint32(jsContext, &pairLength, pairLengthValue.get()) < 0) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (pairLength != 2) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Headers must be two-string arrays"));
+        }
+        const owned::JSValue nameValue(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
+        if (JS_IsException(nameValue.get())) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        const owned::JSValue valueValue(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
+        if (JS_IsException(valueValue.get())) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (!JS_IsString(nameValue.get()) || !JS_IsString(valueValue.get())) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Headers must be two-string arrays"));
+        }
+        const std::optional<std::string> name = jsstring(jsContext, nameValue.get());
+        if (!name.has_value()) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        const std::optional<std::string> value = jsstring(jsContext, valueValue.get());
+        if (!value.has_value()) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (name.value().empty() || name.value().find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != std::string::npos) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid HTTP header name"));
+        }
+        for (const char character : value.value()) {
+            const unsigned char byte = static_cast<unsigned char>(character);
+            if ((byte < 32 && byte != 9) || byte == 127) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid HTTP header value"));
+            }
+        }
+        if (name.value().size() > (64U << 10U /* 64 KiB */) - headerBytes) {
+            return std::unexpected(JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB"));
+        }
+        headerBytes += name.value().size();
+        if (value.value().size() > (64U << 10U /* 64 KiB */) - headerBytes || (64U << 10U /* 64 KiB */) - headerBytes - value.value().size() < 4) {
+            return std::unexpected(JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB"));
+        }
+        headerBytes += value.value().size() + 4;
+        fetchRequest.headers.push_back({name.value(), value.value()});
+    }
+
+    // Get body string or byte array.
+    const owned::JSValue bodyValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "body"));
+    if (JS_IsException(bodyValue.get())) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    if (JS_IsString(bodyValue.get())) {
+        const std::optional<std::string> body = jsstring(jsContext, bodyValue.get());
+        if (!body.has_value()) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (body.value().size() > requestBodyLimit) {
+            return std::unexpected(JS_ThrowRangeError(jsContext, "Upload exceeds 32 MiB"));
+        }
+        if (!body.value().empty() && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
+        }
+        fetchRequest.body.assign(body.value().begin(), body.value().end());
+    } else {
+        if (JS_GetTypedArrayType(bodyValue.get()) != JS_TYPED_ARRAY_UINT8) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "body property must be a string or Uint8Array"));
+        }
+        std::size_t byteOffset = 0;
+        std::size_t byteLength = 0;
+        const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, bodyValue.get(), &byteOffset, &byteLength, nullptr));
+        if (JS_IsException(buffer.get())) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (!JS_IsArrayBuffer(buffer.get())) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Shared request bodies are not supported"));
+        }
+        std::size_t bufferLength = 0;
+        const uint8_t* bytes = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
+        if (bytes == nullptr && JS_HasException(jsContext)) {
+            return std::unexpected(JS_EXCEPTION);
+        }
+        if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > requestBodyLimit) {
+            return std::unexpected(JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB"));
+        }
+        if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
+        }
+        if (byteLength != 0) {
+            if (bytes == nullptr) {
+                return std::unexpected(JS_ThrowInternalError(jsContext, "Missing request body storage"));
+            }
+            fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
+        }
+    }
+
+    return fetchRequest;
+}
+
 JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
     try {
         std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
@@ -890,9 +1076,6 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
     try {
-        if (fetchClient->pendingError->hasValue()) {
-            return JS_ThrowInternalError(jsContext, "FetchClient.send: native failure");
-        }
         const void* opaque = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
         if (opaque == nullptr) {
             return JS_EXCEPTION;
@@ -900,6 +1083,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         fetchClient = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchClient*>();
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
+        }
+        if (fetchClient->pendingError->hasValue()) {
+            return JS_ThrowInternalError(jsContext, "FetchClient.send: native failure");
         }
         JSClassID fetchResponseClassID = 0;
         {
@@ -913,151 +1099,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         if (argc < 1) {
             return JS_ThrowTypeError(jsContext, "FetchClient.send: requires at least 1 argument (%d provided)", argc);
         }
-        if (!JS_IsObject(argv[0])) {
-            return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
-        }
-        FetchRequest fetchRequest;
-        const owned::JSValue url(jsContext, JS_GetPropertyStr(jsContext, argv[0], "url"));
-        const owned::JSValue method(jsContext, JS_GetPropertyStr(jsContext, argv[0], "method"));
-        const owned::JSValue headers(jsContext, JS_GetPropertyStr(jsContext, argv[0], "headers"));
-        const owned::JSValue body(jsContext, JS_GetPropertyStr(jsContext, argv[0], "body"));
-        if (JS_IsException(url.get()) || JS_IsException(method.get()) || JS_IsException(headers.get()) || JS_IsException(body.get())) {
-            return JS_EXCEPTION;
-        }
-        if (!JS_IsString(url.get()) || !JS_IsString(method.get()) || !JS_IsArray(headers.get()) || (!JS_IsString(body.get()) && JS_GetTypedArrayType(body.get()) != JS_TYPED_ARRAY_UINT8)) {
-            return JS_ThrowTypeError(jsContext, "FetchRequest requires string url/method, header pairs, and string or Uint8Array body");
-        }
-        const std::optional<std::string> urlText = jsstring(jsContext, url.get());
-        const std::optional<std::string> methodText = jsstring(jsContext, method.get());
-        if (!urlText.has_value() || !methodText.has_value()) {
-            return JS_EXCEPTION;
-        }
-        fetchRequest.url = urlText.value();
-        fetchRequest.method = methodText.value();
-        if (fetchRequest.url.empty() || fetchRequest.url.size() > (64U << 10U /* 64 KiB */) || fetchRequest.url.find('\0') != std::string::npos) {
-            return JS_ThrowTypeError(jsContext, "Invalid or oversized HTTP URL");
-        }
-        if (fetchRequest.method.empty() || fetchRequest.method.size() > 64 || fetchRequest.method.find_first_not_of("!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") != std::string::npos || fetchRequest.method == "CONNECT" || fetchRequest.method == "TRACE" || fetchRequest.method == "TRACK") {
-            return JS_ThrowTypeError(jsContext, "Invalid HTTP method");
-        }
-        // Curl's URL parser independently enforces the normalized facade contract.
-        const std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> curlURL(curl_url(), curl_url_cleanup);
-        if (curlURL == nullptr) {
-            return JS_ThrowOutOfMemory(jsContext);
-        }
-        if (curl_url_set(curlURL.get(), CURLUPART_URL, fetchRequest.url.c_str(), 0) != CURLUE_OK) {
-            return JS_ThrowTypeError(jsContext, "Invalid HTTP URL");
-        }
-        char* component = nullptr;
-        CURLUcode urlStatus = curl_url_get(curlURL.get(), CURLUPART_SCHEME, &component, 0);
-        const std::unique_ptr<char, decltype(&curl_free)> scheme(component, curl_free);
-        if (urlStatus != CURLUE_OK || (std::string_view(scheme.get()) != "http" && std::string_view(scheme.get()) != "https")) {
-            return JS_ThrowTypeError(jsContext, "Only HTTP(S) URLs are supported");
-        }
-        for (const CURLUPart part : {CURLUPART_USER, CURLUPART_PASSWORD}) {
-            component = nullptr;
-            urlStatus = curl_url_get(curlURL.get(), part, &component, 0);
-            const std::unique_ptr<char, decltype(&curl_free)> credential(component, curl_free);
-            if (urlStatus == CURLUE_OK) {
-                return JS_ThrowTypeError(jsContext, "URL credentials are not supported");
-            }
-        }
-        const owned::JSValue headerCountValue(jsContext, JS_GetPropertyStr(jsContext, headers.get(), "length"));
-        uint32_t headerCount = 0;
-        if (JS_IsException(headerCountValue.get()) || JS_ToUint32(jsContext, &headerCount, headerCountValue.get()) < 0) {
-            return JS_EXCEPTION;
-        }
-        if (headerCount > (64U << 10U /* 64 KiB */) / 4) {
-            return JS_ThrowRangeError(jsContext, "Too many request headers");
-        }
-        std::size_t headerBytes = 0;
-        for (uint32_t index = 0; index < headerCount; index++) {
-            const owned::JSValue pair(jsContext, JS_GetPropertyUint32(jsContext, headers.get(), index));
-            if (JS_IsException(pair.get())) {
-                return JS_EXCEPTION;
-            }
-            if (!JS_IsArray(pair.get())) {
-                return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
-            }
-            const owned::JSValue pairLengthValue(jsContext, JS_GetPropertyStr(jsContext, pair.get(), "length"));
-            uint32_t pairLength = 0;
-            if (JS_IsException(pairLengthValue.get()) || JS_ToUint32(jsContext, &pairLength, pairLengthValue.get()) < 0) {
-                return JS_EXCEPTION;
-            }
-            if (pairLength != 2) {
-                return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
-            }
-            const owned::JSValue name(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 0));
-            const owned::JSValue value(jsContext, JS_GetPropertyUint32(jsContext, pair.get(), 1));
-            if (JS_IsException(name.get()) || JS_IsException(value.get())) {
-                return JS_EXCEPTION;
-            }
-            if (!JS_IsString(name.get()) || !JS_IsString(value.get())) {
-                return JS_ThrowTypeError(jsContext, "Headers must be two-string arrays");
-            }
-            const std::optional<std::string> nameText = jsstring(jsContext, name.get());
-            const std::optional<std::string> valueText = jsstring(jsContext, value.get());
-            if (!nameText.has_value() || !valueText.has_value()) {
-                return JS_EXCEPTION;
-            }
-            if (nameText.value().empty() || nameText.value().find_first_not_of("!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != std::string::npos) {
-                return JS_ThrowTypeError(jsContext, "Invalid HTTP header name");
-            }
-            for (const char character : valueText.value()) {
-                const unsigned char byte = static_cast<unsigned char>(character);
-                if ((byte < 32 && byte != 9) || byte == 127) {
-                    return JS_ThrowTypeError(jsContext, "Invalid HTTP header value");
-                }
-            }
-            if (nameText.value().size() > (64U << 10U /* 64 KiB */) - headerBytes) {
-                return JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB");
-            }
-            headerBytes += nameText.value().size();
-            if (valueText.value().size() > (64U << 10U /* 64 KiB */) - headerBytes || (64U << 10U /* 64 KiB */) - headerBytes - valueText.value().size() < 4) {
-                return JS_ThrowRangeError(jsContext, "Request headers exceed 64 KiB");
-            }
-            headerBytes += valueText.value().size() + 4;
-            fetchRequest.headers.push_back({nameText.value(), valueText.value()});
-        }
-        if (JS_IsString(body.get())) {
-            const std::optional<std::string> bodyText = jsstring(jsContext, body.get());
-            if (!bodyText.has_value()) {
-                return JS_EXCEPTION;
-            }
-            if (bodyText.value().size() > requestBodyLimit) {
-                return JS_ThrowRangeError(jsContext, "Upload exceeds 32 MiB");
-            }
-            if (!bodyText.value().empty() && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
-                return JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body");
-            }
-            fetchRequest.body.assign(bodyText.value().begin(), bodyText.value().end());
-        } else {
-            std::size_t byteOffset = 0;
-            std::size_t byteLength = 0;
-            const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, body.get(), &byteOffset, &byteLength, nullptr));
-            if (JS_IsException(buffer.get())) {
-                return JS_EXCEPTION;
-            }
-            if (!JS_IsArrayBuffer(buffer.get())) {
-                return JS_ThrowTypeError(jsContext, "Shared request bodies are not supported");
-            }
-            std::size_t bufferLength = 0;
-            const uint8_t* bytes = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
-            if (bytes == nullptr && JS_HasException(jsContext)) {
-                return JS_EXCEPTION;
-            }
-            if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > requestBodyLimit) {
-                return JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB");
-            }
-            if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
-                return JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body");
-            }
-            if (byteLength != 0) {
-                if (bytes == nullptr) {
-                    return JS_ThrowInternalError(jsContext, "Missing request body storage");
-                }
-                fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
-            }
+        std::expected<FetchRequest, JSValue> fetchRequestResult = FetchRequest::create(jsContext, argv[0]);
+        if (!fetchRequestResult.has_value()) {
+            return fetchRequestResult.error();
         }
         if (fetchClient->fetchStateMap.size() >= 64) {
             return JS_ThrowRangeError(jsContext, "Too many open FetchResponses");
@@ -1071,7 +1115,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         fetchState.selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
-        fetchState.request = std::move(fetchRequest);
+        fetchState.request = fetchRequestResult.value();
         curlEasyHandle = ownedCurlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = ownedCurlEasyHandle.release();
         bool hasContentType = false;
