@@ -396,10 +396,14 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
 
     unsigned int events = 0;
     if (what == CURL_POLL_IN) {
+        // Call driveCurlTransfers() when this socket becomes readable.
         events = static_cast<unsigned int>(UV_READABLE);
     } else if (what == CURL_POLL_OUT) {
+        // Call driveCurlTransfers() when this socket becomes writable.
         events = static_cast<unsigned int>(UV_WRITABLE);
     } else if (what == CURL_POLL_INOUT) {
+        // Call driveCurlTransfers() when this socket becomes readable or
+        // writable.
         events = static_cast<unsigned int>(UV_READABLE) | static_cast<unsigned int>(UV_WRITABLE);
     }
     const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), uvPollCallback);
