@@ -77,7 +77,7 @@ struct FetchState {
     // Idempotent native teardown; releases JS references without settling Promises.
     // Normal return means detached and cleaned up, even when an error is returned.
     // First call requires live QuickJS. Do not use this state after closing it.
-    [[nodiscard]] errors::Error close();
+    [[nodiscard]] errors::Error close() noexcept;
     FetchState(const FetchState&) = delete;
     FetchState& operator=(const FetchState&) = delete;
     FetchState(FetchState&&) = delete;
@@ -127,14 +127,10 @@ struct FetchClient {
     FetchClient(FetchClient&&) = delete;
     FetchClient& operator=(FetchClient&&) = delete;
 
-    // Idempotent. Releases JS references without settling abandoned Promises.
-    // First call requires live QuickJS; later calls only check the owner thread.
-    void shutdown();
-
     // Explicit teardown for review; existing shutdown/destructor paths are unchanged.
     // Same lifetime requirements as shutdown. Completes cleanup before returning
     // the first operational error; programmer/internal failures terminate.
-    [[nodiscard]] errors::Error close();
+    [[nodiscard]] errors::Error close() noexcept;
 
     // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);

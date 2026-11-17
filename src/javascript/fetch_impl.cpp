@@ -31,6 +31,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1312,19 +1313,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
 }
 
 FetchState::~FetchState() {
-    if (curlMultiHandle != nullptr) {
-        if (curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle) != CURLM_OK) {
-            std::terminate(); // Never destroy callback storage still registered with curl.
-        }
-        curlMultiHandle = nullptr;
-    }
-    if (ownedCurlEasyHandle != nullptr) {
-        curl_easy_cleanup(ownedCurlEasyHandle);
-    }
-    curl_slist_free_all(ownedCurlRequestHeaders);
+    std::ignore = close();
 }
 
-errors::Error FetchState::close() {
+errors::Error FetchState::close() noexcept {
     errors::Error error;
     if (curlMultiHandle != nullptr) {
         const CURLMcode curlMCode = curl_multi_remove_handle(curlMultiHandle, ownedCurlEasyHandle);
@@ -1343,8 +1335,8 @@ errors::Error FetchState::close() {
     curl_slist_free_all(ownedCurlRequestHeaders);
     ownedCurlRequestHeaders = nullptr;
     selfVoidPtr.reset();
-    responseReadPromise.reset();
     responseReadyPromise = {};
+    responseReadPromise = std::nullopt;
     return error;
 }
 
@@ -1443,37 +1435,16 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error&
             throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
     } catch (...) {
-        shutdown();
+        std::ignore = close();
         throw;
     }
 }
 
 FetchClient::~FetchClient() {
-    shutdown();
+    std::ignore = close();
 }
 
-void FetchClient::shutdown() {
-    if (this_thread::get_id() != ownerThreadID) {
-        std::terminate();
-    }
-    if (shuttingDown) {
-        return;
-    }
-    shuttingDown = true;
-    fetchStateMap.clear();
-    if (ownedCurlMultiHandle != nullptr) {
-        if (curl_multi_cleanup(ownedCurlMultiHandle) != CURLM_OK) {
-            std::terminate();
-        }
-        ownedCurlMultiHandle = nullptr;
-    }
-    this->selfVoidPtr.reset();
-    uvPollHandleMap.clear();
-    uvTimerHandle.reset();
-    uvAsyncHandle.reset();
-}
-
-errors::Error FetchClient::close() {
+errors::Error FetchClient::close() noexcept {
     if (this_thread::get_id() != ownerThreadID) {
         std::terminate();
     }
