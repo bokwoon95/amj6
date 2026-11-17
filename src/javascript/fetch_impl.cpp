@@ -817,9 +817,9 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.status: %s", exception.what());
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getStatus: %s", exception.what());
     } catch (...) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.status: unexpected native failure");
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getStatus: native failure");
     }
 }
 
@@ -851,9 +851,9 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.headers: %s", exception.what());
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getHeaders: %s", exception.what());
     } catch (...) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.headers: unexpected native failure");
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getHeaders: native failure");
     }
 }
 
@@ -880,9 +880,9 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.url: %s", exception.what());
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getURL: %s", exception.what());
     } catch (...) {
-        return JS_ThrowInternalError(jsContext, "FetchResponse.url: unexpected native failure");
+        return JS_ThrowInternalError(jsContext, "FetchResponse.getURL: native failure");
     }
 }
 
