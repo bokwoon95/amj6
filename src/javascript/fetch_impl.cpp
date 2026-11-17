@@ -48,36 +48,6 @@ namespace {
 constexpr std::size_t bodyBufferLimit = 256U << 10U /* 256 KiB */;
 constexpr std::size_t requestBodyLimit = 32U << 20U /* 32 MiB */;
 
-std::mutex fetchResponseClassIDMutex = {};
-std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
-
-// Validate the receiver without requiring an open or ready response.
-// The returned pointer is borrowed; failures leave a pending JS exception.
-std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JSValueConst thisValue) {
-    JSClassID fetchResponseClassID = 0;
-    {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
-        const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
-        if (!fetchResponseClassIDMap.contains(jsRuntime)) {
-            return std::unexpected(JS_ThrowInternalError(jsContext, "FetchResponse class is not registered"));
-        }
-        fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
-    }
-    const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
-    if (opaque == nullptr) {
-        return std::unexpected(JS_EXCEPTION);
-    }
-    FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
-    if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
-        std::terminate();
-    }
-    // JS can catch a native failure before control returns to the host.
-    if (fetchResponse.fetchClient->pendingError->hasValue()) {
-        return std::unexpected(JS_ThrowInternalError(jsContext, "FetchResponse: native failure"));
-    }
-    return &fetchResponse;
-}
-
 // Retain native codes without allocating diagnostic strings in callbacks.
 class UvErrorCategory final : public std::error_category {
   public:
@@ -682,6 +652,36 @@ void settlePendingPromises(FetchClient* fetchClient) {
         JS_FreeValue(fetchClient->jsContext, result);
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
+}
+
+std::mutex fetchResponseClassIDMutex = {};
+std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+
+// Validate the receiver without requiring an open or ready response.
+// The returned pointer is borrowed; failures leave a pending JS exception.
+std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JSValueConst thisValue) {
+    JSClassID fetchResponseClassID = 0;
+    {
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+        if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+            return std::unexpected(JS_ThrowInternalError(jsContext, "FetchResponse class is not registered"));
+        }
+        fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+    }
+    const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
+    if (opaque == nullptr) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
+    if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
+        std::terminate();
+    }
+    // JS can catch a native failure before control returns to the host.
+    if (fetchResponse.fetchClient->pendingError->hasValue()) {
+        return std::unexpected(JS_ThrowInternalError(jsContext, "FetchResponse: native failure"));
+    }
+    return &fetchResponse;
 }
 
 } // namespace
