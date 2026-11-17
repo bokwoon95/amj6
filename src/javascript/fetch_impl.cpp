@@ -512,34 +512,34 @@ void settlePendingPromises(FetchClient* fetchClient) {
                 std::terminate(); // An extracted abandoned state must exist.
             }
             FetchState& fetchState = mapNode.mapped();
-            // Retain settlement functions locally: close() releases the state's
-            // JS references. These moves cannot throw, so close precedes all exits.
-            owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
-            std::optional<owned::JSPromise> responseReadPromise = std::move(fetchState.responseReadPromise);
-            const errors::Error closeError = fetchState.close();
-            if (!fetchClient->pendingError->hasValue()) {
-                if (closeError.hasValue()) {
-                    *fetchClient->pendingError = closeError;
+            const errors::Error error = fetchState.close();
+            if (error.hasValue()) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    *fetchClient->pendingError = error;
                 }
             }
             if (fetchClient->pendingError->hasValue()) {
                 return;
             }
+            // Retain settlement functions locally: close() releases the state's
+            // JS references. These moves cannot throw, so close precedes all exits.
+            owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
+            std::optional<owned::JSPromise> responseReadPromise = std::move(fetchState.responseReadPromise);
             const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(fetchClient->jsContext, responseReadyPromise.promise.get());
             if (responseReadyPromiseState != JS_PROMISE_PENDING && !responseReadPromise.has_value()) {
                 continue;
             }
-            owned::JSValue error = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
+            owned::JSValue jsError = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             // Reject responseReadyPromise.
             if (responseReadyPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(fetchClient->jsContext, responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                const JSValue result = JS_Call(fetchClient->jsContext, responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
             // Reject responseReadPromise.
             if (responseReadPromise.has_value()) {
                 const JSPromiseStateEnum readPromiseState = JS_PromiseState(fetchClient->jsContext, responseReadPromise.value().promise.get());
                 if (readPromiseState == JS_PROMISE_PENDING) {
-                    const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                    const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                     JS_FreeValue(fetchClient->jsContext, result);
                 }
             }
