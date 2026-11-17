@@ -674,27 +674,23 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_EXCEPTION;
         }
         const FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
-        FetchClient* fetchClient = fetchResponse.fetchClient;
-        if (this_thread::get_id() != fetchClient->ownerThreadID) {
+        if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
             std::terminate();
-        }
-        if (jsContext != fetchClient->jsContext) {
-            return JS_ThrowTypeError(jsContext, "Invalid FetchResponse context");
         }
         if (fetchResponse.curlEasyHandle == nullptr) {
             return JS_ThrowTypeError(jsContext, "FetchResponse is closed");
         }
-        if (!fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
+        if (!fetchResponse.fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
             return JS_ThrowInternalError(jsContext, "FetchResponse state is missing");
         }
-        FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
+        FetchState& fetchState = fetchResponse.fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle);
         const JSPromiseStateEnum promiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
         if (promiseState != JS_PROMISE_FULFILLED && promiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "Await FetchResponse.ready before accessing the response");
         }
         // JS can catch a native failure and call read again in the same job,
         // before the host regains control to inspect pendingError.
-        if (fetchClient->pendingError->hasValue()) {
+        if (fetchResponse.fetchClient->pendingError->hasValue()) {
             return JS_ThrowInternalError(jsContext, "FetchResponse requires no pending loop error");
         }
         if (fetchState.responseReadPromise.has_value()) {
@@ -710,12 +706,12 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
-        const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
+        uv_ref(reinterpret_cast<uv_handle_t*>(fetchResponse.fetchClient->uvAsyncHandle.get()));
+        const int status = uv_async_send(fetchResponse.fetchClient->uvAsyncHandle.get());
         if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+            uv_unref(reinterpret_cast<uv_handle_t*>(fetchResponse.fetchClient->uvAsyncHandle.get()));
+            if (!fetchResponse.fetchClient->pendingError->hasValue()) {
+                fetchResponse.fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
             }
             return JS_ThrowInternalError(jsContext, "uv_async_send: %s", uv_strerror(status));
         }
