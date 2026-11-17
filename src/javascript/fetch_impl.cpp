@@ -890,6 +890,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
     try {
+        if (fetchClient->pendingError->hasValue()) {
+            return JS_ThrowInternalError(jsContext, "FetchClient.send: native failure");
+        }
         const void* opaque = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
         if (opaque == nullptr) {
             return JS_EXCEPTION;
@@ -897,11 +900,6 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
         fetchClient = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchClient*>();
         if (this_thread::get_id() != fetchClient->ownerThreadID) {
             std::terminate();
-        }
-        // A caught JS exception does not end the current job: it can call send
-        // again after an earlier native operation reported a loop error.
-        if (fetchClient->pendingError->hasValue()) {
-            return JS_ThrowInternalError(jsContext, "FetchClient requires no pending loop error");
         }
         JSClassID fetchResponseClassID = 0;
         {
