@@ -910,7 +910,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, in
             }
             fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
         }
-        if (argc < 1 || !JS_IsObject(argv[0])) {
+        if (argc < 1) {
+            return JS_ThrowTypeError(jsContext, "FetchClient.send: requires at least 1 argument (%d provided)", argc);
+        }
+        if (!JS_IsObject(argv[0])) {
             return JS_ThrowTypeError(jsContext, "send requires a FetchRequest object");
         }
         FetchRequest fetchRequest;
