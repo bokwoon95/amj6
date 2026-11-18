@@ -655,6 +655,7 @@ void settlePendingPromises(FetchClient* fetchClient) {
 }
 
 std::mutex fetchResponseClassIDMutex = {};
+std::map<JSRuntime*, JSClassID> fetchClientClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
 
 // Validate the receiver without requiring an open or ready response.
@@ -1072,11 +1073,20 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
     }
 }
 
-JSValue FetchClient::send(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) {
+JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv) {
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
     try {
-        const void* opaque = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+        JSClassID clientClassID = 0;
+        {
+            JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (!fetchClientClassIDMap.contains(jsRuntime)) {
+                return JS_ThrowInternalError(jsContext, "FetchClient class is not registered");
+            }
+            clientClassID = fetchClientClassIDMap.at(jsRuntime);
+        }
+        const void* opaque = JS_GetOpaque2(jsContext, thisValue, clientClassID);
         if (opaque == nullptr) {
             return JS_EXCEPTION;
         }
@@ -1532,7 +1542,24 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         }
         JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID clientClassID = 0;
-        JS_NewClassID(jsRuntime, &clientClassID);
+        {
+            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            if (fetchClientClassIDMap.contains(jsRuntime)) {
+                clientClassID = fetchClientClassIDMap.at(jsRuntime);
+            } else {
+                JS_NewClassID(jsRuntime, &clientClassID);
+                fetchClientClassIDMap.insert_or_assign(jsRuntime, clientClassID);
+                const auto jsRuntimeFinalizer = [](JSRuntime* jsRuntime, void* /* argument */) {
+                    const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+                    fetchClientClassIDMap.erase(jsRuntime);
+                };
+                const int status = JS_AddRuntimeFinalizer(jsRuntime, jsRuntimeFinalizer, nullptr);
+                if (status < 0) {
+                    fetchClientClassIDMap.erase(jsRuntime);
+                    throw std::bad_alloc();
+                }
+            }
+        }
         const JSClassDef clientClass = {
             .class_name = "FetchClient",
             .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
@@ -1542,7 +1569,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             .call = nullptr,
             .exotic = nullptr,
         };
-        if (JS_NewClass(jsRuntime, clientClassID, &clientClass) < 0) {
+        if (!JS_IsRegisteredClass(jsRuntime, clientClassID) && JS_NewClass(jsRuntime, clientClassID, &clientClass) < 0) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
@@ -1630,8 +1657,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             JS_ThrowInternalError(jsContext, "Could not attach FetchClient");
             return nullptr;
         }
-        JSValueConst clientData = client.get();
-        const JSValue send = JS_NewCFunctionData2(jsContext, FetchClient::send, "send", 1, 0, 1, &clientData);
+        const JSValue send = JS_NewCFunction(jsContext, FetchClient::send, "send", 1);
         if (JS_IsException(send) || JS_DefinePropertyValueStr(jsContext, client.get(), "send", send, JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }

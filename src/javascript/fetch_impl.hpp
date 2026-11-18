@@ -135,7 +135,7 @@ struct FetchClient {
     [[nodiscard]] errors::Error close() noexcept;
 
     // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
-    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
+    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 };
 
 // Owned by the opaque JS object. The client outlives all such objects.
