@@ -687,14 +687,14 @@ std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JS
 
 } // namespace
 
-std::expected<FetchRequest, JSValue> FetchRequest::create(JSContext* jsContext, JSValueConst jsObject) {
-    if (!JS_IsObject(jsObject)) {
-        return std::unexpected(JS_ThrowTypeError(jsContext, "send requires a FetchRequest object"));
+std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsContext, JSValueConst jsValue) {
+    if (!JS_IsObject(jsValue)) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "not an object"));
     }
     FetchRequest fetchRequest;
 
     // Get method string.
-    const owned::JSValue methodValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "method"));
+    const owned::JSValue methodValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "method"));
     if (JS_IsException(methodValue.get())) {
         return std::unexpected(JS_EXCEPTION);
     }
@@ -711,7 +711,7 @@ std::expected<FetchRequest, JSValue> FetchRequest::create(JSContext* jsContext, 
     }
 
     // Get url string.
-    const owned::JSValue urlValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "url"));
+    const owned::JSValue urlValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "url"));
     if (JS_IsException(urlValue.get())) {
         return std::unexpected(JS_EXCEPTION);
     }
@@ -749,7 +749,7 @@ std::expected<FetchRequest, JSValue> FetchRequest::create(JSContext* jsContext, 
     }
 
     // Get headers array.
-    const owned::JSValue headersValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "headers"));
+    const owned::JSValue headersValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "headers"));
     if (JS_IsException(headersValue.get())) {
         return std::unexpected(JS_EXCEPTION);
     }
@@ -822,7 +822,7 @@ std::expected<FetchRequest, JSValue> FetchRequest::create(JSContext* jsContext, 
     }
 
     // Get body string or byte array.
-    const owned::JSValue bodyValue(jsContext, JS_GetPropertyStr(jsContext, jsObject, "body"));
+    const owned::JSValue bodyValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "body"));
     if (JS_IsException(bodyValue.get())) {
         return std::unexpected(JS_EXCEPTION);
     }
@@ -1109,7 +1109,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         if (argc < 1) {
             return JS_ThrowTypeError(jsContext, "FetchClient.send: requires at least 1 argument (%d provided)", argc);
         }
-        std::expected<FetchRequest, JSValue> fetchRequestResult = FetchRequest::create(jsContext, argv[0]);
+        std::expected<FetchRequest, JSValue> fetchRequestResult = FetchRequest::fromJSValue(jsContext, argv[0]);
         if (!fetchRequestResult.has_value()) {
             return fetchRequestResult.error();
         }

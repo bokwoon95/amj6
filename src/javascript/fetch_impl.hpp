@@ -41,7 +41,7 @@ struct FetchRequest {
     std::vector<std::pair<std::string, std::string>> headers = {};
     std::vector<uint8_t> body = {};
 
-    static std::expected<FetchRequest, JSValue> create(JSContext* jsContext, JSValueConst jsObject);
+    static std::expected<FetchRequest, JSValue> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
 };
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
