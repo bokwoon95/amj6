@@ -2,6 +2,8 @@
 
 #include "owned/quickjs.hpp"
 
+#include <cstdint>
+#include <expected>
 #include <quickjs.h>
 
 #include <cstddef>
@@ -69,6 +71,10 @@ struct JSONValue { // NOLINT(bugprone-exception-escape)
 // Converts to UTF-8 without type validation or size limits. Returns nullopt on
 // failure with a pending JS exception. Check JS_IsString() first if coercion is unwanted.
 std::optional<std::string> jsstring(JSContext* jsContext, JSValueConst value);
+
+std::expected<std::string, JSValue> jsToString(JSContext* jsContext, JSValueConst jsValueConst);
+
+std::expected<uint32_t, JSValue> jsToUint32(JSContext* jsContext, JSValueConst jsValueConst);
 
 // Defines an own, writable/enumerable/configurable string property.
 // Returns false with a pending JS exception on failure.

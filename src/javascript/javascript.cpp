@@ -2,6 +2,7 @@
 
 #include "owned/quickjs.hpp"
 
+#include <expected>
 #include <quickjs.h>
 
 #include <cmath>
@@ -141,6 +142,34 @@ std::optional<std::string> jsstring(JSContext* jsContext, JSValueConst value) {
     };
     const std::unique_ptr<const char, decltype(release)> ownedText(text, release);
     return std::string(text, length);
+}
+
+std::expected<std::string, JSValue> jsToString(JSContext* jsContext, JSValueConst jsValueConst) {
+    if (JS_IsException(jsValueConst)) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    std::size_t len = 0;
+    const char* cString = JS_ToCStringLen(jsContext, &len, jsValueConst);
+    if (cString == nullptr) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    const auto freeCString = [jsContext](const char* cString) {
+        JS_FreeCString(jsContext, cString);
+    };
+    const std::unique_ptr<const char, decltype(freeCString)> ownedCString(cString, freeCString);
+    return std::string(cString, len);
+}
+
+std::expected<uint32_t, JSValue> jsToUint32(JSContext* jsContext, JSValueConst jsValueConst) {
+    if (JS_IsException(jsValueConst)) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    uint32_t num = 0;
+    const int status = JS_ToUint32(jsContext, &num, jsValueConst);
+    if (status < 0) {
+        return std::unexpected(JS_EXCEPTION);
+    }
+    return num;
 }
 
 bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, std::string_view value) {
