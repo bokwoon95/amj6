@@ -2,7 +2,6 @@
 
 #include "owned/quickjs.hpp"
 
-#include <expected>
 #include <quickjs.h>
 
 #include <cmath>
@@ -144,14 +143,14 @@ std::optional<std::string> jsstring(JSContext* jsContext, JSValueConst value) {
     return std::string(text, length);
 }
 
-std::expected<std::string, JSValue> jsToString(JSContext* jsContext, JSValueConst jsValueConst) {
+std::optional<std::string> jsToString(JSContext* jsContext, JSValueConst jsValueConst) {
     if (JS_IsException(jsValueConst)) {
-        return std::unexpected(JS_EXCEPTION);
+        return std::nullopt;
     }
     std::size_t len = 0;
     const char* cString = JS_ToCStringLen(jsContext, &len, jsValueConst);
     if (cString == nullptr) {
-        return std::unexpected(JS_EXCEPTION);
+        return std::nullopt;
     }
     const auto freeCString = [jsContext](const char* cString) {
         JS_FreeCString(jsContext, cString);
@@ -160,14 +159,14 @@ std::expected<std::string, JSValue> jsToString(JSContext* jsContext, JSValueCons
     return std::string(cString, len);
 }
 
-std::expected<uint32_t, JSValue> jsToUint32(JSContext* jsContext, JSValueConst jsValueConst) {
+std::optional<uint32_t> jsToUint32(JSContext* jsContext, JSValueConst jsValueConst) {
     if (JS_IsException(jsValueConst)) {
-        return std::unexpected(JS_EXCEPTION);
+        return std::nullopt;
     }
     uint32_t num = 0;
     const int status = JS_ToUint32(jsContext, &num, jsValueConst);
     if (status < 0) {
-        return std::unexpected(JS_EXCEPTION);
+        return std::nullopt;
     }
     return num;
 }
