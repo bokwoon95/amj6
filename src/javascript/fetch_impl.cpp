@@ -19,6 +19,7 @@
 #include <uv.h>
 
 #include <array>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -770,6 +771,8 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
     if (!headersLength.has_value()) {
         return std::unexpected(JS_EXCEPTION);
     }
+    std::optional<std::size_t> contentLength;
+    bool hasConnection = false;
     for (uint32_t index = 0; index < headersLength.value(); index++) {
         const owned::JSValue headerJSValue(jsContext, JS_GetPropertyUint32(jsContext, headersJSValue.get(), index));
         if (JS_IsException(headerJSValue.get())) {
@@ -805,11 +808,47 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
         if (!headerValue.has_value()) {
             return std::unexpected(JS_EXCEPTION);
         }
-        for (const char character : headerValue.value()) {
-            const unsigned char byte = static_cast<unsigned char>(character);
-            if ((byte < 32 && byte != 9) || byte == 127) {
+        for (const char chr : headerValue.value()) {
+            const unsigned char uchr = static_cast<unsigned char>(chr);
+            if ((uchr < ' ' && uchr != '\t') || uchr == '\x7F' /* DEL */) {
                 return std::unexpected(JS_ThrowTypeError(jsContext, "Invalid HTTP header value"));
             }
+        }
+        if (asciiEqualFold(headerName.value(), "Transfer-Encoding") || asciiEqualFold(headerName.value(), "Keep-Alive") || asciiEqualFold(headerName.value(), "Upgrade") || asciiEqualFold(headerName.value(), "Expect")) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Unsupported request header: %s", headerName.value().c_str()));
+        }
+
+        // Ignore surrounding HTTP whitespace when validating header semantics.
+        std::string_view trimmedValue(headerValue.value());
+        const std::size_t first = trimmedValue.find_first_not_of(" \t");
+        if (first == std::string_view::npos) {
+            trimmedValue = "";
+        } else {
+            const std::size_t last = trimmedValue.find_last_not_of(" \t");
+            trimmedValue = trimmedValue.substr(first, last - first + 1);
+        }
+        if (asciiEqualFold(headerName.value(), "Connection")) {
+            if (hasConnection) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Duplicate Connection header"));
+            }
+            if (!asciiEqualFold(trimmedValue, "close") && !asciiEqualFold(trimmedValue, "keep-alive")) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Connection must be close or keep-alive"));
+            }
+            hasConnection = true;
+        }
+        if (asciiEqualFold(headerName.value(), "Content-Length")) {
+            if (contentLength.has_value()) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Duplicate Content-Length header"));
+            }
+            if (trimmedValue.empty() || trimmedValue.find_first_not_of("0123456789") != std::string_view::npos) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length must be a nonnegative decimal integer"));
+            }
+            std::size_t parsedLength = 0;
+            const std::from_chars_result parseResult = std::from_chars(trimmedValue.data(), trimmedValue.data() + trimmedValue.size(), parsedLength);
+            if (parseResult.ec != std::errc() || parseResult.ptr != trimmedValue.data() + trimmedValue.size()) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length is out of range"));
+            }
+            contentLength = parsedLength;
         }
         fetchRequest.headers.push_back({headerName.value(), headerValue.value()});
     }
@@ -861,6 +900,10 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             }
             fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
         }
+    }
+
+    if (contentLength.has_value() && contentLength.value() != fetchRequest.body.size()) {
+        return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length does not match the request body byte length"));
     }
 
     return fetchRequest;
