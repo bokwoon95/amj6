@@ -37,11 +37,13 @@ enum class CurlTransferStatus : std::uint8_t {
 
 struct FetchRequest {
     std::string method = "";
+
     std::string url = "";
+
     std::vector<std::pair<std::string, std::string>> headers = {};
+
     std::vector<uint8_t> body = {};
 
-    // Failure leaves a pending JS exception.
     static std::optional<FetchRequest> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
 };
 
@@ -49,42 +51,71 @@ struct FetchRequest {
 // parent client. Its address remains stable until the easy handle is removed.
 struct FetchState {
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
+
     uint64_t fetchStateID = 0;
-    CURLM* curlMultiHandle = nullptr; // Borrowed while registered.
+
+    CURLM* curlMultiHandle = nullptr;
+
     CURL* ownedCurlEasyHandle = nullptr;
+
     errors::Error error = {};
-    bool abandoned =
-        false; // JavaScript code stopped referencing it before the fetchResponse was closed.
+
+    bool abandoned = false;
 
     // Request.
+
     curl_slist* ownedCurlRequestHeaders = nullptr;
+
     FetchRequest request = {};
 
     // Response.
+
     CurlTransferStatus responseCurlTransferStatus = CurlTransferStatus::NotStarted;
+
     int64_t responseCode = 0;
+
     std::string effectiveURL = "";
+
     std::vector<std::pair<std::string, std::string>> responseHeaders = {};
+
     std::size_t responseHeadersSize = 0;
+
     std::size_t responseTrailersSize = 0;
+
     bool responseHeadersComplete = false;
+
     std::deque<std::vector<uint8_t>> responseBuffer = {};
+
     std::size_t responseBufferSize = 0;
-    bool responseRedirecting = false; // Currently processing a redirect response.
+
+    bool responseRedirecting = false;
+
     owned::JSPromise responseReadyPromise = {};
+
     std::optional<owned::JSPromise> responseReadPromise = {};
 
     FetchState() = default;
+
     ~FetchState();
 
     // Idempotent native teardown; releases JS references without settling Promises.
     // Normal return means detached and cleaned up, even when an error is returned.
     // First call requires live QuickJS. Do not use this state after closing it.
     [[nodiscard]] errors::Error close() noexcept;
+
     FetchState(const FetchState&) = delete;
+
     FetchState& operator=(const FetchState&) = delete;
+
     FetchState(FetchState&&) = delete;
+
     FetchState& operator=(FetchState&&) = delete;
+
+    static std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems,
+        void* userdata) noexcept;
+
+    static std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
+        void* userdata) noexcept;
 };
 
 // Host-owned, one per context/loop pair, at a stable address. Borrows the context
@@ -108,31 +139,49 @@ struct FetchState {
 // destruction after close() never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
 struct FetchClient {
-    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr =
-        nullptr; // Owns the wrapper, which borrows this client.
+    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
+
     uv_loop_t* uvLoop = nullptr;
-    errors::Error* pendingError = nullptr; // Borrowed; outlives close().
+
+    errors::Error* pendingError = nullptr;
+
     JSRuntime* jsRuntime = nullptr;
+
     JSContext* jsContext = nullptr;
+
     CURLM* ownedCurlMultiHandle = nullptr;
+
     owned::UvHandle<uv_timer_t> uvTimerHandle = {};
+
     owned::UvHandle<uv_async_t> uvAsyncHandle = {};
+
     std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
+
     std::map<CURL*, FetchState> fetchStateMap = {};
+
     uint64_t fetchStateIDCounter = 0;
+
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
+
     std::thread::id ownerThreadID = {};
+
     bool closed = false; // Guards close() against repetition/reentrancy.
 
     FetchClient() = default;
+
     // Returns validation/native failures; allocation exceptions propagate.
     static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext* jsContext,
         uv_loop_t* uvLoop, errors::Error& pendingError,
         std::function<void(JSContext*)> jsExecutePendingJobs);
+
     ~FetchClient();
+
     FetchClient(const FetchClient&) = delete;
+
     FetchClient& operator=(const FetchClient&) = delete;
+
     FetchClient(FetchClient&&) = delete;
+
     FetchClient& operator=(FetchClient&&) = delete;
 
     // Idempotent. Requires live QuickJS on the first call and never executes JS.
@@ -141,7 +190,15 @@ struct FetchClient {
     // programmer/internal failures terminate. Destruction calls close() as fallback.
     [[nodiscard]] errors::Error close() noexcept;
 
-    // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
+    [[nodiscard]] bool driveCurlTransfers(curl_socket_t socket, int eventBitmask);
+
+    static void uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept;
+
+    static int curlSocketFunction(CURL* curlEasyHandle, curl_socket_t socket, int what,
+        void* clientp, void* socketp) noexcept;
+
+    static int curlTimerFunction(CURLM* curlMultiHandle, long timeout_ms, void* clientp) noexcept;
+
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 };
 
@@ -149,19 +206,23 @@ struct FetchClient {
 // A null easy handle means closed. The host must not run JS after client close().
 struct FetchResponse {
     FetchClient* fetchClient = nullptr;
+
     CURL* curlEasyHandle = nullptr;
 
-    // Direct QuickJS callbacks. Extract this response from thisValue.
+    static std::optional<FetchResponse*> fromThisValue(JSContext* jsContext,
+        JSValueConst thisValue);
+
     static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+
     static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc,
         JSValueConst* argv);
 
-    // Getter-only JS properties: status, headers, and url. ready is a read-only
-    // Promise property installed on each JS response by FetchClient::send().
     static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc,
         JSValueConst* argv);
+
     static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc,
         JSValueConst* argv);
+
     static JSValue getURL(JSContext* jsContext, JSValueConst thisValue, int argc,
         JSValueConst* argv);
 };

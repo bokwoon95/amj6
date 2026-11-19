@@ -1,7 +1,6 @@
 #pragma once
 
 #include "errors/errors.hpp"
-#include "javascript.hpp"
 #include "owned/quickjs.hpp"
 
 #include <quickjs.h>

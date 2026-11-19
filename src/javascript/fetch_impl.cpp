@@ -79,671 +79,13 @@ class CurlMultiErrorCategory final : public std::error_category {
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const CurlMultiErrorCategory curlMultiErrorCategory;
 
-// Passed as CURLOPT_HEADERFUNCTION to read the response headers.
-// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
-std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
-    FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (integers::multiplyOverflows(size, nitems)) {
-        return CURL_WRITEFUNC_ERROR;
-    }
-    const std::size_t realsize = size * nitems;
-    const std::string_view line(buffer, realsize);
-
-    // If responseHeadersComplete, we are handling response trailers.
-    if (fetchState->responseHeadersComplete) {
-        if (integers::addOverflows(fetchState->responseTrailersSize, realsize)) {
-            return CURL_WRITEFUNC_ERROR;
-        }
-        if (fetchState->responseTrailersSize + realsize > (4U << 10U /* 4 KiB */)) {
-            fetchState->error = errors::message("Response trailers exceed 4 KiB");
-            return CURL_WRITEFUNC_ERROR;
-        }
-        fetchState->responseTrailersSize += realsize;
-        return realsize;
-    }
-
-    // Every fresh response following a redirect gets a new responseHeadersSize
-    // budget.
-    if (line.starts_with("HTTP/") && fetchState->responseRedirecting) {
-        fetchState->responseHeadersSize = 0;
-    }
-    if (integers::addOverflows(fetchState->responseHeadersSize, realsize)) {
-        return CURL_WRITEFUNC_ERROR;
-    }
-    if (fetchState->responseHeadersSize + realsize > (10U << 20U /* 10 MiB */)) {
-        fetchState->error = errors::message("Response headers exceed 10 MiB");
-        return CURL_WRITEFUNC_ERROR;
-    }
-    fetchState->responseHeadersSize += realsize;
-
-    // If it's a fresh response, reset the responseHeaders and the
-    // responseRedirecting flag.
-    if (line.starts_with("HTTP/")) {
-        fetchState->responseHeaders.clear();
-        fetchState->responseRedirecting = false;
-        return realsize;
-    }
-
-    // Response headers have not yet completed.
-    if (line != "\r\n" && line != "\n") {
-        return realsize;
-    }
-
-    // If we reach here, response headers have completed. Get the responseCode.
-    long responseCode = 0;
-    CURLcode curlCode =
-        curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &responseCode);
-    if (curlCode != CURLE_OK) {
-        fetchState->error = errors::message(curl_easy_strerror(curlCode));
-        return CURL_WRITEFUNC_ERROR;
-    }
-
-    // If it's informational 1XX, ignore the responseCode.
-    if (responseCode >= 100 && responseCode < 200) {
-        if (responseCode == 101) {
-            fetchState->error = errors::message("HTTP protocol upgrades are not supported");
-            return CURL_WRITEFUNC_ERROR;
-        }
-        return realsize;
-    }
-
-    // If it's a redirect 3XX and the Location header is present, ignore the
-    // responseCode and set the responseRedirecting flag.
-    if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 ||
-        responseCode == 308) {
-        curl_header* curlHeader = nullptr;
-        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0,
-            CURLH_HEADER, -1, &curlHeader);
-        if (curlHCode != CURLHE_OK) {
-            if (curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
-                fetchState->error = errors::message("Could not obtain response redirect header");
-                return CURL_WRITEFUNC_ERROR;
-            }
-        }
-        if (curlHeader != nullptr && curlHeader->value[0] != '\0') {
-            fetchState->responseRedirecting = true;
-            return realsize;
-        }
-    }
-
-    fetchState->responseCode = responseCode;
-
-    // Get the effectiveURL.
-    // CURLINFO_EFFECTIVE_URL requires char**.
-    // NOLINTNEXTLINE(misc-const-correctness)
-    char* effectiveURL = nullptr;
-    curlCode =
-        curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
-    if (curlCode != CURLE_OK) {
-        fetchState->error = errors::message("Could not obtain response URL");
-        return CURL_WRITEFUNC_ERROR;
-    }
-    if (effectiveURL != nullptr) {
-        fetchState->effectiveURL = effectiveURL;
-    }
-
-    // Get the responseHeaders.
-    curl_header* curlHeader = nullptr;
-    while (true) {
-        curlHeader =
-            curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, curlHeader);
-        if (curlHeader == nullptr) {
-            break;
-        }
-        std::string name(curlHeader->name);
-        const std::string value(curlHeader->value);
-        for (char& ch : name) {
-            if (ch >= 'A' && ch <= 'Z') {
-                ch = static_cast<char>(ch - 'A' + 'a');
-            }
-        }
-        fetchState->responseHeaders.push_back({name, value});
-    }
-    fetchState->responseHeadersComplete = true;
-    return realsize;
-}
-
-// Passed as CURLOPT_WRITEFUNCTION to read the response body.
-std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
-    const void* userdata) {
-    FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (integers::multiplyOverflows(size, nmemb)) {
-        return CURL_WRITEFUNC_ERROR;
-    }
-    const std::size_t realsize = size * nmemb;
-
-    // Body is empty.
-    if (realsize == 0) {
-        return 0;
-    }
-
-    // Ignore the body if we are redirecting.
-    if (fetchState->responseRedirecting) {
-        return realsize;
-    }
-
-    // If the responseBufferSize exceeds the bodyBufferLimit, pause curl
-    // transfers.
-    if (integers::addOverflows(fetchState->responseBufferSize, realsize)) {
-        return CURL_WRITEFUNC_ERROR;
-    }
-    if (fetchState->responseBufferSize + realsize > bodyBufferLimit) {
-        fetchState->responseCurlTransferStatus = CurlTransferStatus::Paused;
-        return CURL_WRITEFUNC_PAUSE;
-    }
-
-    // Else append the bytes to the responseBuffer.
-    fetchState->responseBuffer.push_back(std::vector<uint8_t>(ptr, ptr + realsize));
-    fetchState->responseBufferSize += realsize;
-    return realsize;
-}
-
-// Drive curl transfers, then mark the ones that have completed. Returns true
-// on success, or false if a fatal error is recorded in pendingError.
-[[nodiscard]] bool driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket,
-    int eventBitmask) {
-    // Check for pendingErrors before we call curl_multi_socket_action().
-    if (fetchClient.pendingError->hasValue()) {
-        return false;
-    }
-
-    // Tell curl to read and write socket data.
-    int runningHandles = 0;
-    const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket,
-        eventBitmask, &runningHandles);
-    if (curlMCode != CURLM_OK) {
-        if (!fetchClient.pendingError->hasValue()) {
-            fetchClient.pendingError->errorCode =
-                std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
-        }
-        return false;
-    }
-
-    // curl_multi_socket_action() may invoke curlSocketFunction or
-    // curlTimerFunction, which may have set pendingError. Check before
-    // proceeding.
-    if (fetchClient.pendingError->hasValue()) {
-        return false;
-    }
-
-    // Mark the fetchStates that have completed.
-    while (true) {
-        int msgsInQueue = 0;
-        const CURLMsg* curlMsg =
-            curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
-        if (curlMsg == nullptr) {
-            break;
-        }
-        if (curlMsg->msg != CURLMSG_DONE) {
-            continue;
-        }
-        if (!fetchClient.fetchStateMap.contains(curlMsg->easy_handle)) {
-            std::terminate(); // A completed transfer must have registered callback storage.
-        }
-        FetchState& fetchState = fetchClient.fetchStateMap.at(curlMsg->easy_handle);
-        fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
-        if (curlMsg->data.result != CURLE_OK || !fetchState.responseHeadersComplete) {
-            fetchState.error.errorCode = errors::ErrorCode::GenericError;
-            std::string errorMessage;
-            if (fetchState.error.errorMessage != nullptr) {
-                errorMessage = *fetchState.error.errorMessage;
-            }
-            if (curlMsg->data.result != CURLE_OK) {
-                if (!errorMessage.empty()) {
-                    errorMessage.append(": ");
-                }
-                errorMessage.append(curl_easy_strerror(curlMsg->data.result));
-            }
-            if (!fetchState.responseHeadersComplete) {
-                if (!errorMessage.empty()) {
-                    errorMessage.append(": ");
-                }
-                errorMessage.append("HTTP response ended without final headers");
-            }
-            fetchState.error.errorMessage =
-                std::make_shared<const std::string>(std::move(errorMessage));
-        }
-    }
-
-    // Signal the uv async handle, which triggers settlePendingPromises().
-    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle.get()));
-    const int status = uv_async_send(fetchClient.uvAsyncHandle.get());
-    if (status != 0) {
-        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient.uvAsyncHandle.get()));
-        // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
-        // this is the first error, so no second mailbox check is needed.
-        fetchClient.pendingError->errorCode = std::error_code(status, uvErrorCategory);
-        return false;
-    }
-    return true;
-}
-
-// curl calls this function to specify which socket events should trigger
-// driveCurlTransfers().
-//
-// 1. CURL_POLL_NONE: Stop scheduling driveCurlTransfers() for socket events,
-// retaining the poll handle.
-//
-// 2. CURL_POLL_IN: Call driveCurlTransfers() when this socket becomes readable.
-//
-// 3. CURL_POLL_OUT: Call driveCurlTransfers() when this socket becomes writable.
-//
-// 4. CURL_POLL_INOUT: Call driveCurlTransfers() when this socket becomes
-// readable or writable.
-//
-// 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
-// and close the poll handle.
-int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what,
-    const void* clientp, void* /* socketp */) {
-    struct PollData {
-        FetchClient* fetchClient = nullptr;
-        curl_socket_t socket = CURL_SOCKET_BAD;
-    };
-    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
-
-    // Stop watching this socket and close its poll handle.
-    if (what == CURL_POLL_REMOVE) {
-        fetchClient->uvPollHandleMap.erase(socket);
-        return 0;
-    }
-
-    // Get the uvPollHandle associated with this socket, creating it if not
-    // exists.
-    uv_poll_t* uvPollHandle = nullptr;
-    if (fetchClient->uvPollHandleMap.contains(socket)) {
-        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
-    } else {
-        owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
-        const int status =
-            uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
-        if (status != 0) {
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        ownedUvPollHandle.setInitialized();
-        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<PollData>(PollData{
-            .fetchClient = fetchClient,
-            .socket = socket,
-        }));
-        fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
-        uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
-    }
-
-    // Stop watching this socket, retaining its poll handle.
-    if (what == CURL_POLL_NONE) {
-        const int status = uv_poll_stop(uvPollHandle);
-        if (status != 0) {
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // libuv calls uvPollCallback when the socket is readable, writable, or
-    // encounters an error.
-    const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
-        const PollData& pollData =
-            static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
-        FetchClient* fetchClient = pollData.fetchClient;
-        const curl_socket_t socket = pollData.socket;
-        try {
-            unsigned int eventBitmask = 0;
-            if (status < 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
-            }
-            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) != 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_IN);
-            }
-            if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
-                eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
-            }
-            const bool ok =
-                driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
-            if (!ok) {
-                return;
-            }
-        } catch (...) {
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->exceptionPtr = std::current_exception();
-            }
-        }
-    };
-
-    unsigned int events = 0;
-    if (what == CURL_POLL_IN) {
-        // Call driveCurlTransfers() when this socket becomes readable.
-        events = static_cast<unsigned int>(UV_READABLE);
-    } else if (what == CURL_POLL_OUT) {
-        // Call driveCurlTransfers() when this socket becomes writable.
-        events = static_cast<unsigned int>(UV_WRITABLE);
-    } else if (what == CURL_POLL_INOUT) {
-        // Call driveCurlTransfers() when this socket becomes readable or
-        // writable.
-        events = static_cast<unsigned int>(UV_READABLE) | static_cast<unsigned int>(UV_WRITABLE);
-    }
-    const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), uvPollCallback);
-    if (status != 0) {
-        if (!fetchClient->pendingError->hasValue()) {
-            fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
-        }
-        return -1;
-    }
-    return 0;
-}
-
-// curl calls this function to update its timeout requirements.
-//
-// 1. timeout_ms < 0: Cancel the scheduled call to driveCurlTransfers().
-//
-// 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
-int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
-    const FetchClient* fetchClient =
-        static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
-
-    // Cancel the scheduled call to driveCurlTransfers().
-    if (timeout_ms < 0) {
-        const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
-        if (status != 0) {
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
-            }
-            return -1;
-        }
-        return 0;
-    }
-
-    // Refresh libuv's cached time so the delay starts from now.
-    uv_update_time(fetchClient->uvLoop);
-
-    // libuv calls uvTimerCallback when the timer expires, which calls
-    // driveCurlTransfers().
-    const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
-        FetchClient* fetchClient =
-            static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
-        try {
-            const bool ok = driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-            if (!ok) {
-                return;
-            }
-        } catch (...) {
-            if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->exceptionPtr = std::current_exception();
-            }
-        }
-    };
-
-    // Schedule driveCurlTransfers() to run after this delay.
-    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback,
-        static_cast<uint64_t>(timeout_ms), 0);
-    if (status != 0) {
-        if (!fetchClient->pendingError->hasValue()) {
-            fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
-        }
-        return -1;
-    }
-    return 0;
-}
-
-// Settle pending promises with response readiness, body chunks, end-of-stream,
-// or errors.
-void settlePendingPromises(FetchClient* fetchClient) {
-    // Snapshot the fetchStateMap's CURL* keys + fetchStateID into an entries
-    // list before looping over the entries. The fetchStateMap can be modified
-    // during iteration, so we need a stable list to iterate over.
-    std::vector<std::pair<CURL*, uint64_t>> entries;
-    entries.reserve(fetchClient->fetchStateMap.size());
-    for (const std::pair<CURL* const, FetchState>& entry : fetchClient->fetchStateMap) {
-        entries.push_back({entry.first, entry.second.fetchStateID});
-    }
-
-    // Loop over the entries.
-    for (const std::pair<CURL*, uint64_t>& entry : entries) {
-        if (fetchClient->pendingError->hasValue()) {
-            return;
-        }
-        CURL* curlEasyHandle = entry.first;
-        const uint64_t fetchStateID = entry.second;
-
-        // Earlier iterations run JS promise jobs, which may close other
-        // responses and remove their states from the map. Skip handles whose
-        // states have been removed since entries was snapshotted.
-        if (!fetchClient->fetchStateMap.contains(curlEasyHandle)) {
-            continue;
-        }
-
-        // Get the fetchState for the give curlEasyHandle.
-        //
-        // Curl may reuse CURL* pointers, so we need to additionally check if
-        // the fetchStateID aligns.
-        FetchState& fetchState = fetchClient->fetchStateMap.at(curlEasyHandle);
-        if (fetchState.fetchStateID != fetchStateID) {
-            continue;
-        }
-
-        // If fetchState was abandoned (the QuickJS GC finalizer sets this
-        // flag), it means the user forgot to call fetchResponse.close() and is
-        // no longer referencing the `fetchResponse` variable. Terminate its
-        // current ready/read promises with AbortError.
-        if (fetchState.abandoned) {
-            const std::map<CURL*, FetchState>::node_type mapNode =
-                fetchClient->fetchStateMap.extract(curlEasyHandle);
-            if (mapNode.empty()) {
-                std::terminate(); // An extracted abandoned state must exist.
-            }
-            FetchState& fetchState = mapNode.mapped();
-            const errors::Error error = fetchState.close();
-            if (error.hasValue()) {
-                if (!fetchClient->pendingError->hasValue()) {
-                    *fetchClient->pendingError = error;
-                }
-            }
-            if (fetchClient->pendingError->hasValue()) {
-                return;
-            }
-            // Retain settlement functions locally: close() releases the state's
-            // JS references. These moves cannot throw, so close precedes all exits.
-            owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
-            std::optional<owned::JSPromise> responseReadPromise =
-                std::move(fetchState.responseReadPromise);
-            const JSPromiseStateEnum responseReadyPromiseState =
-                JS_PromiseState(fetchClient->jsContext, responseReadyPromise.promise.get());
-            if (responseReadyPromiseState != JS_PROMISE_PENDING &&
-                !responseReadPromise.has_value()) {
-                continue;
-            }
-            owned::JSValue jsError =
-                jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
-            // Reject responseReadyPromise.
-            if (responseReadyPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(fetchClient->jsContext,
-                    responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
-                JS_FreeValue(fetchClient->jsContext, result);
-            }
-            // Reject responseReadPromise.
-            if (responseReadPromise.has_value()) {
-                const JSPromiseStateEnum responseReadPromiseState =
-                    JS_PromiseState(fetchClient->jsContext,
-                        responseReadPromise.value().promise.get());
-                if (responseReadPromiseState == JS_PROMISE_PENDING) {
-                    const JSValue result = JS_Call(fetchClient->jsContext,
-                        responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1,
-                        &jsError.get());
-                    JS_FreeValue(fetchClient->jsContext, result);
-                }
-            }
-            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-            continue;
-        }
-
-        // If responseReadyPromise has not yet been settled, settle it first.
-        const JSPromiseStateEnum responseReadyPromiseState =
-            JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
-            responseReadyPromiseState != JS_PROMISE_REJECTED) {
-            if (!fetchState.responseHeadersComplete) {
-                // The transfer has not yet completed, don't settle the
-                // responseReadyPromise.
-                if (fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
-                    continue;
-                }
-
-                // The transfer completed without receiving any response
-                // headers. Reject responseReadyPromise.
-                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
-                    fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
-                                                             : std::string());
-                const JSValue result = JS_Call(fetchClient->jsContext,
-                    fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
-                    &error.get());
-                JS_FreeValue(fetchClient->jsContext, result);
-                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-                continue;
-            }
-
-            // Resolve resonseReadyPromise.
-            const JSValue result = JS_Call(fetchClient->jsContext,
-                fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0, nullptr);
-            JS_FreeValue(fetchClient->jsContext, result);
-            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-            continue;
-        }
-
-        // No responseReadPromise needs settling.
-        if (!fetchState.responseReadPromise.has_value()) {
-            continue;
-        }
-
-        // No error, buffered data, or end-of-stream to settle the
-        // responseReadPromise with.
-        if (!fetchState.error.hasValue() && fetchState.responseBuffer.empty() &&
-            fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
-            continue;
-        }
-
-        // Move fetchState.responseReadPromise out to a local variable and
-        // reset it so JS can request another read.
-        owned::JSPromise responseReadPromise = std::move(fetchState.responseReadPromise.value());
-        fetchState.responseReadPromise.reset();
-
-        // Reject the responseReadPromise if the transfer encountered an error.
-        if (fetchState.error.hasValue()) {
-            owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
-                fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
-                                                         : std::string());
-            const JSValue result = JS_Call(fetchClient->jsContext,
-                responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
-            JS_FreeValue(fetchClient->jsContext, result);
-            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-            continue;
-        }
-
-        // No error or buffered chunks remain, and the transfer has completed.
-        // Resolve the responseReadPromise with null to indicate end-of-stream.
-        if (fetchState.responseBuffer.empty()) {
-            JSValue jsNull = JS_NULL;
-            const JSValue result = JS_Call(fetchClient->jsContext,
-                responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
-            JS_FreeValue(fetchClient->jsContext, result);
-            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-            continue;
-        }
-
-        // Pop the oldest chunk from fetchState.responseBuffer.
-        const std::vector<uint8_t> chunk = std::move(fetchState.responseBuffer.front());
-        fetchState.responseBuffer.pop_front();
-        fetchState.responseBufferSize -= chunk.size();
-
-        // If curl is currently paused and popping that chunk from the
-        // responseBuffer dropped responseBufferSize to less than half of
-        // bodyBufferLimit, unpause curl.
-        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused &&
-            fetchState.responseBufferSize < bodyBufferLimit / 2) {
-            fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
-            const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
-            if (curlCode != CURLE_OK) {
-                fetchState.error = errors::message(curl_easy_strerror(curlCode));
-                fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
-                if (fetchState.curlMultiHandle != nullptr) {
-                    const CURLMcode curlMCode =
-                        curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
-                    if (curlMCode != CURLM_OK) {
-                        if (!fetchClient->pendingError->hasValue()) {
-                            fetchClient->pendingError->errorCode =
-                                std::error_code(static_cast<int>(curlMCode),
-                                    curlMultiErrorCategory);
-                        }
-                        return;
-                    }
-                    fetchState.curlMultiHandle = nullptr;
-                }
-            }
-            const bool ok = driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
-            if (!ok) {
-                return;
-            }
-        }
-
-        // Convert the chunk into a JS Uint8Array.
-        owned::JSValue uint8Array(fetchClient->jsContext,
-            JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
-        if (JS_IsException(uint8Array.get())) {
-            owned::JSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
-            const JSValue result = JS_Call(fetchClient->jsContext,
-                responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
-            JS_FreeValue(fetchClient->jsContext, result);
-            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-            continue;
-        }
-
-        // Resolve the responseReadPromise with the Uint8Array chunk.
-        const JSValue result = JS_Call(fetchClient->jsContext,
-            responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
-        JS_FreeValue(fetchClient->jsContext, result);
-        fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
-    }
-}
-
-std::mutex fetchResponseClassIDMutex = {};
+std::mutex classIDMutex = {};
 // Startup allocation failure may terminate.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 std::map<JSRuntime*, JSClassID> fetchClientClassIDMap = {};
 // Startup allocation failure may terminate.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {};
-
-// Validate the receiver without requiring an open or ready response.
-// The returned pointer is borrowed; failures leave a pending JS exception.
-std::optional<FetchResponse*> getFetchResponse(JSContext* jsContext, JSValueConst thisValue) {
-    JSClassID fetchResponseClassID = 0;
-    {
-        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
-        const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
-        if (!fetchResponseClassIDMap.contains(jsRuntime)) {
-            JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
-            return std::nullopt;
-        }
-        fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
-    }
-    const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
-    if (opaque == nullptr) {
-        return std::nullopt;
-    }
-    FetchResponse& fetchResponse =
-        static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
-    if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
-        std::terminate();
-    }
-    // JS can catch a native failure before control returns to the host.
-    if (fetchResponse.fetchClient->pendingError->hasValue()) {
-        JS_ThrowInternalError(jsContext, "FetchResponse: native failure");
-        return std::nullopt;
-    }
-    return &fetchResponse;
-}
 
 } // namespace
 
@@ -1028,10 +370,714 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
     return fetchRequest;
 }
 
+// Passed as CURLOPT_HEADERFUNCTION to read the response headers.
+// NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
+std::size_t FetchState::curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems,
+    void* userdata) noexcept {
+    try {
+        FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
+        if (integers::multiplyOverflows(size, nitems)) {
+            return CURL_WRITEFUNC_ERROR;
+        }
+        const std::size_t realsize = size * nitems;
+        const std::string_view line(buffer, realsize);
+
+        // If responseHeadersComplete, we are handling response trailers.
+        if (fetchState->responseHeadersComplete) {
+            if (integers::addOverflows(fetchState->responseTrailersSize, realsize)) {
+                return CURL_WRITEFUNC_ERROR;
+            }
+            if (fetchState->responseTrailersSize + realsize > (4U << 10U /* 4 KiB */)) {
+                fetchState->error = errors::message("Response trailers exceed 4 KiB");
+                return CURL_WRITEFUNC_ERROR;
+            }
+            fetchState->responseTrailersSize += realsize;
+            return realsize;
+        }
+
+        // Every fresh response following a redirect gets a new responseHeadersSize
+        // budget.
+        if (line.starts_with("HTTP/") && fetchState->responseRedirecting) {
+            fetchState->responseHeadersSize = 0;
+        }
+        if (integers::addOverflows(fetchState->responseHeadersSize, realsize)) {
+            return CURL_WRITEFUNC_ERROR;
+        }
+        if (fetchState->responseHeadersSize + realsize > (10U << 20U /* 10 MiB */)) {
+            fetchState->error = errors::message("Response headers exceed 10 MiB");
+            return CURL_WRITEFUNC_ERROR;
+        }
+        fetchState->responseHeadersSize += realsize;
+
+        // If it's a fresh response, reset the responseHeaders and the
+        // responseRedirecting flag.
+        if (line.starts_with("HTTP/")) {
+            fetchState->responseHeaders.clear();
+            fetchState->responseRedirecting = false;
+            return realsize;
+        }
+
+        // Response headers have not yet completed.
+        if (line != "\r\n" && line != "\n") {
+            return realsize;
+        }
+
+        // If we reach here, response headers have completed. Get the responseCode.
+        long responseCode = 0;
+        CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle,
+            CURLINFO_RESPONSE_CODE, &responseCode);
+        if (curlCode != CURLE_OK) {
+            fetchState->error = errors::message(curl_easy_strerror(curlCode));
+            return CURL_WRITEFUNC_ERROR;
+        }
+
+        // If it's informational 1XX, ignore the responseCode.
+        if (responseCode >= 100 && responseCode < 200) {
+            if (responseCode == 101) {
+                fetchState->error = errors::message("HTTP protocol upgrades are not supported");
+                return CURL_WRITEFUNC_ERROR;
+            }
+            return realsize;
+        }
+
+        // If it's a redirect 3XX and the Location header is present, ignore the
+        // responseCode and set the responseRedirecting flag.
+        if (responseCode == 301 || responseCode == 302 || responseCode == 303 ||
+            responseCode == 307 || responseCode == 308) {
+            curl_header* curlHeader = nullptr;
+            const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle,
+                "location", 0, CURLH_HEADER, -1, &curlHeader);
+            if (curlHCode != CURLHE_OK) {
+                if (curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
+                    fetchState->error =
+                        errors::message("Could not obtain response redirect header");
+                    return CURL_WRITEFUNC_ERROR;
+                }
+            }
+            if (curlHeader != nullptr && curlHeader->value[0] != '\0') {
+                fetchState->responseRedirecting = true;
+                return realsize;
+            }
+        }
+
+        fetchState->responseCode = responseCode;
+
+        // Get the effectiveURL.
+        // CURLINFO_EFFECTIVE_URL requires char**.
+        // NOLINTNEXTLINE(misc-const-correctness)
+        char* effectiveURL = nullptr;
+        curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_EFFECTIVE_URL,
+            &effectiveURL);
+        if (curlCode != CURLE_OK) {
+            fetchState->error = errors::message("Could not obtain response URL");
+            return CURL_WRITEFUNC_ERROR;
+        }
+        if (effectiveURL != nullptr) {
+            fetchState->effectiveURL = effectiveURL;
+        }
+
+        // Get the responseHeaders.
+        curl_header* curlHeader = nullptr;
+        while (true) {
+            curlHeader =
+                curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, curlHeader);
+            if (curlHeader == nullptr) {
+                break;
+            }
+            std::string name(curlHeader->name);
+            const std::string value(curlHeader->value);
+            for (char& ch : name) {
+                if (ch >= 'A' && ch <= 'Z') {
+                    ch = static_cast<char>(ch - 'A' + 'a');
+                }
+            }
+            fetchState->responseHeaders.push_back({name, value});
+        }
+        fetchState->responseHeadersComplete = true;
+        return realsize;
+    } catch (...) {
+        return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
+    }
+}
+
+// Passed as CURLOPT_WRITEFUNCTION to read the response body.
+std::size_t FetchState::curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
+    void* userdata) noexcept {
+    try {
+        FetchState* fetchState =
+            static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
+        if (integers::multiplyOverflows(size, nmemb)) {
+            return CURL_WRITEFUNC_ERROR;
+        }
+        const std::size_t realsize = size * nmemb;
+
+        // Body is empty.
+        if (realsize == 0) {
+            return 0;
+        }
+
+        // Ignore the body if we are redirecting.
+        if (fetchState->responseRedirecting) {
+            return realsize;
+        }
+
+        // If the responseBufferSize exceeds the bodyBufferLimit, pause curl
+        // transfers.
+        if (integers::addOverflows(fetchState->responseBufferSize, realsize)) {
+            return CURL_WRITEFUNC_ERROR;
+        }
+        if (fetchState->responseBufferSize + realsize > bodyBufferLimit) {
+            fetchState->responseCurlTransferStatus = CurlTransferStatus::Paused;
+            return CURL_WRITEFUNC_PAUSE;
+        }
+
+        // Else append the bytes to the responseBuffer.
+        fetchState->responseBuffer.push_back(std::vector<uint8_t>(ptr, ptr + realsize));
+        fetchState->responseBufferSize += realsize;
+        return realsize;
+    } catch (...) {
+        return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
+    }
+}
+
+// Drive curl transfers, then mark the ones that have completed. Returns true
+// on success, or false if a fatal error is recorded in pendingError.
+bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
+    // Check for pendingErrors before we call curl_multi_socket_action().
+    if (pendingError->hasValue()) {
+        return false;
+    }
+
+    // Tell curl to read and write socket data.
+    int runningHandles = 0;
+    const CURLMcode curlMCode =
+        curl_multi_socket_action(ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
+    if (curlMCode != CURLM_OK) {
+        if (!pendingError->hasValue()) {
+            pendingError->errorCode =
+                std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+        }
+        return false;
+    }
+
+    // curl_multi_socket_action() may invoke curlSocketFunction or
+    // curlTimerFunction, which may have set pendingError. Check before
+    // proceeding.
+    if (pendingError->hasValue()) {
+        return false;
+    }
+
+    // Mark the fetchStates that have completed.
+    while (true) {
+        int msgsInQueue = 0;
+        const CURLMsg* curlMsg = curl_multi_info_read(ownedCurlMultiHandle, &msgsInQueue);
+        if (curlMsg == nullptr) {
+            break;
+        }
+        if (curlMsg->msg != CURLMSG_DONE) {
+            continue;
+        }
+        if (!fetchStateMap.contains(curlMsg->easy_handle)) {
+            std::terminate(); // A completed transfer must have registered callback storage.
+        }
+        FetchState& fetchState = fetchStateMap.at(curlMsg->easy_handle);
+        fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
+        if (curlMsg->data.result != CURLE_OK || !fetchState.responseHeadersComplete) {
+            fetchState.error.errorCode = errors::ErrorCode::GenericError;
+            std::string errorMessage;
+            if (fetchState.error.errorMessage != nullptr) {
+                errorMessage = *fetchState.error.errorMessage;
+            }
+            if (curlMsg->data.result != CURLE_OK) {
+                if (!errorMessage.empty()) {
+                    errorMessage.append(": ");
+                }
+                errorMessage.append(curl_easy_strerror(curlMsg->data.result));
+            }
+            if (!fetchState.responseHeadersComplete) {
+                if (!errorMessage.empty()) {
+                    errorMessage.append(": ");
+                }
+                errorMessage.append("HTTP response ended without final headers");
+            }
+            fetchState.error.errorMessage =
+                std::make_shared<const std::string>(std::move(errorMessage));
+        }
+    }
+
+    // Signal the uv async handle, which triggers uvAsyncCallback().
+    uv_ref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
+    const int status = uv_async_send(uvAsyncHandle.get());
+    if (status != 0) {
+        uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
+        // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
+        // this is the first error, so no second mailbox check is needed.
+        pendingError->errorCode = std::error_code(status, uvErrorCategory);
+        return false;
+    }
+    return true;
+}
+
+// curl calls this function to specify which socket events should trigger
+// driveCurlTransfers().
+//
+// 1. CURL_POLL_NONE: Stop scheduling driveCurlTransfers() for socket events,
+// retaining the poll handle.
+//
+// 2. CURL_POLL_IN: Call driveCurlTransfers() when this socket becomes readable.
+//
+// 3. CURL_POLL_OUT: Call driveCurlTransfers() when this socket becomes writable.
+//
+// 4. CURL_POLL_INOUT: Call driveCurlTransfers() when this socket becomes
+// readable or writable.
+//
+// 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
+// and close the poll handle.
+int FetchClient::curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what,
+    void* clientp, void* /* socketp */) noexcept {
+    struct PollData {
+        FetchClient* fetchClient = nullptr;
+        curl_socket_t socket = CURL_SOCKET_BAD;
+    };
+    FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+    try {
+
+        // Stop watching this socket and close its poll handle.
+        if (what == CURL_POLL_REMOVE) {
+            fetchClient->uvPollHandleMap.erase(socket);
+            return 0;
+        }
+
+        // Get the uvPollHandle associated with this socket, creating it if not
+        // exists.
+        uv_poll_t* uvPollHandle = nullptr;
+        if (fetchClient->uvPollHandleMap.contains(socket)) {
+            uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
+        } else {
+            owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
+            const int status =
+                uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
+            if (status != 0) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                }
+                return -1;
+            }
+            ownedUvPollHandle.setInitialized();
+            ownedUvPollHandle.get()->data =
+                new void_ptr::VoidPtr(std::make_unique<PollData>(PollData{
+                    .fetchClient = fetchClient,
+                    .socket = socket,
+                }));
+            fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
+            uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
+        }
+
+        // Stop watching this socket, retaining its poll handle.
+        if (what == CURL_POLL_NONE) {
+            const int status = uv_poll_stop(uvPollHandle);
+            if (status != 0) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                }
+                return -1;
+            }
+            return 0;
+        }
+
+        // libuv calls uvPollCallback when the socket is readable, writable, or
+        // encounters an error.
+        const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
+            const PollData& pollData =
+                static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
+            FetchClient* fetchClient = pollData.fetchClient;
+            const curl_socket_t socket = pollData.socket;
+            try {
+                unsigned int eventBitmask = 0;
+                if (status < 0) {
+                    eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_ERR);
+                }
+                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_READABLE)) !=
+                    0) {
+                    eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_IN);
+                }
+                if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) !=
+                    0) {
+                    eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
+                }
+                const bool ok =
+                    fetchClient->driveCurlTransfers(socket, static_cast<int>(eventBitmask));
+                if (!ok) {
+                    return;
+                }
+            } catch (...) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    fetchClient->pendingError->exceptionPtr = std::current_exception();
+                }
+            }
+        };
+
+        unsigned int events = 0;
+        if (what == CURL_POLL_IN) {
+            // Call driveCurlTransfers() when this socket becomes readable.
+            events = static_cast<unsigned int>(UV_READABLE);
+        } else if (what == CURL_POLL_OUT) {
+            // Call driveCurlTransfers() when this socket becomes writable.
+            events = static_cast<unsigned int>(UV_WRITABLE);
+        } else if (what == CURL_POLL_INOUT) {
+            // Call driveCurlTransfers() when this socket becomes readable or
+            // writable.
+            events =
+                static_cast<unsigned int>(UV_READABLE) | static_cast<unsigned int>(UV_WRITABLE);
+        }
+        const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), uvPollCallback);
+        if (status != 0) {
+            if (!fetchClient->pendingError->hasValue()) {
+                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    } catch (...) {
+        if (!fetchClient->pendingError->hasValue()) {
+            fetchClient->pendingError->exceptionPtr = std::current_exception();
+        }
+        return -1;
+    }
+}
+
+// curl calls this function to update its timeout requirements.
+//
+// 1. timeout_ms < 0: Cancel the scheduled call to driveCurlTransfers().
+//
+// 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
+int FetchClient::curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms,
+    void* clientp) noexcept {
+    const FetchClient* fetchClient =
+        static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+    try {
+
+        // Cancel the scheduled call to driveCurlTransfers().
+        if (timeout_ms < 0) {
+            const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
+            if (status != 0) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                }
+                return -1;
+            }
+            return 0;
+        }
+
+        // Refresh libuv's cached time so the delay starts from now.
+        uv_update_time(fetchClient->uvLoop);
+
+        // libuv calls uvTimerCallback when the timer expires, which calls
+        // driveCurlTransfers().
+        const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
+            FetchClient* fetchClient =
+                static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
+            try {
+                const bool ok = fetchClient->driveCurlTransfers(CURL_SOCKET_TIMEOUT, 0);
+                if (!ok) {
+                    return;
+                }
+            } catch (...) {
+                if (!fetchClient->pendingError->hasValue()) {
+                    fetchClient->pendingError->exceptionPtr = std::current_exception();
+                }
+            }
+        };
+
+        // Schedule driveCurlTransfers() to run after this delay.
+        const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback,
+            static_cast<uint64_t>(timeout_ms), 0);
+        if (status != 0) {
+            if (!fetchClient->pendingError->hasValue()) {
+                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+            }
+            return -1;
+        }
+        return 0;
+    } catch (...) {
+        if (!fetchClient->pendingError->hasValue()) {
+            fetchClient->pendingError->exceptionPtr = std::current_exception();
+        }
+        return -1;
+    }
+}
+
+// Settle pending promises with response readiness, body chunks, end-of-stream,
+// or errors.
+void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
+    FetchClient* fetchClient =
+        static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
+    uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
+    // Another callback may have recorded an error earlier in this iteration.
+    if (fetchClient->pendingError->hasValue()) {
+        return;
+    }
+    try {
+        // Snapshot the fetchStateMap's CURL* keys + fetchStateID into an entries
+        // list before looping over the entries. The fetchStateMap can be modified
+        // during iteration, so we need a stable list to iterate over.
+        std::vector<std::pair<CURL*, uint64_t>> entries;
+        entries.reserve(fetchClient->fetchStateMap.size());
+        for (const std::pair<CURL* const, FetchState>& entry : fetchClient->fetchStateMap) {
+            entries.push_back({entry.first, entry.second.fetchStateID});
+        }
+
+        // Loop over the entries.
+        for (const std::pair<CURL*, uint64_t>& entry : entries) {
+            if (fetchClient->pendingError->hasValue()) {
+                return;
+            }
+            CURL* curlEasyHandle = entry.first;
+            const uint64_t fetchStateID = entry.second;
+
+            // Earlier iterations run JS promise jobs, which may close other
+            // responses and remove their states from the map. Skip handles whose
+            // states have been removed since entries was snapshotted.
+            if (!fetchClient->fetchStateMap.contains(curlEasyHandle)) {
+                continue;
+            }
+
+            // Get the fetchState for the give curlEasyHandle.
+            //
+            // Curl may reuse CURL* pointers, so we need to additionally check if
+            // the fetchStateID aligns.
+            FetchState& fetchState = fetchClient->fetchStateMap.at(curlEasyHandle);
+            if (fetchState.fetchStateID != fetchStateID) {
+                continue;
+            }
+
+            // If fetchState was abandoned (the QuickJS GC finalizer sets this
+            // flag), it means the user forgot to call fetchResponse.close() and is
+            // no longer referencing the `fetchResponse` variable. Terminate its
+            // current ready/read promises with AbortError.
+            if (fetchState.abandoned) {
+                const std::map<CURL*, FetchState>::node_type mapNode =
+                    fetchClient->fetchStateMap.extract(curlEasyHandle);
+                if (mapNode.empty()) {
+                    std::terminate(); // An extracted abandoned state must exist.
+                }
+                FetchState& fetchState = mapNode.mapped();
+                const errors::Error error = fetchState.close();
+                if (error.hasValue()) {
+                    if (!fetchClient->pendingError->hasValue()) {
+                        *fetchClient->pendingError = error;
+                    }
+                }
+                if (fetchClient->pendingError->hasValue()) {
+                    return;
+                }
+                // Retain settlement functions locally: close() releases the state's
+                // JS references. These moves cannot throw, so close precedes all exits.
+                owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
+                std::optional<owned::JSPromise> responseReadPromise =
+                    std::move(fetchState.responseReadPromise);
+                const JSPromiseStateEnum responseReadyPromiseState =
+                    JS_PromiseState(fetchClient->jsContext, responseReadyPromise.promise.get());
+                if (responseReadyPromiseState != JS_PROMISE_PENDING &&
+                    !responseReadPromise.has_value()) {
+                    continue;
+                }
+                owned::JSValue jsError =
+                    jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
+                // Reject responseReadyPromise.
+                if (responseReadyPromiseState == JS_PROMISE_PENDING) {
+                    const JSValue result = JS_Call(fetchClient->jsContext,
+                        responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+                    JS_FreeValue(fetchClient->jsContext, result);
+                }
+                // Reject responseReadPromise.
+                if (responseReadPromise.has_value()) {
+                    const JSPromiseStateEnum responseReadPromiseState =
+                        JS_PromiseState(fetchClient->jsContext,
+                            responseReadPromise.value().promise.get());
+                    if (responseReadPromiseState == JS_PROMISE_PENDING) {
+                        const JSValue result = JS_Call(fetchClient->jsContext,
+                            responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1,
+                            &jsError.get());
+                        JS_FreeValue(fetchClient->jsContext, result);
+                    }
+                }
+                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                continue;
+            }
+
+            // If responseReadyPromise has not yet been settled, settle it first.
+            const JSPromiseStateEnum responseReadyPromiseState =
+                JS_PromiseState(fetchClient->jsContext,
+                    fetchState.responseReadyPromise.promise.get());
+            if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+                responseReadyPromiseState != JS_PROMISE_REJECTED) {
+                if (!fetchState.responseHeadersComplete) {
+                    // The transfer has not yet completed, don't settle the
+                    // responseReadyPromise.
+                    if (fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
+                        continue;
+                    }
+
+                    // The transfer completed without receiving any response
+                    // headers. Reject responseReadyPromise.
+                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
+                        fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
+                                                                 : std::string());
+                    const JSValue result = JS_Call(fetchClient->jsContext,
+                        fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
+                        &error.get());
+                    JS_FreeValue(fetchClient->jsContext, result);
+                    fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                    continue;
+                }
+
+                // Resolve resonseReadyPromise.
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0,
+                    nullptr);
+                JS_FreeValue(fetchClient->jsContext, result);
+                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                continue;
+            }
+
+            // No responseReadPromise needs settling.
+            if (!fetchState.responseReadPromise.has_value()) {
+                continue;
+            }
+
+            // No error, buffered data, or end-of-stream to settle the
+            // responseReadPromise with.
+            if (!fetchState.error.hasValue() && fetchState.responseBuffer.empty() &&
+                fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
+                continue;
+            }
+
+            // Move fetchState.responseReadPromise out to a local variable and
+            // reset it so JS can request another read.
+            owned::JSPromise responseReadPromise =
+                std::move(fetchState.responseReadPromise.value());
+            fetchState.responseReadPromise.reset();
+
+            // Reject the responseReadPromise if the transfer encountered an error.
+            if (fetchState.error.hasValue()) {
+                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
+                    fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
+                                                             : std::string());
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+                JS_FreeValue(fetchClient->jsContext, result);
+                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                continue;
+            }
+
+            // No error or buffered chunks remain, and the transfer has completed.
+            // Resolve the responseReadPromise with null to indicate end-of-stream.
+            if (fetchState.responseBuffer.empty()) {
+                JSValue jsNull = JS_NULL;
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
+                JS_FreeValue(fetchClient->jsContext, result);
+                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                continue;
+            }
+
+            // Pop the oldest chunk from fetchState.responseBuffer.
+            const std::vector<uint8_t> chunk = std::move(fetchState.responseBuffer.front());
+            fetchState.responseBuffer.pop_front();
+            fetchState.responseBufferSize -= chunk.size();
+
+            // If curl is currently paused and popping that chunk from the
+            // responseBuffer dropped responseBufferSize to less than half of
+            // bodyBufferLimit, unpause curl.
+            if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused &&
+                fetchState.responseBufferSize < bodyBufferLimit / 2) {
+                fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
+                const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
+                if (curlCode != CURLE_OK) {
+                    fetchState.error = errors::message(curl_easy_strerror(curlCode));
+                    fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
+                    if (fetchState.curlMultiHandle != nullptr) {
+                        const CURLMcode curlMCode =
+                            curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
+                        if (curlMCode != CURLM_OK) {
+                            if (!fetchClient->pendingError->hasValue()) {
+                                fetchClient->pendingError->errorCode =
+                                    std::error_code(static_cast<int>(curlMCode),
+                                        curlMultiErrorCategory);
+                            }
+                            return;
+                        }
+                        fetchState.curlMultiHandle = nullptr;
+                    }
+                }
+                const bool ok = fetchClient->driveCurlTransfers(CURL_SOCKET_TIMEOUT, 0);
+                if (!ok) {
+                    return;
+                }
+            }
+
+            // Convert the chunk into a JS Uint8Array.
+            owned::JSValue uint8Array(fetchClient->jsContext,
+                JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
+            if (JS_IsException(uint8Array.get())) {
+                owned::JSValue error(fetchClient->jsContext,
+                    JS_GetException(fetchClient->jsContext));
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                JS_FreeValue(fetchClient->jsContext, result);
+                fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+                continue;
+            }
+
+            // Resolve the responseReadPromise with the Uint8Array chunk.
+            const JSValue result = JS_Call(fetchClient->jsContext,
+                responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
+            JS_FreeValue(fetchClient->jsContext, result);
+            fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
+        }
+    } catch (...) {
+        if (!fetchClient->pendingError->hasValue()) {
+            fetchClient->pendingError->exceptionPtr = std::current_exception();
+        }
+    }
+}
+
+// Validate the receiver without requiring an open or ready response.
+// The returned pointer is borrowed; failures leave a pending JS exception.
+std::optional<FetchResponse*> FetchResponse::fromThisValue(JSContext* jsContext,
+    JSValueConst thisValue) {
+    JSClassID fetchResponseClassID = 0;
+    {
+        JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
+        const std::lock_guard<std::mutex> lock(classIDMutex);
+        if (!fetchResponseClassIDMap.contains(jsRuntime)) {
+            JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
+            return std::nullopt;
+        }
+        fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
+    }
+    const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchResponseClassID);
+    if (opaque == nullptr) {
+        return std::nullopt;
+    }
+    FetchResponse& fetchResponse =
+        static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
+    if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
+        std::terminate();
+    }
+    // JS can catch a native failure before control returns to the host.
+    if (fetchResponse.fetchClient->pendingError->hasValue()) {
+        JS_ThrowInternalError(jsContext, "FetchResponse: native failure");
+        return std::nullopt;
+    }
+    return &fetchResponse;
+}
+
 JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
     JSValueConst* /* argv */) {
     try {
-        std::optional<FetchResponse*> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::optional<FetchResponse*> fetchResponseResult = fromThisValue(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return JS_EXCEPTION;
         }
@@ -1092,7 +1138,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
 JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
     JSValueConst* /* argv */) {
     try {
-        std::optional<FetchResponse*> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::optional<FetchResponse*> fetchResponseResult = fromThisValue(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return JS_EXCEPTION;
         }
@@ -1159,7 +1205,7 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
 JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
     JSValueConst* /* argv */) {
     try {
-        std::optional<FetchResponse*> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::optional<FetchResponse*> fetchResponseResult = fromThisValue(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return JS_EXCEPTION;
         }
@@ -1192,7 +1238,7 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
 JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
     JSValueConst* /* argv */) {
     try {
-        std::optional<FetchResponse*> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::optional<FetchResponse*> fetchResponseResult = fromThisValue(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return JS_EXCEPTION;
         }
@@ -1233,7 +1279,7 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
 JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
     JSValueConst* /* argv */) {
     try {
-        std::optional<FetchResponse*> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::optional<FetchResponse*> fetchResponseResult = fromThisValue(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return JS_EXCEPTION;
         }
@@ -1269,16 +1315,16 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
     try {
-        JSClassID clientClassID = 0;
+        JSClassID fetchClientClassID = 0;
         {
             JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
-            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            const std::lock_guard<std::mutex> lock(classIDMutex);
             if (!fetchClientClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowInternalError(jsContext, "FetchClient class is not registered");
             }
-            clientClassID = fetchClientClassIDMap.at(jsRuntime);
+            fetchClientClassID = fetchClientClassIDMap.at(jsRuntime);
         }
-        const void* opaque = JS_GetOpaque2(jsContext, thisValue, clientClassID);
+        const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchClientClassID);
         if (opaque == nullptr) {
             return JS_EXCEPTION;
         }
@@ -1292,7 +1338,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         JSClassID fetchResponseClassID = 0;
         {
             JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
-            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            const std::lock_guard<std::mutex> lock(classIDMutex);
             if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
             }
@@ -1421,13 +1467,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION,
-            [](char* buffer, std::size_t size, std::size_t nitems, void* userdata) noexcept {
-                try {
-                    return curlHeaderFunction(buffer, size, nitems, userdata);
-                } catch (...) {
-                    return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
-                }
-            });
+            FetchState::curlHeaderFunction);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1437,13 +1477,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION,
-            [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
-                try {
-                    return curlWriteFunction(bytes, size, count, userdata);
-                } catch (...) {
-                    return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
-                }
-            });
+            FetchState::curlWriteFunction);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1657,23 +1691,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
     }
     {
         owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
-        const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
-            FetchClient* fetchClient =
-                static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
-            uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
-            // Another callback may have recorded an error earlier in this iteration.
-            if (fetchClient->pendingError->hasValue()) {
-                return;
-            }
-            try {
-                settlePendingPromises(fetchClient);
-            } catch (...) {
-                if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->exceptionPtr = std::current_exception();
-                }
-            }
-        };
-        const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), uvAsyncCallback);
+        const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), FetchClient::uvAsyncCallback);
         if (status != 0) {
             return std::unexpected(errors::Error{
                 .errorCode = std::error_code(status, uvErrorCategory),
@@ -1693,19 +1711,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
         });
     }
     curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION,
-        [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata,
-            void* socketData) noexcept {
-            try {
-                return curlSocketFunction(curlEasyHandle, socket, action, userdata, socketData);
-            } catch (...) {
-                const FetchClient* fetchClient =
-                    static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-                if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->exceptionPtr = std::current_exception();
-                }
-                return -1;
-            }
-        });
+        FetchClient::curlSocketFunction);
     if (curlMCode != CURLM_OK) {
         return std::unexpected(errors::Error{
             .errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory),
@@ -1719,18 +1725,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
         });
     }
     curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION,
-        [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
-            try {
-                return curlTimerFunction(curlMultiHandle, milliseconds, userdata);
-            } catch (...) {
-                const FetchClient* fetchClient =
-                    static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-                if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->exceptionPtr = std::current_exception();
-                }
-                return -1;
-            }
-        });
+        FetchClient::curlTimerFunction);
     if (curlMCode != CURLM_OK) {
         return std::unexpected(errors::Error{
             .errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory),
@@ -1797,14 +1792,14 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         JSClassID clientClassID = 0;
         {
-            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            const std::lock_guard<std::mutex> lock(classIDMutex);
             if (fetchClientClassIDMap.contains(jsRuntime)) {
                 clientClassID = fetchClientClassIDMap.at(jsRuntime);
             } else {
                 JS_NewClassID(jsRuntime, &clientClassID);
                 fetchClientClassIDMap.insert_or_assign(jsRuntime, clientClassID);
                 const auto jsRuntimeFinalizer = [](JSRuntime* jsRuntime, void* /* argument */) {
-                    const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+                    const std::lock_guard<std::mutex> lock(classIDMutex);
                     fetchClientClassIDMap.erase(jsRuntime);
                 };
                 const int status = JS_AddRuntimeFinalizer(jsRuntime, jsRuntimeFinalizer, nullptr);
@@ -1832,14 +1827,14 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         }
         JSClassID fetchResponseClassID = 0;
         {
-            const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+            const std::lock_guard<std::mutex> lock(classIDMutex);
             if (fetchResponseClassIDMap.contains(jsRuntime)) {
                 fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
             } else {
                 JS_NewClassID(jsRuntime, &fetchResponseClassID);
                 fetchResponseClassIDMap.insert_or_assign(jsRuntime, fetchResponseClassID);
                 const auto jsRuntimeFinalizer = [](JSRuntime* jsRuntime, void* /* argument */) {
-                    const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
+                    const std::lock_guard<std::mutex> lock(classIDMutex);
                     fetchResponseClassIDMap.erase(jsRuntime);
                 };
                 const int status = JS_AddRuntimeFinalizer(jsRuntime, jsRuntimeFinalizer, nullptr);
@@ -1880,7 +1875,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                         }
                         // GC can run while allocating promise results. Do
                         // not erase a FetchState currently being accessed
-                        // by settlePendingPromises(), and do not settle promises
+                        // by uvAsyncCallback(), and do not settle promises
                         // from inside a QuickJS finalizer.
                         fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned =
                             true;
