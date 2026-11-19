@@ -24,7 +24,8 @@ struct ConsoleData {
 // JS arguments: level (log/debug/info/warn/error) and already-formatted text.
 // Returns undefined, or JS_EXCEPTION. Borrows the ConsoleSink carrier retained
 // in functionData[0] by the module's JS_NewCFunctionData2 binding.
-JSValue consoleWrite(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData);
+JSValue consoleWrite(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv,
+    int magic, JSValueConst* functionData);
 
 // Registers amj:console_impl, exporting consoleWrite(level, text).
 // Accepts only the levels log/debug/info/warn/error and already-formatted text;
@@ -42,6 +43,7 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst thisValue, int argc, JSV
 //
 // Call once per context before loading consumers. Returns an engine-managed
 // module, or nullptr with a pending exception. No globals are installed.
-JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(ConsoleData)>& consoleSink);
+JSModuleDef* createConsoleImplModule(JSContext* jsContext,
+    std::function<void(ConsoleData)>& consoleSink);
 
 } // namespace amj::javascript

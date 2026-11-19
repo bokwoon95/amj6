@@ -22,7 +22,9 @@ owned::JSValue jsNewError(JSContext* jsContext, std::string name, std::string me
 // An in-memory JSON tree, not serialized JSON text. Numbers must be finite.
 // MSVC map moves can allocate; implicit moves may throw and callers handle allocation failures.
 struct JSONValue { // NOLINT(bugprone-exception-escape)
-    std::variant<std::nullptr_t, bool, double, std::string, std::vector<JSONValue>, std::map<std::string, JSONValue>> value = nullptr;
+    std::variant<std::nullptr_t, bool, double, std::string, std::vector<JSONValue>,
+        std::map<std::string, JSONValue>>
+        value = nullptr;
 
     bool operator==(const JSONValue& jsonValue) const {
         return this->value == jsonValue.value;
@@ -79,7 +81,8 @@ std::optional<uint32_t> jsToUint32(JSContext* jsContext, JSValueConst jsValueCon
 
 // Defines an own, writable/enumerable/configurable string property.
 // Returns false with a pending JS exception on failure.
-bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, std::string_view value);
+bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key,
+    std::string_view value);
 
 bool equalFoldASCII(std::string_view left, std::string_view right);
 

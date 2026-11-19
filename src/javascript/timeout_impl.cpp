@@ -30,7 +30,9 @@ namespace void_ptr = amj::void_ptr;
 namespace {
 
 std::mutex timeoutClassIDMutex = {};
-std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+std::map<JSRuntime*, JSClassID> timeoutClassIDMap = {};
 
 struct TimerData {
     Timeout* timeout = nullptr; // Borrowed.
@@ -54,9 +56,12 @@ void Timeout::Timer::close() {
     });
 }
 
-Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
+Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop,
+    std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || jsExecutePendingJobs == nullptr) {
-        throw std::invalid_argument("Timeout.constructor: missing context, loop, or completion hook");
+        throw std::invalid_argument(
+            "Timeout.constructor: missing context, loop, or completion hook"
+        );
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
@@ -80,7 +85,8 @@ void Timeout::shutdown() {
     timerMap.clear();
 }
 
-JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, Timeout& timeout) {
+JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv,
+    Timeout& timeout) {
     try {
         if (this_thread::get_id() != timeout.ownerThreadID) {
             std::terminate(); // Even creating a JS exception requires the owner thread.
@@ -92,7 +98,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
             return JS_ThrowInternalError(jsContext, "timeoutSet: owner is shut down");
         }
         if (argc < 2) {
-            return JS_ThrowTypeError(jsContext, "timeoutSet: requires at least 2 arguments (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext,
+                "timeoutSet: requires at least 2 arguments (%d provided)", argc);
         }
 
         // Get callback function.
@@ -110,13 +117,16 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (status < 0) {
             return JS_EXCEPTION;
         }
-        if (!std::isfinite(delayMs) || std::floor(delayMs) != delayMs || delayMs < 0.0 || delayMs > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
-            return JS_ThrowRangeError(jsContext, "timeoutSet: arg1: delay must be a positive number within 32-bit signed integer range");
+        if (!std::isfinite(delayMs) || std::floor(delayMs) != delayMs || delayMs < 0.0 ||
+            delayMs > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
+            return JS_ThrowRangeError(jsContext, "timeoutSet: arg1: delay must be a positive "
+                                                 "number within 32-bit signed integer range");
         }
 
         // Allocate the next unused positive timer ID, wrapping at INT32_MAX.
         while (true) {
-            if (timeout.timerMap.size() >= static_cast<std::size_t>((std::numeric_limits<int32_t>::max)())) {
+            if (timeout.timerMap.size() >=
+                static_cast<std::size_t>((std::numeric_limits<int32_t>::max)())) {
                 return JS_ThrowRangeError(jsContext, "timeoutSet: timerIDs exhausted");
             }
             if (timeout.timerIDCounter == (std::numeric_limits<int32_t>::max)()) {
@@ -134,15 +144,14 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s", uv_strerror(status));
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s",
+                uv_strerror(status));
         }
         uvTimerHandle.setInitialized();
-        uvTimerHandle.get()->data = new void_ptr::VoidPtr(
-            std::make_unique<TimerData>(TimerData{
-                .timeout = &timeout,
-                .timerID = timerID,
-            })
-        );
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<TimerData>(TimerData{
+            .timeout = &timeout,
+            .timerID = timerID,
+        }));
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -152,9 +161,11 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         uv_update_time(timeout.uvLoop);
         const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
             try {
-                const TimerData& timerData = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<TimerData>();
+                const TimerData& timerData =
+                    static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<TimerData>();
                 Timeout* timeout = timerData.timeout;
-                const std::map<int32_t, Timeout::Timer>::node_type mapNode = timeout->timerMap.extract(timerData.timerID);
+                const std::map<int32_t, Timeout::Timer>::node_type mapNode =
+                    timeout->timerMap.extract(timerData.timerID);
                 if (mapNode.empty()) {
                     std::terminate(); // An active timer must have a registration.
                 }
@@ -164,7 +175,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 timer.close();
 
                 // Call the callback and discard the result.
-                const JSValue result = JS_Call(timeout->jsContext, timer.callback.get(), JS_UNDEFINED, 0, nullptr);
+                const JSValue result =
+                    JS_Call(timeout->jsContext, timer.callback.get(), JS_UNDEFINED, 0, nullptr);
                 JS_FreeValue(timeout->jsContext, result);
                 timer.callback.reset();
 
@@ -174,10 +186,12 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 std::terminate();
             }
         };
-        status = uv_timer_start(timer.ownedUvTimerHandle, uvTimerCallback, static_cast<uint64_t>(delayMs), 0);
+        status = uv_timer_start(timer.ownedUvTimerHandle, uvTimerCallback,
+            static_cast<uint64_t>(delayMs), 0);
         if (status != 0) {
             timeout.timerMap.erase(timerID);
-            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s", uv_strerror(status));
+            return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_start: %s",
+                uv_strerror(status));
         }
         return JS_NewInt32(jsContext, timerID);
     } catch (const std::bad_alloc&) {
@@ -192,7 +206,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
     }
 }
 
-JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, Timeout& timeout) {
+JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
+    JSValueConst* argv, Timeout& timeout) {
     try {
         if (this_thread::get_id() != timeout.ownerThreadID) {
             std::terminate();
@@ -201,7 +216,8 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             return JS_ThrowInternalError(jsContext, "timeoutClear: wrong context");
         }
         if (argc < 1) {
-            return JS_ThrowTypeError(jsContext, "timeoutClear: requires 1 argument (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext, "timeoutClear: requires 1 argument (%d provided)",
+                argc);
         }
 
         // Get timerID number.
@@ -213,7 +229,8 @@ JSValue timeoutClear(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         if (status < 0) {
             return JS_EXCEPTION;
         }
-        if (!std::isfinite(timerID) || std::floor(timerID) != timerID || timerID < 0.0 || timerID > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
+        if (!std::isfinite(timerID) || std::floor(timerID) != timerID || timerID < 0.0 ||
+            timerID > static_cast<double>((std::numeric_limits<int32_t>::max)())) {
             return JS_UNDEFINED;
         }
         const int32_t timerIDInt32 = static_cast<int32_t>(timerID);
@@ -238,7 +255,8 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
             std::terminate();
         }
         if (jsContext != timeout.jsContext || timeout.shuttingDown) {
-            JS_ThrowInternalError(jsContext, "createTimeoutImplModule: wrong context or owner is shut down");
+            JS_ThrowInternalError(jsContext,
+                "createTimeoutImplModule: wrong context or owner is shut down");
             return nullptr;
         }
 
@@ -269,9 +287,11 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         if (!JS_IsRegisteredClass(jsRuntime, timeoutClassID)) {
             const JSClassDef jsClassDef = {
                 .class_name = "Timeout",
-                .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                    delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-                },
+                .finalizer =
+                    [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                        delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value,
+                            JS_GetClassID(value)));
+                    },
                 .gc_mark = nullptr, // Callback references belong to the host-owned Timeout.
                 .call = nullptr,
                 .exotic = nullptr,
@@ -284,7 +304,8 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         }
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
-        owned::JSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
+        owned::JSValue modulePrivateValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -316,39 +337,49 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         };
 
         // Create a new JS module.
-        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            // Extract the modulePrivateValue from the jsContext.
-            const owned::JSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
-            if (JS_IsException(modulePrivateValue.get())) {
-                return -1;
-            }
+        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl",
+            [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
+                // Extract the modulePrivateValue from the jsContext.
+                const owned::JSValue modulePrivateValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
+                if (JS_IsException(modulePrivateValue.get())) {
+                    return -1;
+                }
 
-            const auto jsCFunctionData = [](JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, int magic, JSValueConst* functionData) -> JSValue {
-                // QuickJS retains the JS carrier, which borrows the native Timeout.
-                const void* timeoutData = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
-                if (timeoutData == nullptr) {
-                    return JS_EXCEPTION;
+                const auto jsCFunctionData = [](JSContext* jsContext, JSValueConst thisValue,
+                                                 int argc, JSValueConst* argv, int magic,
+                                                 JSValueConst* functionData) -> JSValue {
+                    // QuickJS retains the JS carrier, which borrows the native Timeout.
+                    const void* timeoutData =
+                        JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+                    if (timeoutData == nullptr) {
+                        return JS_EXCEPTION;
+                    }
+                    Timeout* timeout =
+                        static_cast<const void_ptr::VoidPtr*>(timeoutData)->cast<Timeout*>();
+                    if (magic < 0 || static_cast<std::size_t>(magic) >= functionEntries.size()) {
+                        return JS_ThrowInternalError(jsContext, "Invalid timeout function index");
+                    }
+                    return functionEntries.at(static_cast<std::size_t>(magic))
+                        .function(jsContext, thisValue, argc, argv, *timeout);
+                };
+                std::vector<JSValue> functionData = {modulePrivateValue.get()};
+                for (std::size_t index = 0; index < functionEntries.size(); index++) {
+                    const FunctionEntry& functionEntry = functionEntries.at(index);
+                    const JSValue function = JS_NewCFunctionData(jsContext, jsCFunctionData,
+                        functionEntry.argc, static_cast<int>(index),
+                        static_cast<int>(functionData.size()), functionData.data());
+                    if (JS_IsException(function)) {
+                        return -1;
+                    }
+                    const int status =
+                        JS_SetModuleExport(jsContext, jsModuleDef, functionEntry.name, function);
+                    if (status < 0) {
+                        return -1;
+                    }
                 }
-                Timeout* timeout = static_cast<const void_ptr::VoidPtr*>(timeoutData)->cast<Timeout*>();
-                if (magic < 0 || static_cast<std::size_t>(magic) >= functionEntries.size()) {
-                    return JS_ThrowInternalError(jsContext, "Invalid timeout function index");
-                }
-                return functionEntries.at(static_cast<std::size_t>(magic)).function(jsContext, thisValue, argc, argv, *timeout);
-            };
-            std::vector<JSValue> functionData = {modulePrivateValue.get()};
-            for (std::size_t index = 0; index < functionEntries.size(); index++) {
-                const FunctionEntry& functionEntry = functionEntries.at(index);
-                const JSValue function = JS_NewCFunctionData(jsContext, jsCFunctionData, functionEntry.argc, static_cast<int>(index), static_cast<int>(functionData.size()), functionData.data());
-                if (JS_IsException(function)) {
-                    return -1;
-                }
-                const int status = JS_SetModuleExport(jsContext, jsModuleDef, functionEntry.name, function);
-                if (status < 0) {
-                    return -1;
-                }
-            }
-            return 0;
-        });
+                return 0;
+            });
         if (jsModuleDef == nullptr) {
             return nullptr;
         }

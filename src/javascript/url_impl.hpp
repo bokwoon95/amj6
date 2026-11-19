@@ -15,11 +15,13 @@ JSValue urlParse(JSContext* jsContext, JSValueConst thisValue, int argc, JSValue
 
 // href/component/value: strings. Returns a new URLParts object, or null when Ada
 // rejects the URL/change. Unknown component names throw. Does not mutate input.
-JSValue urlWithComponent(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+JSValue urlWithComponent(JSContext* jsContext, JSValueConst thisValue, int argc,
+    JSValueConst* argv);
 
 // queryString: string, optionally prefixed by '?'. Returns ordered [name, value]
 // pairs, preserving duplicates, using application/x-www-form-urlencoded rules.
-JSValue queryStringParse(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+JSValue queryStringParse(JSContext* jsContext, JSValueConst thisValue, int argc,
+    JSValueConst* argv);
 
 // pairs: array of two-string arrays. Returns an encoded query without '?'.
 JSValue queryStringify(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);

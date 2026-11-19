@@ -78,7 +78,9 @@ errors::Error save(const std::string& service, const std::string& user, const st
         label += " (" + user + ")";
     }
     GError* error = nullptr;
-    const gboolean stored = secret_password_store_sync(&schema, SECRET_COLLECTION_DEFAULT, label.c_str(), value.c_str(), nullptr, &error, "service", service.c_str(), "username", user.c_str(), nullptr);
+    const gboolean stored =
+        secret_password_store_sync(&schema, SECRET_COLLECTION_DEFAULT, label.c_str(), value.c_str(),
+            nullptr, &error, "service", service.c_str(), "username", user.c_str(), nullptr);
     if (error != nullptr) {
         return makeError(error);
     }
@@ -88,11 +90,14 @@ errors::Error save(const std::string& service, const std::string& user, const st
     return {};
 }
 
-std::expected<std::string, errors::Error> load(const std::string& service, const std::string& user) {
+std::expected<std::string, errors::Error> load(const std::string& service,
+    const std::string& user) {
     const SecretSchema schema = makeSchema();
     GError* error = nullptr;
-    gchar* rawSecret = secret_password_lookup_sync(&schema, nullptr, &error, "service", service.c_str(), "username", user.c_str(), nullptr);
-    const std::unique_ptr<gchar, decltype(&secret_password_free)> ownedSecret(rawSecret, &secret_password_free);
+    gchar* rawSecret = secret_password_lookup_sync(&schema, nullptr, &error, "service",
+        service.c_str(), "username", user.c_str(), nullptr);
+    const std::unique_ptr<gchar, decltype(&secret_password_free)> ownedSecret(rawSecret,
+        &secret_password_free);
     if (error != nullptr || rawSecret == nullptr) {
         return std::unexpected(makeError(error));
     }
@@ -102,7 +107,8 @@ std::expected<std::string, errors::Error> load(const std::string& service, const
 errors::Error remove(const std::string& service, const std::string& user) {
     const SecretSchema schema = makeSchema();
     GError* error = nullptr;
-    const gboolean deleted = secret_password_clear_sync(&schema, nullptr, &error, "service", service.c_str(), "username", user.c_str(), nullptr);
+    const gboolean deleted = secret_password_clear_sync(&schema, nullptr, &error, "service",
+        service.c_str(), "username", user.c_str(), nullptr);
     if (error != nullptr || deleted == 0) {
         return makeError(error);
     }

@@ -67,14 +67,19 @@ TEST(Errors, FormatsCodeWithoutMessage) {
 TEST(Errors, FormatsCauseStacktrace) {
     const Error causeError = {
         .errorMessage = std::make_shared<const std::string>("invalid input"),
-        .stacktrace = std::make_shared<const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>(std::initializer_list<std::tuple<std::string, std::uint_least32_t, std::string>>{{"input.cpp", 42, "parseInput"}}),
+        .stacktrace = std::make_shared<
+            const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>(
+            std::initializer_list<std::tuple<std::string, std::uint_least32_t, std::string>>{
+                {"input.cpp", 42, "parseInput"}}
+        ),
     };
     const Error error = {
         .errorMessage = std::make_shared<const std::string>("operation failed"),
         .cause = std::make_shared<const Error>(causeError),
     };
     EXPECT_EQ(error.toString(), "operation failed: invalid input\n  at input.cpp:42 parseInput");
-} // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks) -- MSVC shared_ptr false positive; all payloads are owned by this acyclic chain.
+    // MSVC shared_ptr false positive; all payloads are owned by this acyclic chain.
+} // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
 
 TEST(Errors, CapturesStacktrace) {
     const Error error = withStackTrace(Error{
@@ -90,7 +95,11 @@ TEST(Errors, CapturesStacktrace) {
 TEST(Errors, PreservesExistingStacktrace) {
     const Error original = {
         .errorMessage = std::make_shared<const std::string>("unexpected failure"),
-        .stacktrace = std::make_shared<const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>(std::initializer_list<std::tuple<std::string, std::uint_least32_t, std::string>>{{"input.cpp", 42, "parseInput"}}),
+        .stacktrace = std::make_shared<
+            const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>(
+            std::initializer_list<std::tuple<std::string, std::uint_least32_t, std::string>>{
+                {"input.cpp", 42, "parseInput"}}
+        ),
     };
     const Error error = withStackTrace(original);
     EXPECT_EQ(error.stacktrace, original.stacktrace);

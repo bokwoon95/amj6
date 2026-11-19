@@ -1,7 +1,7 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4
-ColumnLimit: 0
+ColumnLimit: 100
 
 # Braces & Control Statements (Go style)
 BreakBeforeBraces: Attach

@@ -37,10 +37,12 @@ struct Crypto {
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    std::map<uv_work_t*, owned::JSValue> pendingDigests = {}; // Host-owned JS references; released on completion/shutdown.
+    std::map<uv_work_t*, owned::JSValue> pendingDigests =
+        {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
-    Crypto(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
+    Crypto(JSContext* jsContext, uv_loop_t* uvLoop,
+        std::function<void(JSContext*)> jsExecutePendingJobs);
     ~Crypto();
     Crypto(const Crypto&) = delete;
     Crypto& operator=(const Crypto&) = delete;
@@ -55,13 +57,15 @@ struct Crypto {
 
 // Fills an integer typed array synchronously using uv_random(), without a loop.
 // Returns the same array, or JS_EXCEPTION. Maximum size: 65,536 bytes.
-JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst thisValue, int argc,
+    JSValueConst* argv);
 
 // Normalized arguments: SHA-1/256/384/512 name, Uint8Array, completion callback.
 // Copies input before returning; worker threads never access JS values/storage.
 // Completion receives (error, result), with null error on success and null result
 // on failure. Returns undefined, or JS_EXCEPTION if submission fails.
-JSValue cryptoDigest(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, Crypto& crypto);
+JSValue cryptoDigest(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv,
+    Crypto& crypto);
 
 // Registers amj:crypto_impl. Call once per context before loading crypto.js.
 // Borrows crypto, including on failure; never deletes it. The host shuts it down

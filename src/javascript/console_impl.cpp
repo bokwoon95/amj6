@@ -16,7 +16,8 @@ namespace amj::javascript {
 namespace owned = amj::owned;
 namespace void_ptr = amj::void_ptr;
 
-JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv, int /* magic */, JSValueConst* functionData) {
+JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
+    JSValueConst* argv, int /* magic */, JSValueConst* functionData) {
     try {
         if (argc < 2) {
             return JS_ThrowTypeError(jsContext, "consoleWrite requires a level and text");
@@ -40,18 +41,22 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         } else if (level.value() == "error") {
             consoleData.level = ConsoleLevel::Error;
         } else {
-            return JS_ThrowTypeError(jsContext, "consoleWrite level must be log, debug, info, warn, or error");
+            return JS_ThrowTypeError(jsContext,
+                "consoleWrite level must be log, debug, info, warn, or error");
         }
         const std::optional<std::string> text = jsstring(jsContext, argv[1]);
         if (!text.has_value()) {
             return JS_EXCEPTION;
         }
         consoleData.text = text.value();
-        const void* consoleDataPointer = JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
+        const void* consoleDataPointer =
+            JS_GetOpaque2(jsContext, functionData[0], JS_GetClassID(functionData[0]));
         if (consoleDataPointer == nullptr) {
             return JS_EXCEPTION;
         }
-        const std::function<void(ConsoleData)>* consoleSink = static_cast<const void_ptr::VoidPtr*>(consoleDataPointer)->cast<std::function<void(ConsoleData)>*>();
+        const std::function<void(ConsoleData)>* consoleSink =
+            static_cast<const void_ptr::VoidPtr*>(consoleDataPointer)
+                ->cast<std::function<void(ConsoleData)>*>();
         (*consoleSink)(consoleData);
         return JS_UNDEFINED;
     } catch (const std::bad_alloc&) {
@@ -63,7 +68,8 @@ JSValue consoleWrite(JSContext* jsContext, JSValueConst /* thisValue */, int arg
     }
 }
 
-JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(ConsoleData)>& consoleSink) {
+JSModuleDef* createConsoleImplModule(JSContext* jsContext,
+    std::function<void(ConsoleData)>& consoleSink) {
     try {
         if (!consoleSink) {
             JS_ThrowTypeError(jsContext, "createConsoleImplModule requires a consoleSink callback");
@@ -77,9 +83,11 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
         JS_NewClassID(jsRuntime, &consoleClassID);
         const JSClassDef jsClassDef = {
             .class_name = "ConsoleSink",
-            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-            },
+            .finalizer =
+                [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                    delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value,
+                        JS_GetClassID(value)));
+                },
             .gc_mark = nullptr,
             .call = nullptr,
             .exotic = nullptr,
@@ -89,7 +97,8 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        owned::JSValue modulePrivateValue(jsContext, JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
+        owned::JSValue modulePrivateValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
@@ -101,19 +110,22 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext, std::function<void(Co
             return nullptr;
         }
 
-        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:console_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            const owned::JSValue modulePrivateValue(jsContext, JS_GetModulePrivateValue(jsContext, jsModuleDef));
-            if (JS_IsException(modulePrivateValue.get())) {
-                return -1;
-            }
-            JSValueConst functionData = modulePrivateValue.get();
-            const JSValue function = JS_NewCFunctionData2(jsContext, consoleWrite, "consoleWrite", 2, 0, 1, &functionData);
-            if (JS_IsException(function)) {
-                return -1;
-            }
-            // SetModuleExport consumes function on both success and failure.
-            return JS_SetModuleExport(jsContext, jsModuleDef, "consoleWrite", function);
-        });
+        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:console_impl",
+            [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
+                const owned::JSValue modulePrivateValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
+                if (JS_IsException(modulePrivateValue.get())) {
+                    return -1;
+                }
+                JSValueConst functionData = modulePrivateValue.get();
+                const JSValue function = JS_NewCFunctionData2(jsContext, consoleWrite,
+                    "consoleWrite", 2, 0, 1, &functionData);
+                if (JS_IsException(function)) {
+                    return -1;
+                }
+                // SetModuleExport consumes function on both success and failure.
+                return JS_SetModuleExport(jsContext, jsModuleDef, "consoleWrite", function);
+            });
         if (jsModuleDef == nullptr) {
             return nullptr;
         }

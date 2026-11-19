@@ -28,7 +28,8 @@ class TextTest : public testing::Test {
 
         std::ifstream sourceFile(AMJ_TEXT_SOURCE_PATH, std::ios::binary);
         ASSERT_TRUE(sourceFile.is_open()) << "Could not open " << AMJ_TEXT_SOURCE_PATH;
-        textSource.assign(std::istreambuf_iterator<char>(sourceFile), std::istreambuf_iterator<char>());
+        textSource.assign(std::istreambuf_iterator<char>(sourceFile),
+            std::istreambuf_iterator<char>());
         ASSERT_FALSE(sourceFile.bad()) << "Could not read " << AMJ_TEXT_SOURCE_PATH;
     }
 
@@ -44,7 +45,8 @@ class TextTest : public testing::Test {
     testing::AssertionResult run(const std::string& assertions) {
         // Same-module assertions access the real exports without a module loader.
         const std::string source = textSource + "\n" + assertions;
-        const owned::JSValue result(jsContext, JS_Eval(jsContext, source.c_str(), source.size(), AMJ_TEXT_SOURCE_PATH, JS_EVAL_TYPE_MODULE));
+        const owned::JSValue result(jsContext, JS_Eval(jsContext, source.c_str(), source.size(),
+                                                   AMJ_TEXT_SOURCE_PATH, JS_EVAL_TYPE_MODULE));
         JSContext* exceptionContext = jsContext;
         JSValue exceptionValue = JS_UNDEFINED;
         if (JS_IsException(result.get())) {
@@ -57,7 +59,8 @@ class TextTest : public testing::Test {
             } while (status > 0);
             if (status < 0) {
                 if (jobContext == nullptr) {
-                    return testing::AssertionFailure() << "QuickJS job failed without an exception context";
+                    return testing::AssertionFailure()
+                           << "QuickJS job failed without an exception context";
                 }
                 exceptionContext = jobContext;
                 exceptionValue = JS_GetException(jobContext);
@@ -67,10 +70,12 @@ class TextTest : public testing::Test {
                     return testing::AssertionSuccess();
                 }
                 if (promiseState == JS_PROMISE_PENDING) {
-                    return testing::AssertionFailure() << "Test module remained pending after draining QuickJS jobs";
+                    return testing::AssertionFailure()
+                           << "Test module remained pending after draining QuickJS jobs";
                 }
                 if (promiseState != JS_PROMISE_REJECTED) {
-                    return testing::AssertionFailure() << "Expected module evaluation to return a Promise";
+                    return testing::AssertionFailure()
+                           << "Expected module evaluation to return a Promise";
                 }
                 JS_PromiseMarkAsHandled(jsContext, result.get());
                 exceptionValue = JS_PromiseResult(jsContext, result.get());
@@ -82,18 +87,23 @@ class TextTest : public testing::Test {
         if (message.has_value()) {
             diagnostic += ": " + message.value();
         } else {
-            const owned::JSValue conversionException(exceptionContext, JS_GetException(exceptionContext));
+            const owned::JSValue conversionException(exceptionContext,
+                JS_GetException(exceptionContext));
         }
         if (JS_IsObject(exception.get())) {
-            const owned::JSValue stack(exceptionContext, JS_GetPropertyStr(exceptionContext, exception.get(), "stack"));
+            const owned::JSValue stack(exceptionContext,
+                JS_GetPropertyStr(exceptionContext, exception.get(), "stack"));
             if (JS_IsException(stack.get())) {
-                const owned::JSValue stackException(exceptionContext, JS_GetException(exceptionContext));
+                const owned::JSValue stackException(exceptionContext,
+                    JS_GetException(exceptionContext));
             } else if (JS_IsString(stack.get())) {
-                const std::optional<std::string> stackText = jsstring(exceptionContext, stack.get());
+                const std::optional<std::string> stackText =
+                    jsstring(exceptionContext, stack.get());
                 if (stackText.has_value()) {
                     diagnostic += "\n" + stackText.value();
                 } else {
-                    const owned::JSValue conversionException(exceptionContext, JS_GetException(exceptionContext));
+                    const owned::JSValue conversionException(exceptionContext,
+                        JS_GetException(exceptionContext));
                 }
             }
         }

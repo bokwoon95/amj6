@@ -55,8 +55,7 @@ namespace {
 
 // Owns objects returned under Core Foundation's Create/Copy rule.
 // No copying or moving is needed: guaranteed copy elision handles returned values.
-template <typename T>
-struct ScopedCFRef {
+template <typename T> struct ScopedCFRef {
     T value = nullptr;
 
     explicit ScopedCFRef(T object) : value(object) {}
@@ -75,10 +74,12 @@ errors::Error makeError(OSStatus status) {
     error.errorCode = errors::ErrorCode::GenericError;
     if (status == errSecItemNotFound) {
         error.errorCode = ErrorCode::NotFound;
-    } else if (status == errSecUserCanceled || status == errSecAuthFailed || status == errSecInteractionRequired) {
+    } else if (status == errSecUserCanceled || status == errSecAuthFailed ||
+               status == errSecInteractionRequired) {
         error.errorCode = ErrorCode::AccessDenied;
     }
-    error.errorMessage = std::make_shared<const std::string>("Security error " + std::to_string(status));
+    error.errorMessage =
+        std::make_shared<const std::string>("Security error " + std::to_string(status));
     const ScopedCFRef<CFStringRef> message(SecCopyErrorMessageString(status, nullptr));
     if (message.value == nullptr) {
         return error;
@@ -89,17 +90,22 @@ errors::Error makeError(OSStatus status) {
         return error;
     }
     std::vector<char> buffer(static_cast<std::size_t>(capacity + 1), '\0');
-    if (CFStringGetCString(message.value, buffer.data(), capacity + 1, kCFStringEncodingUTF8) != 0) {
+    if (CFStringGetCString(message.value, buffer.data(), capacity + 1, kCFStringEncodingUTF8) !=
+        0) {
         error.errorMessage = std::make_shared<const std::string>(buffer.data());
     }
     return error;
 }
 
 // Returns an owned dictionary under Core Foundation's Create rule.
-std::expected<CFMutableDictionaryRef, errors::Error> createQuery(const std::string& service, const std::string& user) {
-    const ScopedCFRef<CFStringRef> cfService(CFStringCreateWithCString(kCFAllocatorDefault, service.c_str(), kCFStringEncodingUTF8));
-    const ScopedCFRef<CFStringRef> cfUser(CFStringCreateWithCString(kCFAllocatorDefault, user.c_str(), kCFStringEncodingUTF8));
-    CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+std::expected<CFMutableDictionaryRef, errors::Error> createQuery(const std::string& service,
+    const std::string& user) {
+    const ScopedCFRef<CFStringRef> cfService(CFStringCreateWithCString(kCFAllocatorDefault,
+        service.c_str(), kCFStringEncodingUTF8));
+    const ScopedCFRef<CFStringRef> cfUser(CFStringCreateWithCString(kCFAllocatorDefault,
+        user.c_str(), kCFStringEncodingUTF8));
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     if (query == nullptr || cfService.value == nullptr || cfUser.value == nullptr) {
         if (query != nullptr) {
             CFRelease(query);
@@ -115,7 +121,8 @@ std::expected<CFMutableDictionaryRef, errors::Error> createQuery(const std::stri
 } // namespace
 
 errors::Error save(const std::string& service, const std::string& user, const std::string& value) {
-    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult = createQuery(service, user);
+    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult =
+        createQuery(service, user);
     if (!queryResult.has_value()) {
         return queryResult.error();
     }
@@ -124,7 +131,8 @@ errors::Error save(const std::string& service, const std::string& user, const st
         return errors::message("Secret too long");
     }
     const std::vector<UInt8> secret(value.begin(), value.end());
-    const ScopedCFRef<CFDataRef> data(CFDataCreate(kCFAllocatorDefault, secret.data(), static_cast<CFIndex>(secret.size())));
+    const ScopedCFRef<CFDataRef> data(CFDataCreate(kCFAllocatorDefault, secret.data(),
+        static_cast<CFIndex>(secret.size())));
     if (data.value == nullptr) {
         return errors::message("Failed to create secret data");
     }
@@ -132,7 +140,9 @@ errors::Error save(const std::string& service, const std::string& user, const st
     OSStatus status = SecItemAdd(query.value, nullptr);
     if (status == errSecDuplicateItem) {
         CFDictionaryRemoveValue(query.value, kSecValueData);
-        const ScopedCFRef<CFMutableDictionaryRef> attributes(CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+        const ScopedCFRef<CFMutableDictionaryRef> attributes(CFDictionaryCreateMutable(
+            kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks
+        ));
         if (attributes.value == nullptr) {
             return errors::message("Failed to create secret attributes");
         }
@@ -145,8 +155,10 @@ errors::Error save(const std::string& service, const std::string& user, const st
     return {};
 }
 
-std::expected<std::string, errors::Error> load(const std::string& service, const std::string& user) {
-    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult = createQuery(service, user);
+std::expected<std::string, errors::Error> load(const std::string& service,
+    const std::string& user) {
+    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult =
+        createQuery(service, user);
     if (!queryResult.has_value()) {
         return std::unexpected(queryResult.error());
     }
@@ -175,7 +187,8 @@ std::expected<std::string, errors::Error> load(const std::string& service, const
 }
 
 errors::Error remove(const std::string& service, const std::string& user) {
-    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult = createQuery(service, user);
+    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult =
+        createQuery(service, user);
     if (!queryResult.has_value()) {
         return queryResult.error();
     }
@@ -188,7 +201,8 @@ errors::Error remove(const std::string& service, const std::string& user) {
 }
 
 std::expected<bool, errors::Error> isAvailable() {
-    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult = createQuery("keyring.availability_check_service", "availability_check_account");
+    const std::expected<CFMutableDictionaryRef, errors::Error> queryResult =
+        createQuery("keyring.availability_check_service", "availability_check_account");
     if (!queryResult.has_value()) {
         errors::Error error = queryResult.error();
         error.errorCode = ErrorCode::Unavailable;

@@ -61,7 +61,9 @@ class UvErrorCategory final : public std::error_category {
     }
 };
 
-const UvErrorCategory uvErrorCategory; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const UvErrorCategory uvErrorCategory;
 
 class CurlMultiErrorCategory final : public std::error_category {
   public:
@@ -73,7 +75,9 @@ class CurlMultiErrorCategory final : public std::error_category {
     }
 };
 
-const CurlMultiErrorCategory curlMultiErrorCategory; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const CurlMultiErrorCategory curlMultiErrorCategory;
 
 // Passed as CURLOPT_HEADERFUNCTION to read the response headers.
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
@@ -127,7 +131,8 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
 
     // If we reach here, response headers have completed. Get the responseCode.
     long responseCode = 0;
-    CURLcode curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &responseCode);
+    CURLcode curlCode =
+        curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_RESPONSE_CODE, &responseCode);
     if (curlCode != CURLE_OK) {
         fetchState->error = errors::message(curl_easy_strerror(curlCode));
         return CURL_WRITEFUNC_ERROR;
@@ -144,9 +149,11 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
 
     // If it's a redirect 3XX and the Location header is present, ignore the
     // responseCode and set the responseRedirecting flag.
-    if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 || responseCode == 308) {
+    if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 ||
+        responseCode == 308) {
         curl_header* curlHeader = nullptr;
-        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0, CURLH_HEADER, -1, &curlHeader);
+        const CURLHcode curlHCode = curl_easy_header(fetchState->ownedCurlEasyHandle, "location", 0,
+            CURLH_HEADER, -1, &curlHeader);
         if (curlHCode != CURLHE_OK) {
             if (curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
                 fetchState->error = errors::message("Could not obtain response redirect header");
@@ -162,8 +169,11 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
     fetchState->responseCode = responseCode;
 
     // Get the effectiveURL.
-    char* effectiveURL = nullptr; // NOLINT(misc-const-correctness): CURLINFO_EFFECTIVE_URL requires char**.
-    curlCode = curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
+    // CURLINFO_EFFECTIVE_URL requires char**.
+    // NOLINTNEXTLINE(misc-const-correctness)
+    char* effectiveURL = nullptr;
+    curlCode =
+        curl_easy_getinfo(fetchState->ownedCurlEasyHandle, CURLINFO_EFFECTIVE_URL, &effectiveURL);
     if (curlCode != CURLE_OK) {
         fetchState->error = errors::message("Could not obtain response URL");
         return CURL_WRITEFUNC_ERROR;
@@ -175,7 +185,8 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
     // Get the responseHeaders.
     curl_header* curlHeader = nullptr;
     while (true) {
-        curlHeader = curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, curlHeader);
+        curlHeader =
+            curl_easy_nextheader(fetchState->ownedCurlEasyHandle, CURLH_HEADER, -1, curlHeader);
         if (curlHeader == nullptr) {
             break;
         }
@@ -193,7 +204,8 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
 }
 
 // Passed as CURLOPT_WRITEFUNCTION to read the response body.
-std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, const void* userdata) {
+std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
+    const void* userdata) {
     FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
     if (intlimit::multiplyOverflows(size, nmemb)) {
         return CURL_WRITEFUNC_ERROR;
@@ -228,7 +240,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 
 // Drive curl transfers, then mark the ones that have completed. Returns true
 // on success, or false if a fatal error is recorded in pendingError.
-[[nodiscard]] bool driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket, int eventBitmask) {
+[[nodiscard]] bool driveCurlTransfers(FetchClient& fetchClient, curl_socket_t socket,
+    int eventBitmask) {
     // Check for pendingErrors before we call curl_multi_socket_action().
     if (fetchClient.pendingError->hasValue()) {
         return false;
@@ -236,10 +249,12 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 
     // Tell curl to read and write socket data.
     int runningHandles = 0;
-    const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
+    const CURLMcode curlMCode = curl_multi_socket_action(fetchClient.ownedCurlMultiHandle, socket,
+        eventBitmask, &runningHandles);
     if (curlMCode != CURLM_OK) {
         if (!fetchClient.pendingError->hasValue()) {
-            fetchClient.pendingError->errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+            fetchClient.pendingError->errorCode =
+                std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
         }
         return false;
     }
@@ -254,7 +269,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
     // Mark the fetchStates that have completed.
     while (true) {
         int msgsInQueue = 0;
-        const CURLMsg* curlMsg = curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
+        const CURLMsg* curlMsg =
+            curl_multi_info_read(fetchClient.ownedCurlMultiHandle, &msgsInQueue);
         if (curlMsg == nullptr) {
             break;
         }
@@ -284,7 +300,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
                 }
                 errorMessage.append("HTTP response ended without final headers");
             }
-            fetchState.error.errorMessage = std::make_shared<const std::string>(std::move(errorMessage));
+            fetchState.error.errorMessage =
+                std::make_shared<const std::string>(std::move(errorMessage));
         }
     }
 
@@ -316,7 +333,8 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb, co
 //
 // 5. CURL_POLL_REMOVE: Stop scheduling driveCurlTransfers() for socket events
 // and close the poll handle.
-int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what, const void* clientp, void* /* socketp */) {
+int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int what,
+    const void* clientp, void* /* socketp */) {
     struct PollData {
         FetchClient* fetchClient = nullptr;
         curl_socket_t socket = CURL_SOCKET_BAD;
@@ -336,7 +354,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     } else {
         owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
-        const int status = uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
+        const int status =
+            uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
         if (status != 0) {
             if (!fetchClient->pendingError->hasValue()) {
                 fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
@@ -344,12 +363,10 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
             return -1;
         }
         ownedUvPollHandle.setInitialized();
-        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(
-            std::make_unique<PollData>(PollData{
-                .fetchClient = fetchClient,
-                .socket = socket,
-            })
-        );
+        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<PollData>(PollData{
+            .fetchClient = fetchClient,
+            .socket = socket,
+        }));
         fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     }
@@ -369,7 +386,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     // libuv calls uvPollCallback when the socket is readable, writable, or
     // encounters an error.
     const auto uvPollCallback = [](uv_poll_t* uvPollHandle, int status, int events) noexcept {
-        const PollData& pollData = static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
+        const PollData& pollData =
+            static_cast<void_ptr::VoidPtr*>(uvPollHandle->data)->cast<PollData>();
         FetchClient* fetchClient = pollData.fetchClient;
         const curl_socket_t socket = pollData.socket;
         try {
@@ -383,7 +401,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
             if ((static_cast<unsigned int>(events) & static_cast<unsigned int>(UV_WRITABLE)) != 0) {
                 eventBitmask |= static_cast<unsigned int>(CURL_CSELECT_OUT);
             }
-            const bool ok = driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
+            const bool ok =
+                driveCurlTransfers(*fetchClient, socket, static_cast<int>(eventBitmask));
             if (!ok) {
                 return;
             }
@@ -422,7 +441,8 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
 //
 // 2. timeout_ms >= 0: Schedule driveCurlTransfers() to run after this delay.
 int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void* clientp) {
-    const FetchClient* fetchClient = static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+    const FetchClient* fetchClient =
+        static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
 
     // Cancel the scheduled call to driveCurlTransfers().
     if (timeout_ms < 0) {
@@ -442,7 +462,8 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
     // libuv calls uvTimerCallback when the timer expires, which calls
     // driveCurlTransfers().
     const auto uvTimerCallback = [](uv_timer_t* uvTimerHandle) noexcept {
-        FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
+        FetchClient* fetchClient =
+            static_cast<void_ptr::VoidPtr*>(uvTimerHandle->data)->cast<FetchClient*>();
         try {
             const bool ok = driveCurlTransfers(*fetchClient, CURL_SOCKET_TIMEOUT, 0);
             if (!ok) {
@@ -456,7 +477,8 @@ int curlTimerFunction(CURLM* /* curlMultiHandle */, long timeout_ms, const void*
     };
 
     // Schedule driveCurlTransfers() to run after this delay.
-    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback, static_cast<uint64_t>(timeout_ms), 0);
+    const int status = uv_timer_start(fetchClient->uvTimerHandle.get(), uvTimerCallback,
+        static_cast<uint64_t>(timeout_ms), 0);
     if (status != 0) {
         if (!fetchClient->pendingError->hasValue()) {
             fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
@@ -507,7 +529,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // no longer referencing the `fetchResponse` variable. Terminate its
         // current ready/read promises with AbortError.
         if (fetchState.abandoned) {
-            const std::map<CURL*, FetchState>::node_type mapNode = fetchClient->fetchStateMap.extract(curlEasyHandle);
+            const std::map<CURL*, FetchState>::node_type mapNode =
+                fetchClient->fetchStateMap.extract(curlEasyHandle);
             if (mapNode.empty()) {
                 std::terminate(); // An extracted abandoned state must exist.
             }
@@ -524,22 +547,31 @@ void settlePendingPromises(FetchClient* fetchClient) {
             // Retain settlement functions locally: close() releases the state's
             // JS references. These moves cannot throw, so close precedes all exits.
             owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
-            std::optional<owned::JSPromise> responseReadPromise = std::move(fetchState.responseReadPromise);
-            const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(fetchClient->jsContext, responseReadyPromise.promise.get());
-            if (responseReadyPromiseState != JS_PROMISE_PENDING && !responseReadPromise.has_value()) {
+            std::optional<owned::JSPromise> responseReadPromise =
+                std::move(fetchState.responseReadPromise);
+            const JSPromiseStateEnum responseReadyPromiseState =
+                JS_PromiseState(fetchClient->jsContext, responseReadyPromise.promise.get());
+            if (responseReadyPromiseState != JS_PROMISE_PENDING &&
+                !responseReadPromise.has_value()) {
                 continue;
             }
-            owned::JSValue jsError = jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
+            owned::JSValue jsError =
+                jsNewError(fetchClient->jsContext, "AbortError", "FetchResponse is closed");
             // Reject responseReadyPromise.
             if (responseReadyPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(fetchClient->jsContext, responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(fetchClient->jsContext, result);
             }
             // Reject responseReadPromise.
             if (responseReadPromise.has_value()) {
-                const JSPromiseStateEnum responseReadPromiseState = JS_PromiseState(fetchClient->jsContext, responseReadPromise.value().promise.get());
+                const JSPromiseStateEnum responseReadPromiseState =
+                    JS_PromiseState(fetchClient->jsContext,
+                        responseReadPromise.value().promise.get());
                 if (responseReadPromiseState == JS_PROMISE_PENDING) {
-                    const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+                    const JSValue result = JS_Call(fetchClient->jsContext,
+                        responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1,
+                        &jsError.get());
                     JS_FreeValue(fetchClient->jsContext, result);
                 }
             }
@@ -548,8 +580,10 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // If responseReadyPromise has not yet been settled, settle it first.
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(fetchClient->jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+            responseReadyPromiseState != JS_PROMISE_REJECTED) {
             if (!fetchState.responseHeadersComplete) {
                 // The transfer has not yet completed, don't settle the
                 // responseReadyPromise.
@@ -559,15 +593,20 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
                 // The transfer completed without receiving any response
                 // headers. Reject responseReadyPromise.
-                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage : std::string());
-                const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+                owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
+                    fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
+                                                             : std::string());
+                const JSValue result = JS_Call(fetchClient->jsContext,
+                    fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
+                    &error.get());
                 JS_FreeValue(fetchClient->jsContext, result);
                 fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
                 continue;
             }
 
             // Resolve resonseReadyPromise.
-            const JSValue result = JS_Call(fetchClient->jsContext, fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0, nullptr);
+            const JSValue result = JS_Call(fetchClient->jsContext,
+                fetchState.responseReadyPromise.resolveFunction.get(), JS_UNDEFINED, 0, nullptr);
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
@@ -580,7 +619,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // No error, buffered data, or end-of-stream to settle the
         // responseReadPromise with.
-        if (!fetchState.error.hasValue() && fetchState.responseBuffer.empty() && fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
+        if (!fetchState.error.hasValue() && fetchState.responseBuffer.empty() &&
+            fetchState.responseCurlTransferStatus != CurlTransferStatus::Completed) {
             continue;
         }
 
@@ -591,8 +631,11 @@ void settlePendingPromises(FetchClient* fetchClient) {
 
         // Reject the responseReadPromise if the transfer encountered an error.
         if (fetchState.error.hasValue()) {
-            owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage : std::string());
-            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+            owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
+                fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
+                                                         : std::string());
+            const JSValue result = JS_Call(fetchClient->jsContext,
+                responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
@@ -602,7 +645,8 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // Resolve the responseReadPromise with null to indicate end-of-stream.
         if (fetchState.responseBuffer.empty()) {
             JSValue jsNull = JS_NULL;
-            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
+            const JSValue result = JS_Call(fetchClient->jsContext,
+                responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &jsNull);
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
@@ -616,17 +660,21 @@ void settlePendingPromises(FetchClient* fetchClient) {
         // If curl is currently paused and popping that chunk from the
         // responseBuffer dropped responseBufferSize to less than half of
         // bodyBufferLimit, unpause curl.
-        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused && fetchState.responseBufferSize < bodyBufferLimit / 2) {
+        if (fetchState.responseCurlTransferStatus == CurlTransferStatus::Paused &&
+            fetchState.responseBufferSize < bodyBufferLimit / 2) {
             fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
             const CURLcode curlCode = curl_easy_pause(curlEasyHandle, CURLPAUSE_CONT);
             if (curlCode != CURLE_OK) {
                 fetchState.error = errors::message(curl_easy_strerror(curlCode));
                 fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
                 if (fetchState.curlMultiHandle != nullptr) {
-                    const CURLMcode curlMCode = curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
+                    const CURLMcode curlMCode =
+                        curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                     if (curlMCode != CURLM_OK) {
                         if (!fetchClient->pendingError->hasValue()) {
-                            fetchClient->pendingError->errorCode = std::error_code(static_cast<int>(curlMCode), curlMultiErrorCategory);
+                            fetchClient->pendingError->errorCode =
+                                std::error_code(static_cast<int>(curlMCode),
+                                    curlMultiErrorCategory);
                         }
                         return;
                     }
@@ -640,35 +688,44 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Convert the chunk into a JS Uint8Array.
-        owned::JSValue uint8Array(fetchClient->jsContext, JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
+        owned::JSValue uint8Array(fetchClient->jsContext,
+            JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
         if (JS_IsException(uint8Array.get())) {
             owned::JSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
-            const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
+            const JSValue result = JS_Call(fetchClient->jsContext,
+                responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
             fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
             continue;
         }
 
         // Resolve the responseReadPromise with the Uint8Array chunk.
-        const JSValue result = JS_Call(fetchClient->jsContext, responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
+        const JSValue result = JS_Call(fetchClient->jsContext,
+            responseReadPromise.resolveFunction.get(), JS_UNDEFINED, 1, &uint8Array.get());
         JS_FreeValue(fetchClient->jsContext, result);
         fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
     }
 }
 
 std::mutex fetchResponseClassIDMutex = {};
-std::map<JSRuntime*, JSClassID> fetchClientClassIDMap = {};   // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
-std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {}; // NOLINT(bugprone-throwing-static-initialization): startup allocation failure may terminate.
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+std::map<JSRuntime*, JSClassID> fetchClientClassIDMap = {};
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {};
 
 // Validate the receiver without requiring an open or ready response.
 // The returned pointer is borrowed; failures leave a pending JS exception.
-std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JSValueConst thisValue) {
+std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext,
+    JSValueConst thisValue) {
     JSClassID fetchResponseClassID = 0;
     {
         JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
         const std::lock_guard<std::mutex> lock(fetchResponseClassIDMutex);
         if (!fetchResponseClassIDMap.contains(jsRuntime)) {
-            return std::unexpected(JS_ThrowInternalError(jsContext, "FetchResponse class is not registered"));
+            return std::unexpected(JS_ThrowInternalError(jsContext,
+                "FetchResponse class is not registered"));
         }
         fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
     }
@@ -676,7 +733,8 @@ std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JS
     if (opaque == nullptr) {
         return std::unexpected(JS_EXCEPTION);
     }
-    FetchResponse& fetchResponse = static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
+    FetchResponse& fetchResponse =
+        static_cast<const void_ptr::VoidPtr*>(opaque)->cast<FetchResponse>();
     if (this_thread::get_id() != fetchResponse.fetchClient->ownerThreadID) {
         std::terminate();
     }
@@ -689,8 +747,10 @@ std::expected<FetchResponse*, JSValue> getFetchResponse(JSContext* jsContext, JS
 
 } // namespace
 
-std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsContext, JSValueConst jsValue) {
-    const char* httpTokenChars = "!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~";
+std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsContext,
+    JSValueConst jsValue) {
+    const char* httpTokenChars =
+        "!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~";
     if (!JS_IsObject(jsValue)) {
         return std::unexpected(JS_ThrowTypeError(jsContext, "arg0: not an object"));
     }
@@ -708,24 +768,25 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
         if (!method.has_value()) {
             return std::unexpected(JS_EXCEPTION);
         }
-        if (method.value().empty() || method.value().find_first_not_of(httpTokenChars) != std::string::npos) {
+        if (method.value().empty() ||
+            method.value().find_first_not_of(httpTokenChars) != std::string::npos) {
             return std::unexpected(JS_ThrowTypeError(jsContext, "method is invalid"));
         }
-        if (equalFoldASCII(method.value(), "CONNECT") || equalFoldASCII(method.value(), "TRACE") || equalFoldASCII(method.value(), "TRACK")) {
+        if (equalFoldASCII(method.value(), "CONNECT") || equalFoldASCII(method.value(), "TRACE") ||
+            equalFoldASCII(method.value(), "TRACK")) {
             return std::unexpected(JS_ThrowTypeError(jsContext, "method is invalid"));
         }
         fetchRequest.method = method.value();
     }
 
     // Get url string.
-    const std::optional<std::string> url = jsToString(
-        jsContext,
-        owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "url")).get()
-    );
+    const std::optional<std::string> url = jsToString(jsContext,
+        owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "url")).get());
     if (!url.has_value()) {
         return std::unexpected(JS_EXCEPTION);
     }
-    if (url.value().empty() || url.value().size() > (2U << 20U /* 2 MiB */) || url.value().find('\0') != std::string::npos) {
+    if (url.value().empty() || url.value().size() > (2U << 20U /* 2 MiB */) ||
+        url.value().find('\0') != std::string::npos) {
         return std::unexpected(JS_ThrowTypeError(jsContext, "url is invalid"));
     }
     ada::result<ada::url_aggregator> adaURL = ada::parse<ada::url_aggregator>(url.value());
@@ -741,7 +802,8 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
     fetchRequest.url = url.value();
 
     // Get headers array.
-    const owned::JSValue headersJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "headers"));
+    const owned::JSValue headersJSValue(jsContext,
+        JS_GetPropertyStr(jsContext, jsValue, "headers"));
     if (JS_IsException(headersJSValue.get())) {
         return std::unexpected(JS_EXCEPTION);
     }
@@ -752,51 +814,60 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
         if (!JS_IsArray(headersJSValue.get())) {
             return std::unexpected(JS_ThrowTypeError(jsContext, "headers not an array"));
         }
-        const std::optional<uint32_t> headersLength = jsToUint32(
-            jsContext,
-            owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, headersJSValue.get(), "length")).get()
-        );
+        const std::optional<uint32_t> headersLength = jsToUint32(jsContext,
+            owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, headersJSValue.get(), "length"))
+                .get());
         if (!headersLength.has_value()) {
             return std::unexpected(JS_EXCEPTION);
         }
         for (uint32_t index = 0; index < headersLength.value(); index++) {
-            const owned::JSValue headerJSValue(jsContext, JS_GetPropertyUint32(jsContext, headersJSValue.get(), index));
+            const owned::JSValue headerJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, headersJSValue.get(), index));
             if (JS_IsException(headerJSValue.get())) {
                 return std::unexpected(JS_EXCEPTION);
             }
             if (!JS_IsArray(headerJSValue.get())) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] not an array", static_cast<unsigned long>(index)));
+                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] not an array",
+                    static_cast<unsigned long>(index)));
             }
             // Make sure header array has at least two elements.
-            const std::optional<uint32_t> headerLength = jsToUint32(
-                jsContext,
-                owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, headerJSValue.get(), "length")).get()
-            );
+            const std::optional<uint32_t> headerLength = jsToUint32(jsContext,
+                owned::JSValue(jsContext,
+                    JS_GetPropertyStr(jsContext, headerJSValue.get(), "length"))
+                    .get());
             if (!headerLength.has_value()) {
                 return std::unexpected(JS_EXCEPTION);
             }
             if (headerLength.value() < 2) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] length must be at least 2 (is %lu)", static_cast<unsigned long>(index), static_cast<unsigned long>(headerLength.value())));
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "headers[%lu] length must be at least 2 (is %lu)",
+                    static_cast<unsigned long>(index),
+                    static_cast<unsigned long>(headerLength.value())));
             }
             // Get header name.
-            const std::optional<std::string> headerName = jsToString(
-                jsContext,
-                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 0)).get()
-            );
+            const std::optional<std::string> headerName = jsToString(jsContext,
+                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 0))
+                    .get());
             if (!headerName.has_value()) {
                 return std::unexpected(JS_EXCEPTION);
             }
-            if (headerName.value().empty() || headerName.value().find_first_not_of(httpTokenChars) != std::string::npos) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: invalid header name", static_cast<unsigned long>(index)));
+            if (headerName.value().empty() ||
+                headerName.value().find_first_not_of(httpTokenChars) != std::string::npos) {
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "headers[%lu]: invalid header name", static_cast<unsigned long>(index)));
             }
-            if (equalFoldASCII(headerName.value(), "Transfer-Encoding") || equalFoldASCII(headerName.value(), "Keep-Alive") || equalFoldASCII(headerName.value(), "Upgrade") || equalFoldASCII(headerName.value(), "Expect")) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: forbidden header name: %s", static_cast<unsigned long>(index), headerName.value().c_str()));
+            if (equalFoldASCII(headerName.value(), "Transfer-Encoding") ||
+                equalFoldASCII(headerName.value(), "Keep-Alive") ||
+                equalFoldASCII(headerName.value(), "Upgrade") ||
+                equalFoldASCII(headerName.value(), "Expect")) {
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "headers[%lu]: forbidden header name: %s", static_cast<unsigned long>(index),
+                    headerName.value().c_str()));
             }
             // Get header value.
-            const std::optional<std::string> headerValue = jsToString(
-                jsContext,
-                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 1)).get()
-            );
+            const std::optional<std::string> headerValue = jsToString(jsContext,
+                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 1))
+                    .get());
             if (!headerValue.has_value()) {
                 return std::unexpected(JS_EXCEPTION);
             }
@@ -810,7 +881,8 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
                 if (c >= 0x80 && c <= 0xFF) {
                     continue;
                 }
-                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: invalid header value", static_cast<unsigned long>(index)));
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "headers[%lu]: invalid header value", static_cast<unsigned long>(index)));
             }
             // Trim header value.
             std::string_view trimmedHeaderValue;
@@ -822,25 +894,44 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             // Validate Connection header.
             if (equalFoldASCII(headerName.value(), "Connection")) {
                 if (connectionHeaderIndex != static_cast<uint32_t>(-1)) {
-                    return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Connection header specified more than once (previously at headers[%lu])", static_cast<unsigned long>(index), static_cast<unsigned long>(connectionHeaderIndex)));
+                    return std::unexpected(JS_ThrowTypeError(jsContext,
+                        "headers[%lu]: Connection header specified more than once (previously at "
+                        "headers[%lu])",
+                        static_cast<unsigned long>(index),
+                        static_cast<unsigned long>(connectionHeaderIndex)));
                 }
-                if (!equalFoldASCII(trimmedHeaderValue, "close") && !equalFoldASCII(trimmedHeaderValue, "keep-alive")) {
-                    return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Connection must be close or keep-alive", static_cast<unsigned long>(index)));
+                if (!equalFoldASCII(trimmedHeaderValue, "close") &&
+                    !equalFoldASCII(trimmedHeaderValue, "keep-alive")) {
+                    return std::unexpected(JS_ThrowTypeError(jsContext,
+                        "headers[%lu]: Connection must be close or keep-alive",
+                        static_cast<unsigned long>(index)));
                 }
                 connectionHeaderIndex = index;
             }
             // Validate Content-Length header.
             if (equalFoldASCII(headerName.value(), "Content-Length")) {
                 if (contentLengthHeaderIndex != static_cast<uint32_t>(-1)) {
-                    return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Content-Length header specified more than once (previously at headers[%lu])", static_cast<unsigned long>(index), static_cast<unsigned long>(contentLengthHeaderIndex)));
+                    return std::unexpected(JS_ThrowTypeError(jsContext,
+                        "headers[%lu]: Content-Length header specified more than once (previously "
+                        "at headers[%lu])",
+                        static_cast<unsigned long>(index),
+                        static_cast<unsigned long>(contentLengthHeaderIndex)));
                 }
-                if (trimmedHeaderValue.empty() || trimmedHeaderValue.find_first_not_of("0123456789") != std::string_view::npos) {
-                    return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Content-Length header value must be a nonnegative decimal integer", static_cast<unsigned long>(index)));
+                if (trimmedHeaderValue.empty() ||
+                    trimmedHeaderValue.find_first_not_of("0123456789") != std::string_view::npos) {
+                    return std::unexpected(JS_ThrowTypeError(jsContext,
+                        "headers[%lu]: Content-Length header value must be a nonnegative decimal "
+                        "integer",
+                        static_cast<unsigned long>(index)));
                 }
                 std::size_t num = 0;
-                const std::from_chars_result fromCharsResult = std::from_chars(trimmedHeaderValue.data(), trimmedHeaderValue.data() + trimmedHeaderValue.size(), num);
-                if (fromCharsResult.ec != std::errc() || fromCharsResult.ptr != trimmedHeaderValue.data() + trimmedHeaderValue.size()) {
-                    return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length is out of range"));
+                const std::from_chars_result fromCharsResult =
+                    std::from_chars(trimmedHeaderValue.data(),
+                        trimmedHeaderValue.data() + trimmedHeaderValue.size(), num);
+                if (fromCharsResult.ec != std::errc() ||
+                    fromCharsResult.ptr != trimmedHeaderValue.data() + trimmedHeaderValue.size()) {
+                    return std::unexpected(JS_ThrowTypeError(jsContext,
+                        "Content-Length is out of range"));
                 }
                 contentLengthHeaderIndex = index;
                 contentLength = num;
@@ -863,37 +954,46 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             if (body.value().size() > (32U << 20U /* 32 MiB */)) {
                 return std::unexpected(JS_ThrowRangeError(jsContext, "body exceeds 32 MiB"));
             }
-            if (!body.value().empty() && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+            if (!body.value().empty() &&
+                (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
                 return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
             }
             fetchRequest.body.assign(body.value().begin(), body.value().end());
         } else {
             if (JS_GetTypedArrayType(bodyJSValue.get()) != JS_TYPED_ARRAY_UINT8) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "body property must be a string or Uint8Array"));
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "body property must be a string or Uint8Array"));
             }
             std::size_t byteOffset = 0;
             std::size_t byteLength = 0;
-            const owned::JSValue buffer(jsContext, JS_GetTypedArrayBuffer(jsContext, bodyJSValue.get(), &byteOffset, &byteLength, nullptr));
+            const owned::JSValue buffer(jsContext,
+                JS_GetTypedArrayBuffer(jsContext, bodyJSValue.get(), &byteOffset, &byteLength,
+                    nullptr));
             if (JS_IsException(buffer.get())) {
                 return std::unexpected(JS_EXCEPTION);
             }
             if (!JS_IsArrayBuffer(buffer.get())) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "Shared request bodies are not supported"));
+                return std::unexpected(JS_ThrowTypeError(jsContext,
+                    "Shared request bodies are not supported"));
             }
             std::size_t bufferLength = 0;
             const uint8_t* bytes = JS_GetArrayBuffer(jsContext, &bufferLength, buffer.get());
             if (bytes == nullptr && JS_HasException(jsContext)) {
                 return std::unexpected(JS_EXCEPTION);
             }
-            if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset || byteLength > (32U << 20U /* 32 MiB */)) {
-                return std::unexpected(JS_ThrowRangeError(jsContext, "Invalid request body bounds or upload exceeds 32 MiB"));
+            if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset ||
+                byteLength > (32U << 20U /* 32 MiB */)) {
+                return std::unexpected(JS_ThrowRangeError(jsContext,
+                    "Invalid request body bounds or upload exceeds 32 MiB"));
             }
-            if (byteLength != 0 && (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
+            if (byteLength != 0 &&
+                (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
                 return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
             }
             if (byteLength != 0) {
                 if (bytes == nullptr) {
-                    return std::unexpected(JS_ThrowInternalError(jsContext, "Missing request body storage"));
+                    return std::unexpected(JS_ThrowInternalError(jsContext,
+                        "Missing request body storage"));
                 }
                 fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
             }
@@ -902,15 +1002,18 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
 
     if (contentLengthHeaderIndex != static_cast<uint32_t>(-1)) {
         if (contentLength != fetchRequest.body.size()) {
-            return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length does not match the request body byte length"));
+            return std::unexpected(JS_ThrowTypeError(jsContext,
+                "Content-Length does not match the request body byte length"));
         }
     }
     return fetchRequest;
 }
 
-JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
+JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
+    JSValueConst* /* argv */) {
     try {
-        std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::expected<FetchResponse*, JSValue> fetchResponseResult =
+            getFetchResponse(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return fetchResponseResult.error();
         }
@@ -919,18 +1022,24 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             return JS_ThrowTypeError(jsContext, "FetchResponse.read: response is closed");
         }
         if (!fetchResponse->fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
-            return JS_ThrowInternalError(jsContext, "FetchResponse.read: response state is missing");
+            return JS_ThrowInternalError(jsContext,
+                "FetchResponse.read: response state is missing");
         }
-        FetchState& fetchState = fetchResponse->fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
+        FetchState& fetchState =
+            fetchResponse->fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+            responseReadyPromiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "FetchResponse.read: response not ready");
         }
         if (fetchState.responseReadPromise.has_value()) {
-            return JS_ThrowTypeError(jsContext, "FetchResponse.read: another read is already pending");
+            return JS_ThrowTypeError(jsContext,
+                "FetchResponse.read: another read is already pending");
         }
         std::array resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        owned::JSValue promise(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        owned::JSValue promise(jsContext,
+            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
@@ -942,11 +1051,15 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
         uv_ref(reinterpret_cast<uv_handle_t*>(fetchResponse->fetchClient->uvAsyncHandle.get()));
         const int status = uv_async_send(fetchResponse->fetchClient->uvAsyncHandle.get());
         if (status != 0) {
-            uv_unref(reinterpret_cast<uv_handle_t*>(fetchResponse->fetchClient->uvAsyncHandle.get()));
+            uv_unref(
+                reinterpret_cast<uv_handle_t*>(fetchResponse->fetchClient->uvAsyncHandle.get())
+            );
             if (!fetchResponse->fetchClient->pendingError->hasValue()) {
-                fetchResponse->fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                fetchResponse->fetchClient->pendingError->errorCode =
+                    std::error_code(status, uvErrorCategory);
             }
-            return JS_ThrowInternalError(jsContext, "FetchResponse.read: uv_async_send: %s", uv_strerror(status));
+            return JS_ThrowInternalError(jsContext, "FetchResponse.read: uv_async_send: %s",
+                uv_strerror(status));
         }
         return JS_DupValue(jsContext, fetchState.responseReadPromise.value().promise.get());
     } catch (const std::bad_alloc&) {
@@ -958,9 +1071,11 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
     }
 }
 
-JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
+JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
+    JSValueConst* /* argv */) {
     try {
-        std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::expected<FetchResponse*, JSValue> fetchResponseResult =
+            getFetchResponse(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return fetchResponseResult.error();
         }
@@ -970,7 +1085,8 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         if (curlEasyHandle == nullptr) {
             return JS_UNDEFINED;
         }
-        const std::map<CURL*, FetchState>::node_type mapNode = fetchResponse->fetchClient->fetchStateMap.extract(curlEasyHandle);
+        const std::map<CURL*, FetchState>::node_type mapNode =
+            fetchResponse->fetchClient->fetchStateMap.extract(curlEasyHandle);
         if (mapNode.empty()) {
             return JS_UNDEFINED;
         }
@@ -978,7 +1094,8 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         // Move the responseReadyPromise and responseReadPromise out of the
         // fetchState before calling close() on it.
         owned::JSPromise responseReadyPromise = std::move(fetchState.responseReadyPromise);
-        std::optional<owned::JSPromise> responseReadPromise = std::move(fetchState.responseReadPromise);
+        std::optional<owned::JSPromise> responseReadPromise =
+            std::move(fetchState.responseReadPromise);
         const errors::Error error = fetchState.close();
         if (error.hasValue()) {
             if (!fetchResponse->fetchClient->pendingError->hasValue()) {
@@ -988,19 +1105,24 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
         if (fetchResponse->fetchClient->pendingError->hasValue()) {
             return JS_ThrowInternalError(jsContext, "FetchResponse.close: native failure");
         }
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(jsContext, responseReadyPromise.promise.get());
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(jsContext, responseReadyPromise.promise.get());
         if (responseReadyPromiseState != JS_PROMISE_PENDING && !responseReadPromise.has_value()) {
             return JS_UNDEFINED;
         }
         owned::JSValue jsError = jsNewError(jsContext, "AbortError", "FetchResponse is closed");
         if (responseReadyPromiseState == JS_PROMISE_PENDING) {
-            const JSValue result = JS_Call(jsContext, responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+            const JSValue result = JS_Call(jsContext, responseReadyPromise.rejectFunction.get(),
+                JS_UNDEFINED, 1, &jsError.get());
             JS_FreeValue(jsContext, result);
         }
         if (responseReadPromise.has_value()) {
-            const JSPromiseStateEnum responseReadPromiseState = JS_PromiseState(jsContext, responseReadPromise.value().promise.get());
+            const JSPromiseStateEnum responseReadPromiseState =
+                JS_PromiseState(jsContext, responseReadPromise.value().promise.get());
             if (responseReadPromiseState == JS_PROMISE_PENDING) {
-                const JSValue result = JS_Call(jsContext, responseReadPromise.value().rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
+                const JSValue result =
+                    JS_Call(jsContext, responseReadPromise.value().rejectFunction.get(),
+                        JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(jsContext, result);
             }
         }
@@ -1017,9 +1139,11 @@ JSValue FetchResponse::close(JSContext* jsContext, JSValueConst thisValue, int /
     }
 }
 
-JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
+JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
+    JSValueConst* /* argv */) {
     try {
-        std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::expected<FetchResponse*, JSValue> fetchResponseResult =
+            getFetchResponse(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return fetchResponseResult.error();
         }
@@ -1028,11 +1152,15 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
             return JS_ThrowTypeError(jsContext, "FetchResponse.getStatus: response is closed");
         }
         if (!fetchResponse->fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
-            return JS_ThrowInternalError(jsContext, "FetchResponse.getStatus: response state is missing");
+            return JS_ThrowInternalError(jsContext,
+                "FetchResponse.getStatus: response state is missing");
         }
-        const FetchState& fetchState = fetchResponse->fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
+        const FetchState& fetchState =
+            fetchResponse->fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+            responseReadyPromiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "FetchResponse.getStatus: response not ready");
         }
         return JS_NewInt64(jsContext, fetchState.responseCode);
@@ -1045,9 +1173,11 @@ JSValue FetchResponse::getStatus(JSContext* jsContext, JSValueConst thisValue, i
     }
 }
 
-JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
+JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
+    JSValueConst* /* argv */) {
     try {
-        std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::expected<FetchResponse*, JSValue> fetchResponseResult =
+            getFetchResponse(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return fetchResponseResult.error();
         }
@@ -1057,11 +1187,14 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
             return JS_ThrowTypeError(jsContext, "FetchResponse.getHeaders: response is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
-            return JS_ThrowInternalError(jsContext, "FetchResponse.getHeaders: response state is missing");
+            return JS_ThrowInternalError(jsContext,
+                "FetchResponse.getHeaders: response state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+            responseReadyPromiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "FetchResponse.getHeaders: response not ready");
         }
         std::vector<JSONValue> headers;
@@ -1079,9 +1212,11 @@ JSValue FetchResponse::getHeaders(JSContext* jsContext, JSValueConst thisValue, 
     }
 }
 
-JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */, JSValueConst* /* argv */) {
+JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int /* argc */,
+    JSValueConst* /* argv */) {
     try {
-        std::expected<FetchResponse*, JSValue> fetchResponseResult = getFetchResponse(jsContext, thisValue);
+        std::expected<FetchResponse*, JSValue> fetchResponseResult =
+            getFetchResponse(jsContext, thisValue);
         if (!fetchResponseResult.has_value()) {
             return fetchResponseResult.error();
         }
@@ -1091,14 +1226,18 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
             return JS_ThrowTypeError(jsContext, "FetchResponse.getURL: response is closed");
         }
         if (!fetchClient->fetchStateMap.contains(fetchResponse->curlEasyHandle)) {
-            return JS_ThrowInternalError(jsContext, "FetchResponse.getURL: response state is missing");
+            return JS_ThrowInternalError(jsContext,
+                "FetchResponse.getURL: response state is missing");
         }
         const FetchState& fetchState = fetchClient->fetchStateMap.at(fetchResponse->curlEasyHandle);
-        const JSPromiseStateEnum responseReadyPromiseState = JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
-        if (responseReadyPromiseState != JS_PROMISE_FULFILLED && responseReadyPromiseState != JS_PROMISE_REJECTED) {
+        const JSPromiseStateEnum responseReadyPromiseState =
+            JS_PromiseState(jsContext, fetchState.responseReadyPromise.promise.get());
+        if (responseReadyPromiseState != JS_PROMISE_FULFILLED &&
+            responseReadyPromiseState != JS_PROMISE_REJECTED) {
             return JS_ThrowTypeError(jsContext, "FetchResponse.getURL: response not ready");
         }
-        return JS_NewStringLen(jsContext, fetchState.effectiveURL.data(), fetchState.effectiveURL.size());
+        return JS_NewStringLen(jsContext, fetchState.effectiveURL.data(),
+            fetchState.effectiveURL.size());
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -1108,7 +1247,8 @@ JSValue FetchResponse::getURL(JSContext* jsContext, JSValueConst thisValue, int 
     }
 }
 
-JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv) {
+JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc,
+    JSValueConst* argv) {
     FetchClient* fetchClient = nullptr;
     CURL* curlEasyHandle = nullptr;
     try {
@@ -1142,16 +1282,19 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
         }
         if (argc < 1) {
-            return JS_ThrowTypeError(jsContext, "FetchClient.send: requires at least 1 argument (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext,
+                "FetchClient.send: requires at least 1 argument (%d provided)", argc);
         }
-        std::expected<FetchRequest, JSValue> fetchRequestResult = FetchRequest::fromJSValue(jsContext, argv[0]);
+        std::expected<FetchRequest, JSValue> fetchRequestResult =
+            FetchRequest::fromJSValue(jsContext, argv[0]);
         if (!fetchRequestResult.has_value()) {
             return fetchRequestResult.error();
         }
         if (fetchClient->fetchStateMap.size() >= 64) {
             return JS_ThrowRangeError(jsContext, "Too many open FetchResponses");
         }
-        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> ownedCurlEasyHandle(curl_easy_init(), curl_easy_cleanup);
+        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> ownedCurlEasyHandle(curl_easy_init(),
+            curl_easy_cleanup);
         if (ownedCurlEasyHandle == nullptr) {
             return JS_ThrowOutOfMemory(jsContext);
         }
@@ -1178,7 +1321,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             if (header.second.empty()) {
                 line = header.first + ";"; // Curl's syntax for an explicitly empty header.
             }
-            curl_slist* curlHeaders = curl_slist_append(fetchState.ownedCurlRequestHeaders, line.c_str());
+            curl_slist* curlHeaders =
+                curl_slist_append(fetchState.ownedCurlRequestHeaders, line.c_str());
             if (curlHeaders == nullptr) {
                 throw std::bad_alloc();
             }
@@ -1187,29 +1331,35 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         if (!hasContentType) {
             // POSTFIELDS otherwise invents application/x-www-form-urlencoded.
             // The JS facade supplies a content type for strings, but not bytes.
-            curl_slist* curlHeaders = curl_slist_append(fetchState.ownedCurlRequestHeaders, "Content-Type:");
+            curl_slist* curlHeaders =
+                curl_slist_append(fetchState.ownedCurlRequestHeaders, "Content-Type:");
             if (curlHeaders == nullptr) {
                 throw std::bad_alloc();
             }
             fetchState.ownedCurlRequestHeaders = curlHeaders;
         }
-        CURLcode curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL, fetchState.request.url.c_str());
+        CURLcode curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_URL,
+            fetchState.request.url.c_str());
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https");
+        curlCode =
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_PROTOCOLS_STR, "http,https");
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_REDIR_PROTOCOLS_STR,
+            "http,https");
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L);
+        curlCode =
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_DISALLOW_USERNAME_IN_URL, 1L);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION, CURLFOLLOW_OBEYCODE);
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_FOLLOWLOCATION,
+            CURLFOLLOW_OBEYCODE);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1217,7 +1367,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+        curlCode =
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1233,7 +1384,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+        curlCode =
+            curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1241,35 +1393,40 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER, fetchState.ownedCurlRequestHeaders);
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HTTPHEADER,
+            fetchState.ownedCurlRequestHeaders);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA, fetchState.selfVoidPtr.get());
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA,
+            fetchState.selfVoidPtr.get());
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION, [](char* buffer, std::size_t size, std::size_t nitems, void* userdata) noexcept {
-            try {
-                return curlHeaderFunction(buffer, size, nitems, userdata);
-            } catch (...) {
-                return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
-            }
-        });
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERFUNCTION,
+            [](char* buffer, std::size_t size, std::size_t nitems, void* userdata) noexcept {
+                try {
+                    return curlHeaderFunction(buffer, size, nitems, userdata);
+                } catch (...) {
+                    return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
+                }
+            });
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA, fetchState.selfVoidPtr.get());
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA,
+            fetchState.selfVoidPtr.get());
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
-        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION, [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
-            try {
-                return curlWriteFunction(bytes, size, count, userdata);
-            } catch (...) {
-                return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
-            }
-        });
+        curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEFUNCTION,
+            [](char* bytes, std::size_t size, std::size_t count, void* userdata) noexcept {
+                try {
+                    return curlWriteFunction(bytes, size, count, userdata);
+                } catch (...) {
+                    return static_cast<std::size_t>(CURL_WRITEFUNC_ERROR);
+                }
+            });
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1281,19 +1438,24 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             if (!fetchState.request.body.empty()) {
                 bodyBytes = reinterpret_cast<const char*>(fetchState.request.body.data());
             }
-            methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDS, bodyBytes);
+            methodStatus =
+                curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDS, bodyBytes);
             if (methodStatus == CURLE_OK) {
-                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(fetchState.request.body.size()));
+                methodStatus =
+                    curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_POSTFIELDSIZE_LARGE,
+                        static_cast<curl_off_t>(fetchState.request.body.size()));
             }
             if (methodStatus == CURLE_OK && fetchState.request.method != "POST") {
-                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_CUSTOMREQUEST, fetchState.request.method.c_str());
+                methodStatus = curl_easy_setopt(fetchState.ownedCurlEasyHandle,
+                    CURLOPT_CUSTOMREQUEST, fetchState.request.method.c_str());
             }
         }
         if (methodStatus != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(methodStatus));
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        owned::JSValue ready(jsContext, JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
+        owned::JSValue ready(jsContext,
+            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(ready.get())) {
             const errors::Error closeError = fetchState.close();
             if (!fetchClient->pendingError->hasValue()) {
@@ -1335,7 +1497,9 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             fetchClient->fetchStateMap.erase(curlEasyHandle);
             return JS_ThrowInternalError(jsContext, "Could not attach FetchResponse");
         }
-        if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready", JS_DupValue(jsContext, fetchState.responseReadyPromise.promise.get()), JS_PROP_ENUMERABLE) < 0) {
+        if (JS_DefinePropertyValueStr(jsContext, response.get(), "ready",
+                JS_DupValue(jsContext, fetchState.responseReadyPromise.promise.get()),
+                JS_PROP_ENUMERABLE) < 0) {
             const errors::Error closeError = fetchState.close();
             if (!fetchClient->pendingError->hasValue()) {
                 if (closeError.hasValue()) {
@@ -1345,10 +1509,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             fetchClient->fetchStateMap.erase(curlEasyHandle);
             return JS_EXCEPTION;
         }
-        const CURLMcode curlMCode = curl_multi_add_handle(
-            fetchClient->ownedCurlMultiHandle,
-            fetchState.ownedCurlEasyHandle
-        );
+        const CURLMcode curlMCode = curl_multi_add_handle(fetchClient->ownedCurlMultiHandle,
+            fetchState.ownedCurlEasyHandle);
         if (curlMCode != CURLM_OK) {
             const errors::Error closeError = fetchState.close();
             if (!fetchClient->pendingError->hasValue()) {
@@ -1357,7 +1519,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
                 }
             }
             fetchClient->fetchStateMap.erase(curlEasyHandle);
-            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s", curl_multi_strerror(curlMCode));
+            return JS_ThrowInternalError(jsContext, "curl_multi_add_handle: %s",
+                curl_multi_strerror(curlMCode));
         }
         fetchState.curlMultiHandle = fetchClient->ownedCurlMultiHandle;
         fetchState.responseCurlTransferStatus = CurlTransferStatus::Running;
@@ -1426,9 +1589,12 @@ errors::Error FetchState::close() noexcept {
     return error;
 }
 
-FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs) {
+FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError,
+    std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
-        throw std::invalid_argument("FetchClient requires a context, initialized loop, and completion hook");
+        throw std::invalid_argument(
+            "FetchClient requires a context, initialized loop, and completion hook"
+        );
     }
     this->jsRuntime = JS_GetRuntime(jsContext);
     this->jsContext = jsContext;
@@ -1461,7 +1627,8 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error&
         {
             owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
             const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
-                FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
+                FetchClient* fetchClient =
+                    static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
                 uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle));
                 // Another callback may have recorded an error earlier in this iteration.
                 if (fetchClient->pendingError->hasValue()) {
@@ -1484,39 +1651,46 @@ FetchClient::FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error&
             uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
             this->uvAsyncHandle = std::move(uvAsyncHandle);
         }
-        CURLMcode curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION, [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata, void* socketData) noexcept {
-            try {
-                return curlSocketFunction(curlEasyHandle, socket, action, userdata, socketData);
-            } catch (...) {
-                const FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-                if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->exceptionPtr = std::current_exception();
+        CURLMcode curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION,
+            [](CURL* curlEasyHandle, curl_socket_t socket, int action, void* userdata,
+                void* socketData) noexcept {
+                try {
+                    return curlSocketFunction(curlEasyHandle, socket, action, userdata, socketData);
+                } catch (...) {
+                    const FetchClient* fetchClient =
+                        static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
+                    if (!fetchClient->pendingError->hasValue()) {
+                        fetchClient->pendingError->exceptionPtr = std::current_exception();
+                    }
+                    return -1;
                 }
-                return -1;
-            }
-        });
+            });
         if (curlMCode != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->selfVoidPtr.get());
+        curlMCode =
+            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_SOCKETDATA, this->selfVoidPtr.get());
         if (curlMCode != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION, [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
-            try {
-                return curlTimerFunction(curlMultiHandle, milliseconds, userdata);
-            } catch (...) {
-                const FetchClient* fetchClient = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
-                if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->exceptionPtr = std::current_exception();
+        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION,
+            [](CURLM* curlMultiHandle, long milliseconds, void* userdata) noexcept {
+                try {
+                    return curlTimerFunction(curlMultiHandle, milliseconds, userdata);
+                } catch (...) {
+                    const FetchClient* fetchClient =
+                        static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchClient*>();
+                    if (!fetchClient->pendingError->hasValue()) {
+                        fetchClient->pendingError->exceptionPtr = std::current_exception();
+                    }
+                    return -1;
                 }
-                return -1;
-            }
-        });
+            });
         if (curlMCode != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
-        curlMCode = curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->selfVoidPtr.get());
+        curlMCode =
+            curl_multi_setopt(ownedCurlMultiHandle, CURLMOPT_TIMERDATA, this->selfVoidPtr.get());
         if (curlMCode != CURLM_OK) {
             throw std::runtime_error(curl_multi_strerror(curlMCode));
         }
@@ -1597,14 +1771,17 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         }
         const JSClassDef clientClass = {
             .class_name = "FetchClient",
-            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value)));
-            },
+            .finalizer =
+                [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                    delete static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value,
+                        JS_GetClassID(value)));
+                },
             .gc_mark = nullptr,
             .call = nullptr,
             .exotic = nullptr,
         };
-        if (!JS_IsRegisteredClass(jsRuntime, clientClassID) && JS_NewClass(jsRuntime, clientClassID, &clientClass) < 0) {
+        if (!JS_IsRegisteredClass(jsRuntime, clientClassID) &&
+            JS_NewClass(jsRuntime, clientClassID, &clientClass) < 0) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
@@ -1629,56 +1806,65 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         }
         const JSClassDef responseClass = {
             .class_name = "FetchResponse",
-            .finalizer = [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
-                FetchClient* fetchClient = nullptr;
-                try {
-                    const std::unique_ptr<void_ptr::VoidPtr> voidPtr(static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value, JS_GetClassID(value))));
-                    if (voidPtr == nullptr) {
-                        return;
-                    }
-                    const FetchResponse& fetchResponse = voidPtr->cast<FetchResponse>();
-                    if (fetchResponse.curlEasyHandle == nullptr) {
-                        return;
-                    }
-                    fetchClient = fetchResponse.fetchClient;
-                    // Context destruction can run this finalizer after client
-                    // close(). The cleared map proves no work remains; do not
-                    // touch the loop, async handle, or mailbox in that case.
-                    if (!fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
-                        return;
-                    }
-                    // An earlier failure already requires host cleanup; do not
-                    // schedule another settlement pass from this finalizer.
-                    if (fetchClient->pendingError->hasValue()) {
-                        return;
-                    }
-                    // GC can run while allocating promise results. Do
-                    // not erase a FetchState currently being accessed
-                    // by settlePendingPromises(), and do not settle promises
-                    // from inside a QuickJS finalizer.
-                    fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned = true;
-                    uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
-                    const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
-                    if (status != 0) {
-                        uv_unref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
+            .finalizer =
+                [](JSRuntime* /* jsRuntime */, JSValue value) noexcept {
+                    FetchClient* fetchClient = nullptr;
+                    try {
+                        const std::unique_ptr<void_ptr::VoidPtr> voidPtr(
+                            static_cast<void_ptr::VoidPtr*>(JS_GetOpaque(value,
+                                JS_GetClassID(value)))
+                        );
+                        if (voidPtr == nullptr) {
+                            return;
+                        }
+                        const FetchResponse& fetchResponse = voidPtr->cast<FetchResponse>();
+                        if (fetchResponse.curlEasyHandle == nullptr) {
+                            return;
+                        }
+                        fetchClient = fetchResponse.fetchClient;
+                        // Context destruction can run this finalizer after client
+                        // close(). The cleared map proves no work remains; do not
+                        // touch the loop, async handle, or mailbox in that case.
+                        if (!fetchClient->fetchStateMap.contains(fetchResponse.curlEasyHandle)) {
+                            return;
+                        }
+                        // An earlier failure already requires host cleanup; do not
+                        // schedule another settlement pass from this finalizer.
+                        if (fetchClient->pendingError->hasValue()) {
+                            return;
+                        }
+                        // GC can run while allocating promise results. Do
+                        // not erase a FetchState currently being accessed
+                        // by settlePendingPromises(), and do not settle promises
+                        // from inside a QuickJS finalizer.
+                        fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned =
+                            true;
+                        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
+                        const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
+                        if (status != 0) {
+                            uv_unref(
+                                reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get())
+                            );
+                            if (!fetchClient->pendingError->hasValue()) {
+                                fetchClient->pendingError->errorCode =
+                                    std::error_code(status, uvErrorCategory);
+                            }
+                        }
+                    } catch (...) {
+                        if (fetchClient == nullptr) {
+                            std::terminate(); // No reporter means invalid callback storage.
+                        }
                         if (!fetchClient->pendingError->hasValue()) {
-                            fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                            fetchClient->pendingError->exceptionPtr = std::current_exception();
                         }
                     }
-                } catch (...) {
-                    if (fetchClient == nullptr) {
-                        std::terminate(); // No reporter means invalid callback storage.
-                    }
-                    if (!fetchClient->pendingError->hasValue()) {
-                        fetchClient->pendingError->exceptionPtr = std::current_exception();
-                    }
-                }
-            },
+                },
             .gc_mark = nullptr,
             .call = nullptr,
             .exotic = nullptr,
         };
-        if (!JS_IsRegisteredClass(jsRuntime, fetchResponseClassID) && JS_NewClass(jsRuntime, fetchResponseClassID, &responseClass) < 0) {
+        if (!JS_IsRegisteredClass(jsRuntime, fetchResponseClassID) &&
+            JS_NewClass(jsRuntime, fetchResponseClassID, &responseClass) < 0) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
@@ -1693,7 +1879,8 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             return nullptr;
         }
         const JSValue send = JS_NewCFunction(jsContext, FetchClient::send, "send", 1);
-        if (JS_IsException(send) || JS_DefinePropertyValueStr(jsContext, client.get(), "send", send, JS_PROP_ENUMERABLE) < 0) {
+        if (JS_IsException(send) || JS_DefinePropertyValueStr(jsContext, client.get(), "send", send,
+                                        JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }
         owned::JSValue prototype(jsContext, JS_NewObject(jsContext));
@@ -1706,7 +1893,8 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
         }};
         for (const std::pair<const char*, JSCFunction*>& method : methods) {
             const JSValue function = JS_NewCFunction(jsContext, method.second, method.first, 0);
-            if (JS_IsException(function) || JS_DefinePropertyValueStr(jsContext, prototype.get(), method.first, function, 0) < 0) {
+            if (JS_IsException(function) || JS_DefinePropertyValueStr(jsContext, prototype.get(),
+                                                method.first, function, 0) < 0) {
                 return nullptr;
             }
         }
@@ -1721,21 +1909,25 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                 return nullptr;
             }
             const JSAtom atom = JS_NewAtom(jsContext, getter.first);
-            const int status = JS_DefinePropertyGetSet(jsContext, prototype.get(), atom, function, JS_UNDEFINED, JS_PROP_ENUMERABLE);
+            const int status = JS_DefinePropertyGetSet(jsContext, prototype.get(), atom, function,
+                JS_UNDEFINED, JS_PROP_ENUMERABLE);
             JS_FreeAtom(jsContext, atom);
             if (status < 0) {
                 return nullptr;
             }
         }
         JS_SetClassProto(jsContext, fetchResponseClassID, prototype.release());
-        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:fetch_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            const JSValue client = JS_GetModulePrivateValue(jsContext, jsModuleDef);
-            if (JS_IsException(client)) {
-                return -1;
-            }
-            return JS_SetModuleExport(jsContext, jsModuleDef, "fetchClient", client);
-        });
-        if (jsModuleDef == nullptr || JS_AddModuleExport(jsContext, jsModuleDef, "fetchClient") < 0 || JS_SetModulePrivateValue(jsContext, jsModuleDef, client.release()) < 0) {
+        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:fetch_impl",
+            [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
+                const JSValue client = JS_GetModulePrivateValue(jsContext, jsModuleDef);
+                if (JS_IsException(client)) {
+                    return -1;
+                }
+                return JS_SetModuleExport(jsContext, jsModuleDef, "fetchClient", client);
+            });
+        if (jsModuleDef == nullptr ||
+            JS_AddModuleExport(jsContext, jsModuleDef, "fetchClient") < 0 ||
+            JS_SetModulePrivateValue(jsContext, jsModuleDef, client.release()) < 0) {
             return nullptr;
         }
         return jsModuleDef;

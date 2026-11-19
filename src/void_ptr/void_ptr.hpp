@@ -21,7 +21,7 @@ namespace amj::void_ptr {
 // must otherwise remain alive while in use. Construction and assignment may
 // throw but never leak a supplied owned payload.
 class VoidPtr {
-public:
+  public:
     VoidPtr(const VoidPtr&) = delete;
     VoidPtr& operator=(const VoidPtr&) = delete;
     VoidPtr(VoidPtr&&) = delete;
@@ -33,18 +33,15 @@ public:
         }
     }
 
-    template <typename T>
-    explicit VoidPtr(T* pointer) {
+    template <typename T> explicit VoidPtr(T* pointer) {
         this->assign(pointer);
     }
 
-    template <typename T>
-    explicit VoidPtr(std::unique_ptr<T> pointer) {
+    template <typename T> explicit VoidPtr(std::unique_ptr<T> pointer) {
         this->assign(std::move(pointer));
     }
 
-    template <typename T>
-    void assign(T* pointer) {
+    template <typename T> void assign(T* pointer) {
         std::any replacement = pointer;
         if (this->deleteFunction != nullptr) {
             this->deleteFunction(this->any);
@@ -53,8 +50,7 @@ public:
         this->deleteFunction = nullptr;
     }
 
-    template <typename T>
-    void assign(std::unique_ptr<T> pointer) {
+    template <typename T> void assign(std::unique_ptr<T> pointer) {
         static_assert(!std::is_pointer_v<T> && !std::is_array_v<T>);
         if (pointer == nullptr) {
             std::terminate();
@@ -78,8 +74,7 @@ public:
         };
     }
 
-    template <typename T>
-    bool is() const noexcept {
+    template <typename T> bool is() const noexcept {
         if constexpr (std::is_pointer_v<T>) {
             return this->deleteFunction == nullptr && std::any_cast<T>(&this->any) != nullptr;
         } else {
@@ -87,8 +82,7 @@ public:
         }
     }
 
-    template <typename T>
-    decltype(auto) cast() const noexcept {
+    template <typename T> decltype(auto) cast() const noexcept {
         if (!this->is<T>()) {
             std::terminate();
         }
@@ -107,7 +101,7 @@ public:
         }
     }
 
-private:
+  private:
     std::any any = {}; // Contains a T*: owned when deleteFunction is non-null, otherwise borrowed.
     void (*deleteFunction)(std::any&) noexcept = nullptr;
 };

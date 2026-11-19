@@ -50,13 +50,15 @@ struct Timeout {
     uv_loop_t* uvLoop = nullptr;
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
     std::thread::id ownerThreadID = {};
-    int32_t timerIDCounter = 0;             // Last allocated timer ID; allocation starts at 1.
-    std::map<int32_t, Timer> timerMap = {}; // Host-owned JS references; released on firing/cancel/shutdown.
+    int32_t timerIDCounter = 0; // Last allocated timer ID; allocation starts at 1.
+    std::map<int32_t, Timer> timerMap =
+        {}; // Host-owned JS references; released on firing/cancel/shutdown.
     bool shuttingDown = false;
 
     // Throws invalid_argument for missing dependencies. Does not initialize or
     // run the borrowed loop; the caller must supply an initialized loop.
-    Timeout(JSContext* jsContext, uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
+    Timeout(JSContext* jsContext, uv_loop_t* uvLoop,
+        std::function<void(JSContext*)> jsExecutePendingJobs);
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;
@@ -73,11 +75,13 @@ struct Timeout {
 // Returns a timer ID in [1, INT32_MAX], or JS_EXCEPTION. JS owns coercion,
 // clamping, and forwarding extra callback arguments. Requires timeout's context
 // and owner thread. Libuv's zero-delay timer runs on a subsequent loop iteration.
-JSValue timeoutSet(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, Timeout& timeout);
+JSValue timeoutSet(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv,
+    Timeout& timeout);
 
 // timerID: nonnegative safe integer. Unknown/cleared IDs have no effect.
 // Returns undefined, or JS_EXCEPTION. Only cancels this state's timers.
-JSValue timeoutClear(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv, Timeout& timeout);
+JSValue timeoutClear(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv,
+    Timeout& timeout);
 
 // Registers amj:timeout_impl, exporting timeoutSet and timeoutClear. Call once
 // per context before loading timeout.js. Borrows timeout, including on failure;

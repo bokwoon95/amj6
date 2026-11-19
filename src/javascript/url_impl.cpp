@@ -27,7 +27,8 @@ namespace owned = amj::owned;
 JSValue urlParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv) {
     try {
         if (argc < 1) {
-            return JS_ThrowTypeError(jsContext, "urlParse: requires at least 1 argument (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext,
+                "urlParse: requires at least 1 argument (%d provided)", argc);
         }
 
         // Get input string.
@@ -55,7 +56,8 @@ JSValue urlParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc, J
             if (base.value().size() > (1U << 20U /* 1 MiB */)) {
                 return JS_ThrowRangeError(jsContext, "urlParse: arg1: base string too big");
             }
-            const ada::result<ada::url_aggregator> uri = ada::parse<ada::url_aggregator>(base.value(), nullptr);
+            const ada::result<ada::url_aggregator> uri =
+                ada::parse<ada::url_aggregator>(base.value(), nullptr);
             if (!uri.has_value()) {
                 return JS_NULL;
             }
@@ -105,10 +107,12 @@ JSValue urlParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc, J
     }
 }
 
-JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv) {
+JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
+    JSValueConst* argv) {
     try {
         if (argc < 3) {
-            return JS_ThrowTypeError(jsContext, "urlWithComponent: requires 3 arguments (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext,
+                "urlWithComponent: requires 3 arguments (%d provided)", argc);
         }
 
         // Get href string.
@@ -132,7 +136,8 @@ JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int
             return JS_EXCEPTION;
         }
         if (component.value().size() > (1U << 20U /* 1 MiB */)) {
-            return JS_ThrowRangeError(jsContext, "urlWithComponent: arg1: component string too big");
+            return JS_ThrowRangeError(jsContext,
+                "urlWithComponent: arg1: component string too big");
         }
 
         // Get value string.
@@ -148,7 +153,8 @@ JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int
         }
 
         // Set the URL component.
-        ada::result<ada::url_aggregator> urlResult = ada::parse<ada::url_aggregator>(href.value(), nullptr);
+        ada::result<ada::url_aggregator> urlResult =
+            ada::parse<ada::url_aggregator>(href.value(), nullptr);
         if (!urlResult.has_value()) {
             return JS_NULL;
         }
@@ -205,7 +211,8 @@ JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int
         }
         const std::string_view search = url.get_search();
         if (std::count(search.begin(), search.end(), '&') > 65535) {
-            return JS_ThrowRangeError(jsContext, "urlWithComponent: url queryString has too many entries");
+            return JS_ThrowRangeError(jsContext,
+                "urlWithComponent: url queryString has too many entries");
         }
 
         // Return the URLParts.
@@ -232,10 +239,12 @@ JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int
     }
 }
 
-JSValue queryStringParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv) {
+JSValue queryStringParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
+    JSValueConst* argv) {
     try {
         if (argc < 1) {
-            return JS_ThrowTypeError(jsContext, "queryStringParse: requires 1 argument (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext,
+                "queryStringParse: requires 1 argument (%d provided)", argc);
         }
 
         // Get queryString string.
@@ -250,7 +259,8 @@ JSValue queryStringParse(JSContext* jsContext, JSValueConst /* thisValue */, int
             return JS_ThrowRangeError(jsContext, "queryStringParse: arg0: queryString too big");
         }
         if (std::count(queryString.value().begin(), queryString.value().end(), '&') > 65535) {
-            return JS_ThrowRangeError(jsContext, "queryStringParse: arg0: queryString has too many entries");
+            return JS_ThrowRangeError(jsContext,
+                "queryStringParse: arg0: queryString has too many entries");
         }
 
         // Return the URLSearchParams entries.
@@ -269,10 +279,12 @@ JSValue queryStringParse(JSContext* jsContext, JSValueConst /* thisValue */, int
     }
 }
 
-JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int argc, JSValueConst* argv) {
+JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
+    JSValueConst* argv) {
     try {
         if (argc < 1) {
-            return JS_ThrowTypeError(jsContext, "queryStringify: requires 1 argument (%d provided)", argc);
+            return JS_ThrowTypeError(jsContext, "queryStringify: requires 1 argument (%d provided)",
+                argc);
         }
 
         // Get entries array.
@@ -285,7 +297,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             return JS_EXCEPTION;
         }
         if (count > 65535) {
-            return JS_ThrowRangeError(jsContext, "queryStringify: arg0: queryString has too many entries");
+            return JS_ThrowRangeError(jsContext,
+                "queryStringify: arg0: queryString has too many entries");
         }
         const size_t countSize = static_cast<size_t>(count);
 
@@ -293,55 +306,66 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         std::size_t numBytes = 0;
         for (size_t index = 0; index < countSize; index++) {
             // Get entry array.
-            const owned::JSValue entryJSValue(jsContext, JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
+            const owned::JSValue entryJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
             if (JS_IsException(entryJSValue.get())) {
                 return JS_EXCEPTION;
             }
             if (!JS_IsArray(entryJSValue.get())) {
-                return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu] not an array", index);
+                return JS_ThrowTypeError(jsContext,
+                    "queryStringify: arg0: entries[%zu] not an array", index);
             }
             int64_t length = 0;
             if (JS_GetLength(jsContext, entryJSValue.get(), &length) < 0) {
                 return JS_EXCEPTION;
             }
             if (length != 2) {
-                return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu] requires 2 elements (%lld provided)", index, static_cast<long long>(length));
+                return JS_ThrowTypeError(jsContext,
+                    "queryStringify: arg0: entries[%zu] requires 2 elements (%lld provided)", index,
+                    static_cast<long long>(length));
             }
 
             // Get name string.
-            const owned::JSValue nameJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
+            const owned::JSValue nameJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
             if (JS_IsException(nameJSValue.get())) {
                 return JS_EXCEPTION;
             }
             if (!JS_IsString(nameJSValue.get())) {
-                return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu][0] must be a string", index);
+                return JS_ThrowTypeError(jsContext,
+                    "queryStringify: arg0: entries[%zu][0] must be a string", index);
             }
             const std::optional<std::string> name = jsstring(jsContext, nameJSValue.get());
             if (!name.has_value()) {
                 return JS_EXCEPTION;
             }
             if (name.value().size() > (1U << 20U /* 1 MiB */)) {
-                return JS_ThrowRangeError(jsContext, "queryStringify: arg0: entries[%zu][0] string is too big", index);
+                return JS_ThrowRangeError(jsContext,
+                    "queryStringify: arg0: entries[%zu][0] string is too big", index);
             }
 
             // Get value string.
-            const owned::JSValue valueJSValue(jsContext, JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
+            const owned::JSValue valueJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
             if (JS_IsException(valueJSValue.get())) {
                 return JS_EXCEPTION;
             }
             if (!JS_IsString(valueJSValue.get())) {
-                return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries[%zu][1] must be a string", index);
+                return JS_ThrowTypeError(jsContext,
+                    "queryStringify: arg0: entries[%zu][1] must be a string", index);
             }
             const std::optional<std::string> value = jsstring(jsContext, valueJSValue.get());
             if (!value.has_value()) {
                 return JS_EXCEPTION;
             }
             if (value.value().size() > (1U << 20U /* 1 MiB */)) {
-                return JS_ThrowRangeError(jsContext, "queryStringify: arg0: entries[%zu][1] string is too big", index);
+                return JS_ThrowRangeError(jsContext,
+                    "queryStringify: arg0: entries[%zu][1] string is too big", index);
             }
 
             if (numBytes + name.value().size() + value.value().size() > (1U << 20U /* 1 MiB */)) {
-                return JS_ThrowRangeError(jsContext, "queryStringify: arg0: queryString is too big");
+                return JS_ThrowRangeError(jsContext,
+                    "queryStringify: arg0: queryString is too big");
             }
             numBytes = numBytes + name.value().size() + value.value().size();
             urlSearchParams.append(name.value(), value.value());
@@ -370,13 +394,16 @@ JSModuleDef* createURLImplModule(JSContext* jsContext) {
             JS_CFUNC_DEF("queryStringParse", 1, queryStringParse),
             JS_CFUNC_DEF("queryStringify", 1, queryStringify),
         };
-        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:url_impl", [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-            return JS_SetModuleExportList(jsContext, jsModuleDef, functionList.data(), static_cast<int>(functionList.size()));
-        });
+        JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:url_impl",
+            [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
+                return JS_SetModuleExportList(jsContext, jsModuleDef, functionList.data(),
+                    static_cast<int>(functionList.size()));
+            });
         if (jsModuleDef == nullptr) {
             return nullptr;
         }
-        if (JS_AddModuleExportList(jsContext, jsModuleDef, functionList.data(), static_cast<int>(functionList.size())) < 0) {
+        if (JS_AddModuleExportList(jsContext, jsModuleDef, functionList.data(),
+                static_cast<int>(functionList.size())) < 0) {
             return nullptr;
         }
         return jsModuleDef;

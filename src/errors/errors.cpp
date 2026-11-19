@@ -74,7 +74,8 @@ std::string Error::toString() const {
         if (current->stacktrace == nullptr) {
             continue;
         }
-        for (const std::tuple<std::string, std::uint_least32_t, std::string>& frame : *current->stacktrace) {
+        for (const std::tuple<std::string, std::uint_least32_t, std::string>& frame :
+            *current->stacktrace) {
             const std::string& file = std::get<0>(frame);
             const std::uint_least32_t line = std::get<1>(frame);
             const std::string& description = std::get<2>(frame);
@@ -101,7 +102,9 @@ Error withStackTrace(Error error) {
         }
     }
     const cpptrace::stacktrace stacktrace = cpptrace::generate_trace(1, 30);
-    const std::shared_ptr<std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>> stacktraceFrames = std::make_shared<std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>();
+    const std::shared_ptr<std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>
+        stacktraceFrames = std::make_shared<
+            std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>();
     for (const cpptrace::stacktrace_frame& frame : stacktrace.frames) {
         if (stacktraceFrames->size() >= 30) {
             break;

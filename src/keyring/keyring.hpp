@@ -52,13 +52,15 @@ enum class ErrorCode : std::uint8_t {
 // Blocking operations; unlocking the OS credential store may require user interaction.
 // Namespace service names to avoid collisions with other applications.
 // A missing entry reports NotFound; an empty secret is a successful empty string.
-[[nodiscard]] std::expected<std::string, errors::Error> load(const std::string& service, const std::string& user);
+[[nodiscard]] std::expected<std::string, errors::Error> load(const std::string& service,
+    const std::string& user);
 
 // Inserts or overwrites an entry. Windows stores values up to 2,560 bytes directly
 // in Credential Manager; larger values are DPAPI-encrypted and split across the
 // blob and attributes. Ciphertext must fit within 18,944 bytes (plaintext less).
 // Linux retains libsecret's UTF-8, NUL-terminated secret text semantics.
-[[nodiscard]] errors::Error save(const std::string& service, const std::string& user, const std::string& value);
+[[nodiscard]] errors::Error save(const std::string& service, const std::string& user,
+    const std::string& value);
 
 // Deleting a missing entry reports NotFound.
 [[nodiscard]] errors::Error remove(const std::string& service, const std::string& user);
@@ -73,7 +75,6 @@ namespace keyring = amj::keyring;
 
 namespace std {
 
-template <>
-struct is_error_code_enum<keyring::ErrorCode> : true_type {};
+template <> struct is_error_code_enum<keyring::ErrorCode> : true_type {};
 
 } // namespace std

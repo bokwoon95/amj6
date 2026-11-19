@@ -41,7 +41,8 @@ struct FetchRequest {
     std::vector<std::pair<std::string, std::string>> headers = {};
     std::vector<uint8_t> body = {};
 
-    static std::expected<FetchRequest, JSValue> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
+    static std::expected<FetchRequest, JSValue> fromJSValue(JSContext* jsContext,
+        JSValueConst jsValue);
 };
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
@@ -52,7 +53,8 @@ struct FetchState {
     CURLM* curlMultiHandle = nullptr; // Borrowed while registered.
     CURL* ownedCurlEasyHandle = nullptr;
     errors::Error error = {};
-    bool abandoned = false; // JavaScript code stopped referencing it before the fetchResponse was closed.
+    bool abandoned =
+        false; // JavaScript code stopped referencing it before the fetchResponse was closed.
 
     // Request.
     curl_slist* ownedCurlRequestHeaders = nullptr;
@@ -106,7 +108,8 @@ struct FetchState {
 // destruction after close() never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
 struct FetchClient {
-    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr; // Owns the wrapper, which borrows this client.
+    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr =
+        nullptr; // Owns the wrapper, which borrows this client.
     uv_loop_t* uvLoop = nullptr;
     errors::Error* pendingError = nullptr; // Borrowed; outlives close().
     JSRuntime* jsRuntime = nullptr;
@@ -121,7 +124,8 @@ struct FetchClient {
     std::thread::id ownerThreadID = {};
     bool closed = false; // Guards close() against repetition/reentrancy.
 
-    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError, std::function<void(JSContext*)> jsExecutePendingJobs);
+    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError,
+        std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
     FetchClient& operator=(const FetchClient&) = delete;
@@ -146,13 +150,17 @@ struct FetchResponse {
 
     // Direct QuickJS callbacks. Extract this response from thisValue.
     static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
-    static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    static JSValue close(JSContext* jsContext, JSValueConst thisValue, int argc,
+        JSValueConst* argv);
 
     // Getter-only JS properties: status, headers, and url. ready is a read-only
     // Promise property installed on each JS response by FetchClient::send().
-    static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
-    static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
-    static JSValue getURL(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    static JSValue getStatus(JSContext* jsContext, JSValueConst thisValue, int argc,
+        JSValueConst* argv);
+    static JSValue getHeaders(JSContext* jsContext, JSValueConst thisValue, int argc,
+        JSValueConst* argv);
+    static JSValue getURL(JSContext* jsContext, JSValueConst thisValue, int argc,
+        JSValueConst* argv);
 };
 
 // Registers amj:fetch_impl, exporting fetchClient with send(fetchRequest).

@@ -31,7 +31,8 @@ struct Error {
     std::shared_ptr<const Error> cause = nullptr;
 
     // (file, line, description); null unless explicitly captured.
-    std::shared_ptr<const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>> stacktrace = nullptr;
+    std::shared_ptr<const std::vector<std::tuple<std::string, std::uint_least32_t, std::string>>>
+        stacktrace = nullptr;
 
     [[nodiscard]] bool hasValue() const noexcept {
         return errorCode.value() != 0 || exceptionPtr != nullptr;
@@ -58,7 +59,6 @@ struct Error {
 
 namespace std {
 
-template <>
-struct is_error_code_enum<amj::errors::ErrorCode> : true_type {};
+template <> struct is_error_code_enum<amj::errors::ErrorCode> : true_type {};
 
 } // namespace std

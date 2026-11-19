@@ -28,12 +28,10 @@ namespace void_ptr = amj::void_ptr;
 // Borrowed callback payloads must remain valid while callbacks can still run.
 // All operations require the loop's owner thread. Do not close the handle
 // elsewhere while this wrapper owns it. reset before destroying dependencies.
-template <typename T>
-class UvHandle {
-    static_assert(
-        std::is_same_v<T, uv_poll_t> || std::is_same_v<T, uv_timer_t> || std::is_same_v<T, uv_async_t>,
-        "UvHandle only supports uv_poll_t, uv_timer_t, and uv_async_t"
-    );
+template <typename T> class UvHandle {
+    static_assert(std::is_same_v<T, uv_poll_t> || std::is_same_v<T, uv_timer_t> ||
+                      std::is_same_v<T, uv_async_t>,
+        "UvHandle only supports uv_poll_t, uv_timer_t, and uv_async_t");
 
   public:
     UvHandle() = default;
@@ -68,10 +66,11 @@ class UvHandle {
         if (this != &uvHandle) {
             if (ownedUvHandle != nullptr) {
                 if (initialized) {
-                    uv_close(reinterpret_cast<uv_handle_t*>(ownedUvHandle), [](uv_handle_t* uvHandle) noexcept {
-                        delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
-                        delete reinterpret_cast<T*>(uvHandle);
-                    });
+                    uv_close(reinterpret_cast<uv_handle_t*>(ownedUvHandle),
+                        [](uv_handle_t* uvHandle) noexcept {
+                            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+                            delete reinterpret_cast<T*>(uvHandle);
+                        });
                 } else {
                     delete ownedUvHandle;
                 }
@@ -102,10 +101,11 @@ class UvHandle {
             delete previousUvHandle;
             return;
         }
-        uv_close(reinterpret_cast<uv_handle_t*>(previousUvHandle), [](uv_handle_t* uvHandle) noexcept {
-            delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
-            delete reinterpret_cast<T*>(uvHandle);
-        });
+        uv_close(reinterpret_cast<uv_handle_t*>(previousUvHandle),
+            [](uv_handle_t* uvHandle) noexcept {
+                delete static_cast<void_ptr::VoidPtr*>(uvHandle->data);
+                delete reinterpret_cast<T*>(uvHandle);
+            });
     }
 
     // Transfers responsibility for deletion or uv_close, according to state.

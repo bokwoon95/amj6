@@ -58,7 +58,8 @@ namespace errors = amj::errors;
 
 namespace {
 
-constexpr std::size_t maxEncryptedSize = CRED_MAX_CREDENTIAL_BLOB_SIZE + CRED_MAX_ATTRIBUTES * CRED_MAX_VALUE_SIZE;
+constexpr std::size_t maxEncryptedSize =
+    CRED_MAX_CREDENTIAL_BLOB_SIZE + CRED_MAX_ATTRIBUTES * CRED_MAX_VALUE_SIZE;
 
 // DPAPI owns these allocations. Wipe decrypted material before releasing it,
 // including when constructing the returned std::string throws.
@@ -83,10 +84,12 @@ errors::Error makeError(DWORD code) {
         error.errorCode = ErrorCode::NotFound;
     }
     error.detail = std::make_shared<const std::any>(static_cast<int>(code));
-    error.errorMessage = std::make_shared<const std::string>("Windows error " + std::to_string(code));
+    error.errorMessage =
+        std::make_shared<const std::string>("Windows error " + std::to_string(code));
     // System text uses the active code page; the numeric code is always retained.
     std::array<char, 1024> buffer = {};
-    const DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, buffer.data(), static_cast<DWORD>(buffer.size()), nullptr);
+    const DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, code, 0, buffer.data(), static_cast<DWORD>(buffer.size()), nullptr);
     if (length != 0) {
         error.errorMessage = std::make_shared<const std::string>(buffer.data(), length);
     }
@@ -94,25 +97,29 @@ errors::Error makeError(DWORD code) {
 }
 
 std::expected<std::wstring, errors::Error> utf8ToWide(const std::string& value) {
-    if (value.find('\0') != std::string::npos || value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    if (value.find('\0') != std::string::npos ||
+        value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         return std::unexpected(makeError(ERROR_INVALID_PARAMETER));
     }
     if (value.empty()) {
         return L"";
     }
     const int size = static_cast<int>(value.size());
-    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), size, nullptr, 0);
+    const int length =
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), size, nullptr, 0);
     if (length == 0) {
         return std::unexpected(makeError(GetLastError()));
     }
     std::wstring result(static_cast<std::size_t>(length), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), size, result.data(), length) == 0) {
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), size, result.data(),
+            length) == 0) {
         return std::unexpected(makeError(GetLastError()));
     }
     return result;
 }
 
-std::expected<std::wstring, errors::Error> makeTargetName(const std::string& service, const std::string& user) {
+std::expected<std::wstring, errors::Error> makeTargetName(const std::string& service,
+    const std::string& user) {
     std::expected<std::wstring, errors::Error> targetResult = utf8ToWide(service + "/" + user);
     if (!targetResult.has_value()) {
         return std::unexpected(targetResult.error());
@@ -140,7 +147,9 @@ errors::Error save(const std::string& service, const std::string& user, const st
     if (value.size() > maxEncryptedSize) {
         return errors::Error{
             .errorCode = ErrorCode::SecretTooLong,
-            .errorMessage = std::make_shared<const std::string>("Secret exceeds the 18,944-byte encrypted credential capacity"),
+            .errorMessage = std::make_shared<const std::string>(
+                "Secret exceeds the 18,944-byte encrypted credential capacity"
+            ),
         };
     }
 
@@ -162,13 +171,16 @@ errors::Error save(const std::string& service, const std::string& user, const st
         input.cbData = static_cast<DWORD>(value.size());
         input.pbData = secret.data();
         LocalData output;
-        if (CryptProtectData(&input, L"keyring encrypted data", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output.blob) == FALSE) {
+        if (CryptProtectData(&input, L"keyring encrypted data", nullptr, nullptr, nullptr,
+                CRYPTPROTECT_UI_FORBIDDEN, &output.blob) == FALSE) {
             return makeError(GetLastError());
         }
         if (output.blob.cbData > maxEncryptedSize) {
             return errors::Error{
                 .errorCode = ErrorCode::SecretTooLong,
-                .errorMessage = std::make_shared<const std::string>("DPAPI-encrypted secret exceeds 18,944 bytes"),
+                .errorMessage = std::make_shared<const std::string>(
+                    "DPAPI-encrypted secret exceeds 18,944 bytes"
+                ),
             };
         }
         if (output.blob.pbData == nullptr || output.blob.cbData <= CRED_MAX_CREDENTIAL_BLOB_SIZE) {
@@ -188,7 +200,8 @@ errors::Error save(const std::string& service, const std::string& user, const st
             keywords.push_back(L"keyring.dpapi." + std::to_wstring(index));
             CREDENTIAL_ATTRIBUTEW& attribute = attributes.at(index);
             attribute.Keyword = keywords.at(index).data();
-            attribute.ValueSize = static_cast<DWORD>(std::min<std::size_t>(CRED_MAX_VALUE_SIZE, encrypted.size() - offset));
+            attribute.ValueSize = static_cast<DWORD>(std::min<std::size_t>(CRED_MAX_VALUE_SIZE,
+                encrypted.size() - offset));
             attribute.Value = &encrypted.at(offset);
             offset += attribute.ValueSize;
         }
@@ -201,7 +214,8 @@ errors::Error save(const std::string& service, const std::string& user, const st
     return {};
 }
 
-std::expected<std::string, errors::Error> load(const std::string& service, const std::string& user) {
+std::expected<std::string, errors::Error> load(const std::string& service,
+    const std::string& user) {
     const std::expected<std::wstring, errors::Error> targetResult = makeTargetName(service, user);
     if (!targetResult.has_value()) {
         return std::unexpected(targetResult.error());
@@ -210,12 +224,14 @@ std::expected<std::string, errors::Error> load(const std::string& service, const
     if (CredReadW(targetResult.value().c_str(), CRED_TYPE_GENERIC, 0, &rawCredential) == FALSE) {
         return std::unexpected(makeError(GetLastError()));
     }
-    const std::unique_ptr<CREDENTIALW, decltype(&CredFree)> ownedCredential(rawCredential, &CredFree);
+    const std::unique_ptr<CREDENTIALW, decltype(&CredFree)> ownedCredential(rawCredential,
+        &CredFree);
     if (rawCredential == nullptr) {
         return std::unexpected(makeError(ERROR_INVALID_DATA));
     }
     const CREDENTIALW& credential = *rawCredential;
-    if (credential.CredentialBlobSize > CRED_MAX_CREDENTIAL_BLOB_SIZE || (credential.CredentialBlobSize != 0 && credential.CredentialBlob == nullptr)) {
+    if (credential.CredentialBlobSize > CRED_MAX_CREDENTIAL_BLOB_SIZE ||
+        (credential.CredentialBlobSize != 0 && credential.CredentialBlob == nullptr)) {
         return std::unexpected(makeError(ERROR_INVALID_DATA));
     }
     std::vector<BYTE> data;
@@ -226,15 +242,18 @@ std::expected<std::string, errors::Error> load(const std::string& service, const
     if (credential.AttributeCount == 0) {
         return std::string(data.begin(), data.end());
     }
-    if (credential.AttributeCount > CRED_MAX_ATTRIBUTES || credential.Attributes == nullptr || credential.CredentialBlobSize != CRED_MAX_CREDENTIAL_BLOB_SIZE) {
+    if (credential.AttributeCount > CRED_MAX_ATTRIBUTES || credential.Attributes == nullptr ||
+        credential.CredentialBlobSize != CRED_MAX_CREDENTIAL_BLOB_SIZE) {
         return std::unexpected(makeError(ERROR_INVALID_DATA));
     }
-    const std::span<const CREDENTIAL_ATTRIBUTEW> attributes(credential.Attributes, credential.AttributeCount);
+    const std::span<const CREDENTIAL_ATTRIBUTEW> attributes(credential.Attributes,
+        credential.AttributeCount);
     std::vector<bool> seen(attributes.size(), false);
     std::vector<std::vector<BYTE>> chunks(attributes.size());
     // Do not assume Credential Manager preserves attribute order.
     for (const CREDENTIAL_ATTRIBUTEW& attribute : attributes) {
-        if (attribute.Keyword == nullptr || attribute.Value == nullptr || attribute.ValueSize == 0 || attribute.ValueSize > CRED_MAX_VALUE_SIZE) {
+        if (attribute.Keyword == nullptr || attribute.Value == nullptr ||
+            attribute.ValueSize == 0 || attribute.ValueSize > CRED_MAX_VALUE_SIZE) {
             return std::unexpected(makeError(ERROR_INVALID_DATA));
         }
         bool recognized = false;
@@ -262,7 +281,8 @@ std::expected<std::string, errors::Error> load(const std::string& service, const
     input.cbData = static_cast<DWORD>(data.size());
     input.pbData = data.data();
     LocalData output;
-    if (CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output.blob) == FALSE) {
+    if (CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+            &output.blob) == FALSE) {
         return std::unexpected(makeError(GetLastError()));
     }
     if (output.blob.cbData == 0) {

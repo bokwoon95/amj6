@@ -59,20 +59,23 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
             if (JS_IsException(element)) {
                 return JS_EXCEPTION;
             }
-            if (JS_DefinePropertyValueUint32(jsContext, result.get(), static_cast<uint32_t>(index), element, JS_PROP_C_W_E) < 0) {
+            if (JS_DefinePropertyValueUint32(jsContext, result.get(), static_cast<uint32_t>(index),
+                    element, JS_PROP_C_W_E) < 0) {
                 return JS_EXCEPTION;
             }
         }
         return result.release();
     }
-    const std::map<std::string, JSONValue>* object = std::get_if<std::map<std::string, JSONValue>>(&jsonValue.value);
+    const std::map<std::string, JSONValue>* object =
+        std::get_if<std::map<std::string, JSONValue>>(&jsonValue.value);
     if (object != nullptr) {
         owned::JSValue result(jsContext, JS_NewObjectProto(jsContext, JS_NULL));
         if (JS_IsException(result.get())) {
             return JS_EXCEPTION;
         }
         for (const std::pair<const std::string, JSONValue>& field : *object) {
-            owned::JSValue element(jsContext, jsonValueToJSValue(jsContext, field.second, depth + 1));
+            owned::JSValue element(jsContext,
+                jsonValueToJSValue(jsContext, field.second, depth + 1));
             if (JS_IsException(element.get())) {
                 return JS_EXCEPTION;
             }
@@ -80,7 +83,8 @@ JSValue jsonValueToJSValue(JSContext* jsContext, const JSONValue& jsonValue, int
             if (key == JS_ATOM_NULL) {
                 return JS_EXCEPTION;
             }
-            const int status = JS_DefinePropertyValue(jsContext, result.get(), key, element.release(), JS_PROP_C_W_E);
+            const int status = JS_DefinePropertyValue(jsContext, result.get(), key,
+                element.release(), JS_PROP_C_W_E);
             JS_FreeAtom(jsContext, key);
             if (status < 0) {
                 return JS_EXCEPTION;
@@ -104,16 +108,19 @@ owned::JSValue jsNewError(JSContext* jsContext, std::string name, std::string me
     if (JS_IsException(nameString.get())) {
         return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
-    int status = JS_DefinePropertyValueStr(jsContext, error.get(), "name", nameString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    int status = JS_DefinePropertyValueStr(jsContext, error.get(), "name", nameString.release(),
+        JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     if (status < 0) {
         return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
     // Set message property.
-    owned::JSValue messageString(jsContext, JS_NewStringLen(jsContext, message.data(), message.size()));
+    owned::JSValue messageString(jsContext,
+        JS_NewStringLen(jsContext, message.data(), message.size()));
     if (JS_IsException(messageString.get())) {
         return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
-    status = JS_DefinePropertyValueStr(jsContext, error.get(), "message", messageString.release(), JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
+    status = JS_DefinePropertyValueStr(jsContext, error.get(), "message", messageString.release(),
+        JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE);
     if (status < 0) {
         return owned::JSValue(jsContext, JS_GetException(jsContext));
     }
@@ -171,7 +178,8 @@ std::optional<uint32_t> jsToUint32(JSContext* jsContext, JSValueConst jsValueCon
     return num;
 }
 
-bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, std::string_view value) {
+bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key,
+    std::string_view value) {
     const JSValue text = JS_NewStringLen(jsContext, value.data(), value.size());
     if (JS_IsException(text)) {
         return false;
