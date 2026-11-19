@@ -97,12 +97,13 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext,
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        owned::JSValue modulePrivateValue(jsContext,
-            JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID));
+        owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, consoleClassID))
+                                                .value();
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&consoleSink);
+        void_ptr::VoidPtr* voidPtr = void_ptr::create(&consoleSink).release();
         status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
             delete voidPtr;
@@ -112,14 +113,16 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext,
 
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:console_impl",
             [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
-                const owned::JSValue modulePrivateValue(jsContext,
-                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
+                const owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef))
+                                                              .value();
                 if (JS_IsException(modulePrivateValue.get())) {
                     return -1;
                 }
                 JSValueConst functionData = modulePrivateValue.get();
-                owned::JSValue function(jsContext,
-                    JS_NewCFunctionData(jsContext, consoleWrite, 2, 0, 1, &functionData));
+                owned::JSValue function = owned::createJSValue(jsContext,
+                    JS_NewCFunctionData(jsContext, consoleWrite, 2, 0, 1, &functionData))
+                                              .value();
                 if (JS_IsException(function.get())) {
                     return -1;
                 }

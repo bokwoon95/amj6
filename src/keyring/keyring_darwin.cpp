@@ -54,19 +54,29 @@ namespace errors = amj::errors;
 namespace {
 
 // Owns objects returned under Core Foundation's Create/Copy rule.
-// No copying or moving is needed: guaranteed copy elision handles returned values.
+// The wrapper stays at a stable address; its unique_ptr transfers ownership.
 template <typename T> struct ScopedCFRef {
-    T value = nullptr;
+    T ownedObject = nullptr;
 
-    explicit ScopedCFRef(T object) : value(object) {}
+    ScopedCFRef() = default;
     ~ScopedCFRef() {
-        if (value != nullptr) {
-            CFRelease(value);
+        if (ownedObject != nullptr) {
+            CFRelease(ownedObject);
         }
     }
     ScopedCFRef(const ScopedCFRef&) = delete;
     ScopedCFRef& operator=(const ScopedCFRef&) = delete;
 };
+
+template <typename T> std::unique_ptr<ScopedCFRef<T>> createScopedCFRef(T object) {
+    // Guard the incoming reference even if allocating the wrapper throws.
+    ScopedCFRef<T> reference;
+    reference.ownedObject = object;
+    std::unique_ptr<ScopedCFRef<T>> scopedCFRef = std::make_unique<ScopedCFRef<T>>();
+    scopedCFRef->ownedObject = reference.ownedObject;
+    reference.ownedObject = nullptr;
+    return scopedCFRef;
+}
 
 errors::Error makeError(OSStatus status) {
     errors::Error error;
@@ -80,18 +90,19 @@ errors::Error makeError(OSStatus status) {
     }
     error.errorMessage =
         std::make_shared<const std::string>("Security error " + std::to_string(status));
-    const ScopedCFRef<CFStringRef> message(SecCopyErrorMessageString(status, nullptr));
-    if (message.value == nullptr) {
+    const std::unique_ptr<ScopedCFRef<CFStringRef>> message =
+        createScopedCFRef(SecCopyErrorMessageString(status, nullptr));
+    if (message->ownedObject == nullptr) {
         return error;
     }
-    const CFIndex length = CFStringGetLength(message.value);
+    const CFIndex length = CFStringGetLength(message->ownedObject);
     const CFIndex capacity = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8);
     if (capacity < 0 || capacity == std::numeric_limits<CFIndex>::max()) {
         return error;
     }
     std::vector<char> buffer(static_cast<std::size_t>(capacity + 1), '\0');
-    if (CFStringGetCString(message.value, buffer.data(), capacity + 1, kCFStringEncodingUTF8) !=
-        0) {
+    if (CFStringGetCString(message->ownedObject, buffer.data(), capacity + 1,
+            kCFStringEncodingUTF8) != 0) {
         error.errorMessage = std::make_shared<const std::string>(buffer.data());
     }
     return error;
@@ -100,21 +111,23 @@ errors::Error makeError(OSStatus status) {
 // Returns an owned dictionary under Core Foundation's Create rule.
 std::expected<CFMutableDictionaryRef, errors::Error> createQuery(const std::string& service,
     const std::string& user) {
-    const ScopedCFRef<CFStringRef> cfService(CFStringCreateWithCString(kCFAllocatorDefault,
-        service.c_str(), kCFStringEncodingUTF8));
-    const ScopedCFRef<CFStringRef> cfUser(CFStringCreateWithCString(kCFAllocatorDefault,
-        user.c_str(), kCFStringEncodingUTF8));
+    const std::unique_ptr<ScopedCFRef<CFStringRef>> cfService = createScopedCFRef(
+        CFStringCreateWithCString(kCFAllocatorDefault, service.c_str(), kCFStringEncodingUTF8)
+    );
+    const std::unique_ptr<ScopedCFRef<CFStringRef>> cfUser = createScopedCFRef(
+        CFStringCreateWithCString(kCFAllocatorDefault, user.c_str(), kCFStringEncodingUTF8)
+    );
     CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    if (query == nullptr || cfService.value == nullptr || cfUser.value == nullptr) {
+    if (query == nullptr || cfService->ownedObject == nullptr || cfUser->ownedObject == nullptr) {
         if (query != nullptr) {
             CFRelease(query);
         }
         return std::unexpected(errors::message("Failed to create credential query"));
     }
     CFDictionaryAddValue(query, kSecClass, kSecClassGenericPassword);
-    CFDictionaryAddValue(query, kSecAttrAccount, cfUser.value);
-    CFDictionaryAddValue(query, kSecAttrService, cfService.value);
+    CFDictionaryAddValue(query, kSecAttrAccount, cfUser->ownedObject);
+    CFDictionaryAddValue(query, kSecAttrService, cfService->ownedObject);
     return query;
 }
 
@@ -126,28 +139,30 @@ errors::Error save(const std::string& service, const std::string& user, const st
     if (!queryResult.has_value()) {
         return queryResult.error();
     }
-    const ScopedCFRef<CFMutableDictionaryRef> query(queryResult.value());
+    const std::unique_ptr<ScopedCFRef<CFMutableDictionaryRef>> query =
+        createScopedCFRef(queryResult.value());
     if (value.size() > static_cast<std::size_t>(std::numeric_limits<CFIndex>::max())) {
         return errors::message("Secret too long");
     }
     const std::vector<UInt8> secret(value.begin(), value.end());
-    const ScopedCFRef<CFDataRef> data(CFDataCreate(kCFAllocatorDefault, secret.data(),
-        static_cast<CFIndex>(secret.size())));
-    if (data.value == nullptr) {
+    const std::unique_ptr<ScopedCFRef<CFDataRef>> data = createScopedCFRef(
+        CFDataCreate(kCFAllocatorDefault, secret.data(), static_cast<CFIndex>(secret.size()))
+    );
+    if (data->ownedObject == nullptr) {
         return errors::message("Failed to create secret data");
     }
-    CFDictionaryAddValue(query.value, kSecValueData, data.value);
-    OSStatus status = SecItemAdd(query.value, nullptr);
+    CFDictionaryAddValue(query->ownedObject, kSecValueData, data->ownedObject);
+    OSStatus status = SecItemAdd(query->ownedObject, nullptr);
     if (status == errSecDuplicateItem) {
-        CFDictionaryRemoveValue(query.value, kSecValueData);
-        const ScopedCFRef<CFMutableDictionaryRef> attributes(CFDictionaryCreateMutable(
-            kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks
-        ));
-        if (attributes.value == nullptr) {
+        CFDictionaryRemoveValue(query->ownedObject, kSecValueData);
+        const std::unique_ptr<ScopedCFRef<CFMutableDictionaryRef>> attributes =
+            createScopedCFRef(CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+                &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+        if (attributes->ownedObject == nullptr) {
             return errors::message("Failed to create secret attributes");
         }
-        CFDictionaryAddValue(attributes.value, kSecValueData, data.value);
-        status = SecItemUpdate(query.value, attributes.value);
+        CFDictionaryAddValue(attributes->ownedObject, kSecValueData, data->ownedObject);
+        status = SecItemUpdate(query->ownedObject, attributes->ownedObject);
     }
     if (status != errSecSuccess) {
         return makeError(status);
@@ -162,11 +177,12 @@ std::expected<std::string, errors::Error> load(const std::string& service,
     if (!queryResult.has_value()) {
         return std::unexpected(queryResult.error());
     }
-    const ScopedCFRef<CFMutableDictionaryRef> query(queryResult.value());
-    CFDictionaryAddValue(query.value, kSecReturnData, kCFBooleanTrue);
+    const std::unique_ptr<ScopedCFRef<CFMutableDictionaryRef>> query =
+        createScopedCFRef(queryResult.value());
+    CFDictionaryAddValue(query->ownedObject, kSecReturnData, kCFBooleanTrue);
     CFTypeRef result = nullptr;
-    const OSStatus status = SecItemCopyMatching(query.value, &result);
-    const ScopedCFRef<CFTypeRef> ownedResult(result);
+    const OSStatus status = SecItemCopyMatching(query->ownedObject, &result);
+    const std::unique_ptr<ScopedCFRef<CFTypeRef>> ownedResult = createScopedCFRef(result);
     if (status != errSecSuccess) {
         return std::unexpected(makeError(status));
     }
@@ -192,8 +208,9 @@ errors::Error remove(const std::string& service, const std::string& user) {
     if (!queryResult.has_value()) {
         return queryResult.error();
     }
-    const ScopedCFRef<CFMutableDictionaryRef> query(queryResult.value());
-    const OSStatus status = SecItemDelete(query.value);
+    const std::unique_ptr<ScopedCFRef<CFMutableDictionaryRef>> query =
+        createScopedCFRef(queryResult.value());
+    const OSStatus status = SecItemDelete(query->ownedObject);
     if (status != errSecSuccess) {
         return makeError(status);
     }
@@ -208,9 +225,10 @@ std::expected<bool, errors::Error> isAvailable() {
         error.errorCode = ErrorCode::Unavailable;
         return std::unexpected(error);
     }
-    const ScopedCFRef<CFMutableDictionaryRef> query(queryResult.value());
-    CFDictionaryAddValue(query.value, kSecReturnData, kCFBooleanFalse);
-    const OSStatus status = SecItemCopyMatching(query.value, nullptr);
+    const std::unique_ptr<ScopedCFRef<CFMutableDictionaryRef>> query =
+        createScopedCFRef(queryResult.value());
+    CFDictionaryAddValue(query->ownedObject, kSecReturnData, kCFBooleanFalse);
+    const OSStatus status = SecItemCopyMatching(query->ownedObject, nullptr);
     if (status == errSecSuccess || status == errSecItemNotFound) {
         return true;
     }

@@ -1,5 +1,7 @@
 #include "crypto_impl.hpp"
 
+#include "errors/errors.hpp"
+
 #include "javascript.hpp"
 #include "owned/quickjs.hpp"
 #include "void_ptr/void_ptr.hpp"
@@ -14,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <expected>
 #include <functional>
 #include <map>
 #include <memory>
@@ -21,11 +24,13 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
@@ -89,7 +94,7 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
         } catch (...) {
             JS_ThrowInternalError(jsContext, "cryptoDigest: unexpected native failure");
         }
-        const owned::JSValue output(jsContext, outputValue);
+        const owned::JSValue output = owned::createJSValue(jsContext, outputValue).value();
         JSValue errorValue = JS_NULL;
         if (JS_IsException(output.get())) {
             errorValue = JS_GetException(jsContext);
@@ -98,15 +103,16 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
                 errorValue = JS_GetException(jsContext);
             }
         }
-        const owned::JSValue error(jsContext, errorValue);
+        const owned::JSValue error = owned::createJSValue(jsContext, errorValue).value();
         std::array<JSValue, 2> arguments = {error.get(), JS_NULL};
         if (!JS_IsException(output.get())) {
             arguments.at(1) = output.get();
         }
         {
-            const owned::JSValue result(jsContext,
+            const owned::JSValue result = owned::createJSValue(jsContext,
                 JS_Call(jsContext, completion.get(), JS_UNDEFINED,
-                    static_cast<int>(arguments.size()), arguments.data()));
+                    static_cast<int>(arguments.size()), arguments.data()))
+                                              .value();
         }
         crypto->jsExecutePendingJobs(jsContext);
     } catch (...) {
@@ -117,18 +123,23 @@ void digestDidFinish(uv_work_t* uvWork, int status) noexcept {
 
 } // namespace
 
-Crypto::Crypto(JSContext* jsContext, uv_loop_t* uvLoop,
-    std::function<void(JSContext*)> jsExecutePendingJobs) {
+std::expected<std::unique_ptr<Crypto>, errors::Error> createCrypto(JSContext* jsContext,
+    uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
-        throw std::invalid_argument(
-            "Crypto requires a context, initialized loop, and completion hook"
-        );
+        return std::unexpected(errors::Error{
+            .errorCode = std::make_error_code(std::errc::invalid_argument),
+            .errorMessage = std::make_shared<const std::string>(
+                "Crypto requires a context, initialized loop, and completion hook"
+            ),
+        });
     }
-    this->jsRuntime = JS_GetRuntime(jsContext);
-    this->jsContext = jsContext;
-    this->uvLoop = uvLoop;
-    this->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
-    this->ownerThreadID = this_thread::get_id();
+    std::unique_ptr<Crypto> crypto = std::make_unique<Crypto>();
+    crypto->ownerThreadID = this_thread::get_id();
+    crypto->jsRuntime = JS_GetRuntime(jsContext);
+    crypto->jsContext = jsContext;
+    crypto->uvLoop = uvLoop;
+    crypto->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
+    return crypto;
 }
 
 Crypto::~Crypto() {
@@ -140,8 +151,10 @@ Crypto::~Crypto() {
 }
 
 void Crypto::shutdown() {
-    if (this_thread::get_id() != ownerThreadID) {
-        std::terminate();
+    if (ownerThreadID != std::thread::id()) {
+        if (this_thread::get_id() != ownerThreadID) {
+            std::terminate();
+        }
     }
     if (shuttingDown) {
         return; // Safe even after the context/runtime have been destroyed.
@@ -161,7 +174,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
     try {
         const int arrayType = argc > 0 ? JS_GetTypedArrayType(argv[0]) : -1;
         if (arrayType < JS_TYPED_ARRAY_UINT8C || arrayType > JS_TYPED_ARRAY_BIG_UINT64) {
-            owned::JSValue error(jsContext, JS_NewError(jsContext));
+            owned::JSValue error = owned::createJSValue(jsContext, JS_NewError(jsContext)).value();
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -174,8 +187,9 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const owned::JSValue buffer(jsContext,
-            JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr));
+        const owned::JSValue buffer = owned::createJSValue(jsContext,
+            JS_GetTypedArrayBuffer(jsContext, argv[0], &byteOffset, &byteLength, nullptr))
+                                          .value();
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -191,7 +205,7 @@ JSValue cryptoGetRandomValues(JSContext* jsContext, JSValueConst /* thisValue */
                 "getRandomValues cannot modify an immutable buffer");
         }
         if (byteLength > 65536) {
-            owned::JSValue error(jsContext, JS_NewError(jsContext));
+            owned::JSValue error = owned::createJSValue(jsContext, JS_NewError(jsContext)).value();
             if (JS_IsException(error.get())) {
                 return JS_EXCEPTION;
             }
@@ -265,8 +279,9 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         }
         std::size_t byteOffset = 0;
         std::size_t byteLength = 0;
-        const owned::JSValue buffer(jsContext,
-            JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr));
+        const owned::JSValue buffer = owned::createJSValue(jsContext,
+            JS_GetTypedArrayBuffer(jsContext, argv[1], &byteOffset, &byteLength, nullptr))
+                                          .value();
         if (JS_IsException(buffer.get())) {
             return JS_EXCEPTION;
         }
@@ -292,9 +307,9 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
             std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
         }
         DigestWork* submittedWork = digestWork.get();
-        std::unique_ptr<void_ptr::VoidPtr> voidPtr =
-            std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
-        owned::JSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
+        std::unique_ptr<void_ptr::VoidPtr> voidPtr = void_ptr::create(std::move(digestWork));
+        owned::JSValue completion =
+            owned::createJSValue(jsContext, JS_DupValue(jsContext, argv[2])).value();
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {
             DigestWork& digestWork =
@@ -358,12 +373,13 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        owned::JSValue modulePrivateValue(jsContext,
-            JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID));
+        owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, cryptoClassID))
+                                                .value();
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&crypto);
+        void_ptr::VoidPtr* voidPtr = void_ptr::create(&crypto).release();
         status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
             delete voidPtr;
@@ -382,8 +398,9 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                 if (status < 0) {
                     return -1;
                 }
-                const owned::JSValue modulePrivateValue(jsContext,
-                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
+                const owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef))
+                                                              .value();
                 if (JS_IsException(modulePrivateValue.get())) {
                     return -1;
                 }
@@ -400,8 +417,9 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                     return cryptoDigest(jsContext, thisValue, argc, argv, *crypto);
                 };
                 JSValueConst functionData = modulePrivateValue.get();
-                owned::JSValue digestFunction(jsContext,
-                    JS_NewCFunctionData(jsContext, digestCallback, 3, 0, 1, &functionData));
+                owned::JSValue digestFunction = owned::createJSValue(jsContext,
+                    JS_NewCFunctionData(jsContext, digestCallback, 3, 0, 1, &functionData))
+                                                    .value();
                 if (JS_IsException(digestFunction.get())) {
                     return -1;
                 }

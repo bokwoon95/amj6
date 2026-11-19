@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <expected>
 #include <functional>
 #include <map>
 #include <memory>
@@ -41,8 +42,7 @@ struct FetchRequest {
     std::vector<uint8_t> body = {};
 
     // Failure leaves a pending JS exception.
-    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext,
-        JSValueConst jsValue);
+    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
 };
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
@@ -124,8 +124,7 @@ struct FetchClient {
     std::thread::id ownerThreadID = {};
     bool closed = false; // Guards close() against repetition/reentrancy.
 
-    FetchClient(JSContext* jsContext, uv_loop_t* uvLoop, errors::Error& pendingError,
-        std::function<void(JSContext*)> jsExecutePendingJobs);
+    FetchClient() = default;
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
     FetchClient& operator=(const FetchClient&) = delete;
@@ -141,6 +140,11 @@ struct FetchClient {
     // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 };
+
+// Returns validation/native failures; allocation exceptions propagate.
+std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSContext* jsContext,
+    uv_loop_t* uvLoop, errors::Error& pendingError,
+    std::function<void(JSContext*)> jsExecutePendingJobs);
 
 // Owned by the opaque JS object. The client outlives all such objects.
 // A null easy handle means closed. The host must not run JS after client close().

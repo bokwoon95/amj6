@@ -1,16 +1,20 @@
 #pragma once
 
+#include "errors/errors.hpp"
 #include "javascript.hpp"
 #include "owned/quickjs.hpp"
 
 #include <quickjs.h>
 #include <uv.h>
 
+#include <expected>
 #include <functional>
 #include <map>
+#include <memory>
 #include <thread>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace owned = amj::owned;
 
 // Host-owned digest service, constructed on the context/loop's owner thread.
@@ -41,8 +45,7 @@ struct Crypto {
         {}; // Host-owned JS references; released on completion/shutdown.
     bool shuttingDown = false;
 
-    Crypto(JSContext* jsContext, uv_loop_t* uvLoop,
-        std::function<void(JSContext*)> jsExecutePendingJobs);
+    Crypto() = default;
     ~Crypto();
     Crypto(const Crypto&) = delete;
     Crypto& operator=(const Crypto&) = delete;
@@ -54,6 +57,10 @@ struct Crypto {
     // pending exceptions. Permanently rejects new digest requests.
     void shutdown();
 };
+
+// Validation failures are returned; allocation exceptions propagate.
+std::expected<std::unique_ptr<Crypto>, errors::Error> createCrypto(JSContext* jsContext,
+    uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
 
 // Fills an integer typed array synchronously using uv_random(), without a loop.
 // Returns the same array, or JS_EXCEPTION. Maximum size: 65,536 bytes.

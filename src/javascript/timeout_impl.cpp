@@ -1,5 +1,6 @@
 #include "timeout_impl.hpp"
 
+#include "errors/errors.hpp"
 #include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
 #include "void_ptr/void_ptr.hpp"
@@ -11,18 +12,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <expected>
 #include <functional>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <new>
-#include <stdexcept>
+#include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
@@ -56,18 +60,23 @@ void Timeout::Timer::close() {
     });
 }
 
-Timeout::Timeout(JSContext* jsContext, uv_loop_t* uvLoop,
-    std::function<void(JSContext*)> jsExecutePendingJobs) {
-    if (jsContext == nullptr || uvLoop == nullptr || jsExecutePendingJobs == nullptr) {
-        throw std::invalid_argument(
-            "Timeout.constructor: missing context, loop, or completion hook"
-        );
+std::expected<std::unique_ptr<Timeout>, errors::Error> createTimeout(JSContext* jsContext,
+    uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
+    if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
+        return std::unexpected(errors::Error{
+            .errorCode = std::make_error_code(std::errc::invalid_argument),
+            .errorMessage = std::make_shared<const std::string>(
+                "Timeout.create: missing context, loop, or completion hook"
+            ),
+        });
     }
-    this->jsRuntime = JS_GetRuntime(jsContext);
-    this->jsContext = jsContext;
-    this->uvLoop = uvLoop;
-    this->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
-    this->ownerThreadID = this_thread::get_id();
+    std::unique_ptr<Timeout> timeout = std::make_unique<Timeout>();
+    timeout->ownerThreadID = this_thread::get_id();
+    timeout->jsRuntime = JS_GetRuntime(jsContext);
+    timeout->jsContext = jsContext;
+    timeout->uvLoop = uvLoop;
+    timeout->jsExecutePendingJobs = std::move(jsExecutePendingJobs);
+    return timeout;
 }
 
 Timeout::~Timeout() {
@@ -75,8 +84,10 @@ Timeout::~Timeout() {
 }
 
 void Timeout::shutdown() {
-    if (this_thread::get_id() != ownerThreadID) {
-        std::terminate();
+    if (ownerThreadID != std::thread::id()) {
+        if (this_thread::get_id() != ownerThreadID) {
+            std::terminate();
+        }
     }
     if (shuttingDown) {
         return; // Safe even after the context/runtime have been destroyed.
@@ -106,7 +117,8 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (!JS_IsFunction(jsContext, argv[0])) {
             return JS_ThrowTypeError(jsContext, "timeoutSet: arg0: callback not a function");
         }
-        owned::JSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
+        owned::JSValue callback =
+            owned::createJSValue(jsContext, JS_DupValue(jsContext, argv[0])).value();
 
         // Get delayMs number.
         if (!JS_IsNumber(argv[1])) {
@@ -141,17 +153,19 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         }
         const int32_t timerID = timeout.timerIDCounter;
 
-        owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
+        owned::UvHandle<uv_timer_t> uvTimerHandle =
+            owned::createUvHandle(std::make_unique<uv_timer_t>());
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s",
                 uv_strerror(status));
         }
         uvTimerHandle.setInitialized();
-        uvTimerHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<TimerData>(TimerData{
-            .timeout = &timeout,
-            .timerID = timerID,
-        }));
+        uvTimerHandle.get()->data = void_ptr::create(std::make_unique<TimerData>(TimerData{
+                                                         .timeout = &timeout,
+                                                         .timerID = timerID,
+                                                     }))
+                                        .release();
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -304,12 +318,13 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         }
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
-        owned::JSValue modulePrivateValue(jsContext,
-            JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
+        owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID))
+                                                .value();
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&timeout);
+        void_ptr::VoidPtr* voidPtr = void_ptr::create(&timeout).release();
         int status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
             delete voidPtr;
@@ -340,8 +355,9 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl",
             [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
                 // Extract the modulePrivateValue from the jsContext.
-                const owned::JSValue modulePrivateValue(jsContext,
-                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
+                const owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef))
+                                                              .value();
                 if (JS_IsException(modulePrivateValue.get())) {
                     return -1;
                 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "errors/errors.hpp"
 #include "javascript.hpp"
 #include "owned/quickjs.hpp"
 
@@ -7,11 +8,14 @@
 #include <uv.h>
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <map>
+#include <memory>
 #include <thread>
 
 namespace amj::javascript {
+namespace errors = amj::errors;
 namespace owned = amj::owned;
 
 // Owner-managed, one per context/loop pair. Neither the context nor the loop is
@@ -55,10 +59,7 @@ struct Timeout {
         {}; // Host-owned JS references; released on firing/cancel/shutdown.
     bool shuttingDown = false;
 
-    // Throws invalid_argument for missing dependencies. Does not initialize or
-    // run the borrowed loop; the caller must supply an initialized loop.
-    Timeout(JSContext* jsContext, uv_loop_t* uvLoop,
-        std::function<void(JSContext*)> jsExecutePendingJobs);
+    Timeout() = default;
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;
@@ -70,6 +71,11 @@ struct Timeout {
     // or alter a pending JS exception. Wrong-thread use terminates the process.
     void shutdown();
 };
+
+// Returns validation failures; allocation exceptions propagate. Does not
+// initialize or run the borrowed loop; supply an initialized loop.
+std::expected<std::unique_ptr<Timeout>, errors::Error> createTimeout(JSContext* jsContext,
+    uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
 
 // callback: function; delay: normalized integer milliseconds in [0, 2147483647].
 // Returns a timer ID in [1, INT32_MAX], or JS_EXCEPTION. JS owns coercion,

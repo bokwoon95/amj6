@@ -32,36 +32,45 @@ struct JSONValue { // NOLINT(bugprone-exception-escape)
 
     JSONValue() = default;
 
-    JSONValue(std::nullptr_t) {
-        this->value = nullptr;
+    static JSONValue null() {
+        return JSONValue();
     }
 
-    JSONValue(bool boolean) {
-        this->value = boolean;
+    static JSONValue boolean(bool boolean) {
+        JSONValue jsonValue;
+        jsonValue.value = boolean;
+        return jsonValue;
     }
 
-    JSONValue(double number) {
-        this->value = number;
+    static JSONValue number(double number) {
+        JSONValue jsonValue;
+        jsonValue.value = number;
+        return jsonValue;
     }
 
-    JSONValue(std::string string) {
-        this->value = std::move(string);
+    static JSONValue string(std::string string) {
+        JSONValue jsonValue;
+        jsonValue.value = std::move(string);
+        return jsonValue;
     }
 
-    JSONValue(const char* string) {
+    static JSONValue string(const char* string) {
         if (string == nullptr) {
-            this->value = nullptr;
-        } else {
-            this->value = std::string(string);
+            return null();
         }
+        return JSONValue::string(std::string(string));
     }
 
-    JSONValue(std::vector<JSONValue> array) {
-        this->value = std::move(array);
+    static JSONValue array(std::vector<JSONValue> array) {
+        JSONValue jsonValue;
+        jsonValue.value = std::move(array);
+        return jsonValue;
     }
 
-    JSONValue(std::map<std::string, JSONValue> object) {
-        this->value = std::move(object);
+    static JSONValue object(std::map<std::string, JSONValue> object) {
+        JSONValue jsonValue;
+        jsonValue.value = std::move(object);
+        return jsonValue;
     }
 
     // Creates an owned JS value. Objects have a null prototype. Returns JS_EXCEPTION

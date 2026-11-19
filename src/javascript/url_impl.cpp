@@ -84,20 +84,22 @@ JSValue urlParse(JSContext* jsContext, JSValueConst /* thisValue */, int argc, J
 
         // Return the URLParts.
         const ada::url_aggregator& url = urlResult.value();
-        const std::map<std::string, JSONValue> urlParts = {
-            {"href", std::string(url.get_href())},
-            {"origin", url.get_origin()},
-            {"protocol", std::string(url.get_protocol())},
-            {"username", std::string(url.get_username())},
-            {"password", std::string(url.get_password())},
-            {"host", std::string(url.get_host())},
-            {"hostname", std::string(url.get_hostname())},
-            {"port", std::string(url.get_port())},
-            {"pathname", std::string(url.get_pathname())},
-            {"search", std::string(url.get_search())},
-            {"hash", std::string(url.get_hash())},
-        };
-        return JSONValue(urlParts).toJSValue(jsContext);
+        return JSONValue::object(
+            {
+                {"href", JSONValue::string(std::string(url.get_href()))},
+                {"origin", JSONValue::string(url.get_origin())},
+                {"protocol", JSONValue::string(std::string(url.get_protocol()))},
+                {"username", JSONValue::string(std::string(url.get_username()))},
+                {"password", JSONValue::string(std::string(url.get_password()))},
+                {"host", JSONValue::string(std::string(url.get_host()))},
+                {"hostname", JSONValue::string(std::string(url.get_hostname()))},
+                {"port", JSONValue::string(std::string(url.get_port()))},
+                {"pathname", JSONValue::string(std::string(url.get_pathname()))},
+                {"search", JSONValue::string(std::string(url.get_search()))},
+                {"hash", JSONValue::string(std::string(url.get_hash()))},
+            }
+        )
+            .toJSValue(jsContext);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -216,20 +218,22 @@ JSValue urlWithComponent(JSContext* jsContext, JSValueConst /* thisValue */, int
         }
 
         // Return the URLParts.
-        const std::map<std::string, JSONValue> urlParts = {
-            {"href", std::string(url.get_href())},
-            {"origin", url.get_origin()},
-            {"protocol", std::string(url.get_protocol())},
-            {"username", std::string(url.get_username())},
-            {"password", std::string(url.get_password())},
-            {"host", std::string(url.get_host())},
-            {"hostname", std::string(url.get_hostname())},
-            {"port", std::string(url.get_port())},
-            {"pathname", std::string(url.get_pathname())},
-            {"search", std::string(url.get_search())},
-            {"hash", std::string(url.get_hash())},
-        };
-        return JSONValue(urlParts).toJSValue(jsContext);
+        return JSONValue::object(
+            {
+                {"href", JSONValue::string(std::string(url.get_href()))},
+                {"origin", JSONValue::string(url.get_origin())},
+                {"protocol", JSONValue::string(std::string(url.get_protocol()))},
+                {"username", JSONValue::string(std::string(url.get_username()))},
+                {"password", JSONValue::string(std::string(url.get_password()))},
+                {"host", JSONValue::string(std::string(url.get_host()))},
+                {"hostname", JSONValue::string(std::string(url.get_hostname()))},
+                {"port", JSONValue::string(std::string(url.get_port()))},
+                {"pathname", JSONValue::string(std::string(url.get_pathname()))},
+                {"search", JSONValue::string(std::string(url.get_search()))},
+                {"hash", JSONValue::string(std::string(url.get_hash()))},
+            }
+        )
+            .toJSValue(jsContext);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -267,9 +271,12 @@ JSValue queryStringParse(JSContext* jsContext, JSValueConst /* thisValue */, int
         const ada::url_search_params urlSearchParams(queryString.value());
         std::vector<JSONValue> entries;
         for (const std::pair<std::string, std::string>& entry : urlSearchParams) {
-            entries.push_back(JSONValue(std::vector<JSONValue>{entry.first, entry.second}));
+            entries.push_back(JSONValue::array({
+                JSONValue::string(entry.first),
+                JSONValue::string(entry.second),
+            }));
         }
-        return JSONValue(entries).toJSValue(jsContext);
+        return JSONValue::array(entries).toJSValue(jsContext);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {
@@ -292,8 +299,9 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         if (!JS_IsArray(entries)) {
             return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries not an array");
         }
-        const owned::JSValue entriesLength(jsContext,
-            JS_GetPropertyStr(jsContext, entries, "length"));
+        const owned::JSValue entriesLength =
+            owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, entries, "length"))
+                .value();
         if (JS_IsException(entriesLength.get())) {
             return JS_EXCEPTION;
         }
@@ -312,8 +320,9 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         std::size_t numBytes = 0;
         for (size_t index = 0; index < countSize; index++) {
             // Get entry array.
-            const owned::JSValue entryJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
+            const owned::JSValue entryJSValue = owned::createJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)))
+                                                    .value();
             if (JS_IsException(entryJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -321,8 +330,9 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
                 return JS_ThrowTypeError(jsContext,
                     "queryStringify: arg0: entries[%zu] not an array", index);
             }
-            const owned::JSValue entryLength(jsContext,
-                JS_GetPropertyStr(jsContext, entryJSValue.get(), "length"));
+            const owned::JSValue entryLength = owned::createJSValue(jsContext,
+                JS_GetPropertyStr(jsContext, entryJSValue.get(), "length"))
+                                                   .value();
             if (JS_IsException(entryLength.get())) {
                 return JS_EXCEPTION;
             }
@@ -337,8 +347,9 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get name string.
-            const owned::JSValue nameJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
+            const owned::JSValue nameJSValue = owned::createJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0))
+                                                   .value();
             if (JS_IsException(nameJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -356,8 +367,9 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get value string.
-            const owned::JSValue valueJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
+            const owned::JSValue valueJSValue = owned::createJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1))
+                                                    .value();
             if (JS_IsException(valueJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -387,7 +399,7 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         if (queryString.size() > (1U << 20U /* 1 MiB */)) {
             return JS_ThrowRangeError(jsContext, "queryStringify: queryString is too big");
         }
-        return JSONValue(queryString).toJSValue(jsContext);
+        return JSONValue::string(queryString).toJSValue(jsContext);
     } catch (const std::bad_alloc&) {
         return JS_ThrowOutOfMemory(jsContext);
     } catch (const std::exception& exception) {

@@ -45,8 +45,10 @@ class TextTest : public testing::Test {
     testing::AssertionResult run(const std::string& assertions) {
         // Same-module assertions access the real exports without a module loader.
         const std::string source = textSource + "\n" + assertions;
-        const owned::JSValue result(jsContext, JS_Eval(jsContext, source.c_str(), source.size(),
-                                                   AMJ_TEXT_SOURCE_PATH, JS_EVAL_TYPE_MODULE));
+        const owned::JSValue result =
+            owned::createJSValue(jsContext, JS_Eval(jsContext, source.c_str(), source.size(),
+                                                AMJ_TEXT_SOURCE_PATH, JS_EVAL_TYPE_MODULE))
+                .value();
         JSContext* exceptionContext = jsContext;
         JSValue exceptionValue = JS_UNDEFINED;
         if (JS_IsException(result.get())) {
@@ -80,29 +82,33 @@ class TextTest : public testing::Test {
                 exceptionValue = JS_PromiseResult(jsContext, result.get());
             }
         }
-        const owned::JSValue exception(exceptionContext, exceptionValue);
+        const owned::JSValue exception =
+            owned::createJSValue(exceptionContext, exceptionValue).value();
         const std::optional<std::string> message = jsstring(exceptionContext, exception.get());
         std::string diagnostic = "JavaScript test failed";
         if (message.has_value()) {
             diagnostic += ": " + message.value();
         } else {
-            const owned::JSValue conversionException(exceptionContext,
-                JS_GetException(exceptionContext));
+            const owned::JSValue conversionException =
+                owned::createJSValue(exceptionContext, JS_GetException(exceptionContext)).value();
         }
         if (JS_IsObject(exception.get())) {
-            const owned::JSValue stack(exceptionContext,
-                JS_GetPropertyStr(exceptionContext, exception.get(), "stack"));
+            const owned::JSValue stack = owned::createJSValue(exceptionContext,
+                JS_GetPropertyStr(exceptionContext, exception.get(), "stack"))
+                                             .value();
             if (JS_IsException(stack.get())) {
-                const owned::JSValue stackException(exceptionContext,
-                    JS_GetException(exceptionContext));
+                const owned::JSValue stackException =
+                    owned::createJSValue(exceptionContext, JS_GetException(exceptionContext))
+                        .value();
             } else if (JS_IsString(stack.get())) {
                 const std::optional<std::string> stackText =
                     jsstring(exceptionContext, stack.get());
                 if (stackText.has_value()) {
                     diagnostic += "\n" + stackText.value();
                 } else {
-                    const owned::JSValue conversionException(exceptionContext,
-                        JS_GetException(exceptionContext));
+                    const owned::JSValue conversionException =
+                        owned::createJSValue(exceptionContext, JS_GetException(exceptionContext))
+                            .value();
                 }
             }
         }
