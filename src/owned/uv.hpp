@@ -36,6 +36,10 @@ template <typename T> class UvHandle {
   public:
     UvHandle() = default;
 
+    explicit UvHandle(std::unique_ptr<T> uvHandle) noexcept {
+        this->ownedUvHandle = uvHandle.release();
+    }
+
     ~UvHandle() {
         if (ownedUvHandle == nullptr) {
             return;
@@ -112,16 +116,8 @@ template <typename T> class UvHandle {
     }
 
   private:
-    template <typename U> friend UvHandle<U> createUvHandle(std::unique_ptr<U> uvHandle) noexcept;
-
     T* ownedUvHandle = nullptr;
     bool initialized = false;
 };
-
-template <typename T> UvHandle<T> createUvHandle(std::unique_ptr<T> uvHandle) noexcept {
-    UvHandle<T> ownedUvHandle;
-    ownedUvHandle.ownedUvHandle = uvHandle.release();
-    return ownedUvHandle;
-}
 
 } // namespace amj::owned

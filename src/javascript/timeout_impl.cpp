@@ -60,7 +60,7 @@ void Timeout::Timer::close() {
     });
 }
 
-std::expected<std::unique_ptr<Timeout>, errors::Error> createTimeout(JSContext* jsContext,
+std::expected<std::unique_ptr<Timeout>, errors::Error> Timeout::create(JSContext* jsContext,
     uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
         return std::unexpected(errors::Error{
@@ -117,8 +117,7 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         if (!JS_IsFunction(jsContext, argv[0])) {
             return JS_ThrowTypeError(jsContext, "timeoutSet: arg0: callback not a function");
         }
-        owned::JSValue callback =
-            owned::createJSValue(jsContext, JS_DupValue(jsContext, argv[0])).value();
+        owned::JSValue callback(jsContext, JS_DupValue(jsContext, argv[0]));
 
         // Get delayMs number.
         if (!JS_IsNumber(argv[1])) {
@@ -153,19 +152,17 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
         }
         const int32_t timerID = timeout.timerIDCounter;
 
-        owned::UvHandle<uv_timer_t> uvTimerHandle =
-            owned::createUvHandle(std::make_unique<uv_timer_t>());
+        owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
         status = uv_timer_init(timeout.uvLoop, uvTimerHandle.get());
         if (status != 0) {
             return JS_ThrowInternalError(jsContext, "timeoutSet: uv_timer_init: %s",
                 uv_strerror(status));
         }
         uvTimerHandle.setInitialized();
-        uvTimerHandle.get()->data = void_ptr::create(std::make_unique<TimerData>(TimerData{
-                                                         .timeout = &timeout,
-                                                         .timerID = timerID,
-                                                     }))
-                                        .release();
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<TimerData>(TimerData{
+            .timeout = &timeout,
+            .timerID = timerID,
+        }));
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);
@@ -318,13 +315,12 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         }
 
         // Create a modulePrivateValue JSValue and assign the Timeout* to it.
-        owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
-            JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID))
-                                                .value();
+        owned::JSValue modulePrivateValue(jsContext,
+            JS_NewObjectProtoClass(jsContext, JS_NULL, timeoutClassID));
         if (JS_IsException(modulePrivateValue.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = void_ptr::create(&timeout).release();
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&timeout);
         int status = JS_SetOpaque(modulePrivateValue.get(), voidPtr);
         if (status < 0) {
             delete voidPtr;
@@ -355,9 +351,8 @@ JSModuleDef* createTimeoutImplModule(JSContext* jsContext, Timeout& timeout) {
         JSModuleDef* jsModuleDef = JS_NewCModule(jsContext, "amj:timeout_impl",
             [](JSContext* jsContext, JSModuleDef* jsModuleDef) -> int {
                 // Extract the modulePrivateValue from the jsContext.
-                const owned::JSValue modulePrivateValue = owned::createJSValue(jsContext,
-                    JS_GetModulePrivateValue(jsContext, jsModuleDef))
-                                                              .value();
+                const owned::JSValue modulePrivateValue(jsContext,
+                    JS_GetModulePrivateValue(jsContext, jsModuleDef));
                 if (JS_IsException(modulePrivateValue.get())) {
                     return -1;
                 }

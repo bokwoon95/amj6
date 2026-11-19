@@ -1,23 +1,26 @@
 #pragma once
 
-#include "errors/errors.hpp"
-
 #include <quickjs.h>
 
-#include <expected>
-#include <memory>
-#include <string>
-#include <system_error>
+#include <exception>
 #include <utility>
 
 namespace amj::owned {
-namespace errors = amj::errors;
 
 // Owns one QuickJS reference. The borrowed context must outlive this wrapper.
 // All operations, including destruction, require serialized runtime access.
 class JSValue {
   public:
     JSValue() = default;
+
+    // Adopts one reference. The context must be non-null and outlive this wrapper.
+    JSValue(JSContext* jsContext, ::JSValue jsValue) noexcept {
+        if (jsContext == nullptr) {
+            std::terminate();
+        }
+        this->jsContext = jsContext;
+        this->jsValue = jsValue;
+    }
 
     ~JSValue() {
         if (jsContext != nullptr) {
@@ -66,28 +69,9 @@ class JSValue {
     }
 
   private:
-    friend std::expected<JSValue, errors::Error> createJSValue(JSContext* jsContext,
-        ::JSValue jsValue);
-
     JSContext* jsContext = nullptr; // Borrowed.
     ::JSValue jsValue = JS_UNDEFINED;
 };
-
-// Takes ownership on success. A null context is rejected without consuming
-// jsValue. Internal callers with a known live context may use .value().
-inline std::expected<JSValue, errors::Error> createJSValue(JSContext* jsContext,
-    ::JSValue jsValue) {
-    if (jsContext == nullptr) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::make_error_code(std::errc::invalid_argument),
-            .errorMessage = std::make_shared<const std::string>("JSValue requires a context"),
-        });
-    }
-    JSValue ownedJSValue;
-    ownedJSValue.jsContext = jsContext;
-    ownedJSValue.jsValue = jsValue;
-    return ownedJSValue;
-}
 
 // Owns the promise reference and both settlement-function references.
 struct JSPromise {

@@ -299,9 +299,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         if (!JS_IsArray(entries)) {
             return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries not an array");
         }
-        const owned::JSValue entriesLength =
-            owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, entries, "length"))
-                .value();
+        const owned::JSValue entriesLength(jsContext,
+            JS_GetPropertyStr(jsContext, entries, "length"));
         if (JS_IsException(entriesLength.get())) {
             return JS_EXCEPTION;
         }
@@ -320,9 +319,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         std::size_t numBytes = 0;
         for (size_t index = 0; index < countSize; index++) {
             // Get entry array.
-            const owned::JSValue entryJSValue = owned::createJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)))
-                                                    .value();
+            const owned::JSValue entryJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entries, static_cast<uint32_t>(index)));
             if (JS_IsException(entryJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -330,9 +328,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
                 return JS_ThrowTypeError(jsContext,
                     "queryStringify: arg0: entries[%zu] not an array", index);
             }
-            const owned::JSValue entryLength = owned::createJSValue(jsContext,
-                JS_GetPropertyStr(jsContext, entryJSValue.get(), "length"))
-                                                   .value();
+            const owned::JSValue entryLength(jsContext,
+                JS_GetPropertyStr(jsContext, entryJSValue.get(), "length"));
             if (JS_IsException(entryLength.get())) {
                 return JS_EXCEPTION;
             }
@@ -347,9 +344,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get name string.
-            const owned::JSValue nameJSValue = owned::createJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0))
-                                                   .value();
+            const owned::JSValue nameJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 0));
             if (JS_IsException(nameJSValue.get())) {
                 return JS_EXCEPTION;
             }
@@ -367,9 +363,8 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
             }
 
             // Get value string.
-            const owned::JSValue valueJSValue = owned::createJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1))
-                                                    .value();
+            const owned::JSValue valueJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, entryJSValue.get(), 1));
             if (JS_IsException(valueJSValue.get())) {
                 return JS_EXCEPTION;
             }

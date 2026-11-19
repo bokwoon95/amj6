@@ -353,8 +353,7 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
     if (fetchClient->uvPollHandleMap.contains(socket)) {
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     } else {
-        owned::UvHandle<uv_poll_t> ownedUvPollHandle =
-            owned::createUvHandle(std::make_unique<uv_poll_t>());
+        owned::UvHandle<uv_poll_t> ownedUvPollHandle(std::make_unique<uv_poll_t>());
         const int status =
             uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
         if (status != 0) {
@@ -364,11 +363,10 @@ int curlSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t socket, int wha
             return -1;
         }
         ownedUvPollHandle.setInitialized();
-        ownedUvPollHandle.get()->data = void_ptr::create(std::make_unique<PollData>(PollData{
-                                                             .fetchClient = fetchClient,
-                                                             .socket = socket,
-                                                         }))
-                                            .release();
+        ownedUvPollHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<PollData>(PollData{
+            .fetchClient = fetchClient,
+            .socket = socket,
+        }));
         fetchClient->uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
         uvPollHandle = fetchClient->uvPollHandleMap.at(socket).get();
     }
@@ -690,13 +688,10 @@ void settlePendingPromises(FetchClient* fetchClient) {
         }
 
         // Convert the chunk into a JS Uint8Array.
-        owned::JSValue uint8Array = owned::createJSValue(fetchClient->jsContext,
-            JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()))
-                                        .value();
+        owned::JSValue uint8Array(fetchClient->jsContext,
+            JS_NewUint8ArrayCopy(fetchClient->jsContext, chunk.data(), chunk.size()));
         if (JS_IsException(uint8Array.get())) {
-            owned::JSValue error = owned::createJSValue(fetchClient->jsContext,
-                JS_GetException(fetchClient->jsContext))
-                                       .value();
+            owned::JSValue error(fetchClient->jsContext, JS_GetException(fetchClient->jsContext));
             const JSValue result = JS_Call(fetchClient->jsContext,
                 responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &error.get());
             JS_FreeValue(fetchClient->jsContext, result);
@@ -762,8 +757,7 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
     FetchRequest fetchRequest;
 
     // Get method string.
-    owned::JSValue methodJSValue =
-        owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "method")).value();
+    owned::JSValue methodJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "method"));
     if (JS_IsException(methodJSValue.get())) {
         return std::nullopt;
     }
@@ -788,10 +782,8 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
     }
 
     // Get url string.
-    const std::optional<std::string> url = jsToString(
-        jsContext,
-        owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "url")).value().get()
-    );
+    const std::optional<std::string> url = jsToString(jsContext,
+        owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "url")).get());
     if (!url.has_value()) {
         return std::nullopt;
     }
@@ -816,8 +808,8 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
     fetchRequest.url = url.value();
 
     // Get headers array.
-    const owned::JSValue headersJSValue =
-        owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "headers")).value();
+    const owned::JSValue headersJSValue(jsContext,
+        JS_GetPropertyStr(jsContext, jsValue, "headers"));
     if (JS_IsException(headersJSValue.get())) {
         return std::nullopt;
     }
@@ -829,18 +821,15 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
             JS_ThrowTypeError(jsContext, "headers not an array");
             return std::nullopt;
         }
-        const std::optional<uint32_t> headersLength =
-            jsToUint32(jsContext, owned::createJSValue(jsContext,
-                                      JS_GetPropertyStr(jsContext, headersJSValue.get(), "length"))
-                                      .value()
-                                      .get());
+        const std::optional<uint32_t> headersLength = jsToUint32(jsContext,
+            owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, headersJSValue.get(), "length"))
+                .get());
         if (!headersLength.has_value()) {
             return std::nullopt;
         }
         for (uint32_t index = 0; index < headersLength.value(); index++) {
-            const owned::JSValue headerJSValue = owned::createJSValue(jsContext,
-                JS_GetPropertyUint32(jsContext, headersJSValue.get(), index))
-                                                     .value();
+            const owned::JSValue headerJSValue(jsContext,
+                JS_GetPropertyUint32(jsContext, headersJSValue.get(), index));
             if (JS_IsException(headerJSValue.get())) {
                 return std::nullopt;
             }
@@ -851,9 +840,8 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
             }
             // Make sure header array has at least two elements.
             const std::optional<uint32_t> headerLength = jsToUint32(jsContext,
-                owned::createJSValue(jsContext,
+                owned::JSValue(jsContext,
                     JS_GetPropertyStr(jsContext, headerJSValue.get(), "length"))
-                    .value()
                     .get());
             if (!headerLength.has_value()) {
                 return std::nullopt;
@@ -865,11 +853,9 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
                 return std::nullopt;
             }
             // Get header name.
-            const std::optional<std::string> headerName =
-                jsToString(jsContext, owned::createJSValue(jsContext,
-                                          JS_GetPropertyUint32(jsContext, headerJSValue.get(), 0))
-                                          .value()
-                                          .get());
+            const std::optional<std::string> headerName = jsToString(jsContext,
+                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 0))
+                    .get());
             if (!headerName.has_value()) {
                 return std::nullopt;
             }
@@ -888,11 +874,9 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
                 return std::nullopt;
             }
             // Get header value.
-            const std::optional<std::string> headerValue =
-                jsToString(jsContext, owned::createJSValue(jsContext,
-                                          JS_GetPropertyUint32(jsContext, headerJSValue.get(), 1))
-                                          .value()
-                                          .get());
+            const std::optional<std::string> headerValue = jsToString(jsContext,
+                owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 1))
+                    .get());
             if (!headerValue.has_value()) {
                 return std::nullopt;
             }
@@ -971,8 +955,7 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
     }
 
     // Get body string or byte array.
-    const owned::JSValue bodyJSValue =
-        owned::createJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "body")).value();
+    const owned::JSValue bodyJSValue(jsContext, JS_GetPropertyStr(jsContext, jsValue, "body"));
     if (JS_IsException(bodyJSValue.get())) {
         return std::nullopt;
     }
@@ -995,9 +978,8 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
         } else if (JS_GetTypedArrayType(bodyJSValue.get()) == JS_TYPED_ARRAY_UINT8) {
             std::size_t offset = 0;
             std::size_t length = 0;
-            const owned::JSValue arrayBufferJSValue = owned::createJSValue(jsContext,
-                JS_GetTypedArrayBuffer(jsContext, bodyJSValue.get(), &offset, &length, nullptr))
-                                                          .value();
+            const owned::JSValue arrayBufferJSValue(jsContext,
+                JS_GetTypedArrayBuffer(jsContext, bodyJSValue.get(), &offset, &length, nullptr));
             if (JS_IsException(arrayBufferJSValue.get())) {
                 return std::nullopt;
             }
@@ -1074,16 +1056,15 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
                 "FetchResponse.read: another read is already pending");
         }
         std::array resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        owned::JSValue promise = owned::createJSValue(jsContext,
-            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()))
-                                     .value();
+        owned::JSValue promise(jsContext,
+            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(promise.get())) {
             return JS_EXCEPTION;
         }
         fetchState.responseReadPromise = owned::JSPromise{
             .promise = std::move(promise),
-            .resolveFunction = owned::createJSValue(jsContext, resolvingFunctions.at(0)).value(),
-            .rejectFunction = owned::createJSValue(jsContext, resolvingFunctions.at(1)).value(),
+            .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
+            .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
         uv_ref(reinterpret_cast<uv_handle_t*>(fetchResponse->fetchClient->uvAsyncHandle.get()));
         const int status = uv_async_send(fetchResponse->fetchClient->uvAsyncHandle.get());
@@ -1336,7 +1317,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         }
         fetchClient->fetchStateMap.try_emplace(ownedCurlEasyHandle.get());
         FetchState& fetchState = fetchClient->fetchStateMap.at(ownedCurlEasyHandle.get());
-        fetchState.selfVoidPtr = void_ptr::create(&fetchState);
+        fetchState.selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
         fetchState.request = fetchRequestResult.value();
@@ -1490,9 +1471,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             throw std::runtime_error(curl_easy_strerror(methodStatus));
         }
         std::array<JSValue, 2> resolvingFunctions = {JS_UNDEFINED, JS_UNDEFINED};
-        owned::JSValue ready = owned::createJSValue(jsContext,
-            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()))
-                                   .value();
+        owned::JSValue ready(jsContext,
+            JS_NewPromiseCapability(jsContext, resolvingFunctions.data()));
         if (JS_IsException(ready.get())) {
             const errors::Error closeError = fetchState.close();
             if (!fetchClient->pendingError->hasValue()) {
@@ -1505,12 +1485,10 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         }
         fetchState.responseReadyPromise = owned::JSPromise{
             .promise = std::move(ready),
-            .resolveFunction = owned::createJSValue(jsContext, resolvingFunctions.at(0)).value(),
-            .rejectFunction = owned::createJSValue(jsContext, resolvingFunctions.at(1)).value(),
+            .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
+            .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
-        owned::JSValue response =
-            owned::createJSValue(jsContext, JS_NewObjectClass(jsContext, fetchResponseClassID))
-                .value();
+        owned::JSValue response(jsContext, JS_NewObjectClass(jsContext, fetchResponseClassID));
         if (JS_IsException(response.get())) {
             const errors::Error closeError = fetchState.close();
             if (!fetchClient->pendingError->hasValue()) {
@@ -1524,7 +1502,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         std::unique_ptr<FetchResponse> fetchResponse = std::make_unique<FetchResponse>();
         fetchResponse->fetchClient = fetchClient;
         fetchResponse->curlEasyHandle = curlEasyHandle;
-        void_ptr::VoidPtr* voidPtr = void_ptr::create(std::move(fetchResponse)).release();
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
         if (JS_SetOpaque(response.get(), voidPtr) < 0) {
             delete voidPtr;
             const errors::Error closeError = fetchState.close();
@@ -1628,7 +1606,7 @@ errors::Error FetchState::close() noexcept {
     return error;
 }
 
-std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSContext* jsContext,
+std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(JSContext* jsContext,
     uv_loop_t* uvLoop, errors::Error& pendingError,
     std::function<void(JSContext*)> jsExecutePendingJobs) {
     if (jsContext == nullptr || uvLoop == nullptr || !jsExecutePendingJobs) {
@@ -1658,7 +1636,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSC
             curlInitialized = true;
         }
     }
-    fetchClient->selfVoidPtr = void_ptr::create(fetchClient.get());
+    fetchClient->selfVoidPtr = std::make_unique<void_ptr::VoidPtr>(fetchClient.get());
     fetchClient->ownedCurlMultiHandle = curl_multi_init();
     if (fetchClient->ownedCurlMultiHandle == nullptr) {
         return std::unexpected(errors::Error{
@@ -1666,8 +1644,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSC
         });
     }
     {
-        owned::UvHandle<uv_timer_t> uvTimerHandle =
-            owned::createUvHandle(std::make_unique<uv_timer_t>());
+        owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
         const int status = uv_timer_init(uvLoop, uvTimerHandle.get());
         if (status != 0) {
             return std::unexpected(errors::Error{
@@ -1675,12 +1652,11 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSC
             });
         }
         uvTimerHandle.setInitialized();
-        uvTimerHandle.get()->data = void_ptr::create(fetchClient.get()).release();
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(fetchClient.get());
         fetchClient->uvTimerHandle = std::move(uvTimerHandle);
     }
     {
-        owned::UvHandle<uv_async_t> uvAsyncHandle =
-            owned::createUvHandle(std::make_unique<uv_async_t>());
+        owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
         const auto uvAsyncCallback = [](uv_async_t* uvAsyncHandle) noexcept {
             FetchClient* fetchClient =
                 static_cast<void_ptr::VoidPtr*>(uvAsyncHandle->data)->cast<FetchClient*>();
@@ -1704,7 +1680,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSC
             });
         }
         uvAsyncHandle.setInitialized();
-        uvAsyncHandle.get()->data = void_ptr::create(fetchClient.get()).release();
+        uvAsyncHandle.get()->data = new void_ptr::VoidPtr(fetchClient.get());
         uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
         fetchClient->uvAsyncHandle = std::move(uvAsyncHandle);
     }
@@ -1937,12 +1913,11 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
             JS_ThrowOutOfMemory(jsContext);
             return nullptr;
         }
-        owned::JSValue client =
-            owned::createJSValue(jsContext, JS_NewObjectClass(jsContext, clientClassID)).value();
+        owned::JSValue client(jsContext, JS_NewObjectClass(jsContext, clientClassID));
         if (JS_IsException(client.get())) {
             return nullptr;
         }
-        void_ptr::VoidPtr* voidPtr = void_ptr::create(&fetchClient).release();
+        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(&fetchClient);
         if (JS_SetOpaque(client.get(), voidPtr) < 0) {
             delete voidPtr;
             JS_ThrowInternalError(jsContext, "Could not attach FetchClient");
@@ -1953,7 +1928,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                                         JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }
-        owned::JSValue prototype = owned::createJSValue(jsContext, JS_NewObject(jsContext)).value();
+        owned::JSValue prototype(jsContext, JS_NewObject(jsContext));
         if (JS_IsException(prototype.get())) {
             return nullptr;
         }

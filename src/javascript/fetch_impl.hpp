@@ -125,6 +125,10 @@ struct FetchClient {
     bool closed = false; // Guards close() against repetition/reentrancy.
 
     FetchClient() = default;
+    // Returns validation/native failures; allocation exceptions propagate.
+    static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext* jsContext,
+        uv_loop_t* uvLoop, errors::Error& pendingError,
+        std::function<void(JSContext*)> jsExecutePendingJobs);
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
     FetchClient& operator=(const FetchClient&) = delete;
@@ -140,11 +144,6 @@ struct FetchClient {
     // Direct QuickJS callback. functionData[0] retains the borrowed client carrier.
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 };
-
-// Returns validation/native failures; allocation exceptions propagate.
-std::expected<std::unique_ptr<FetchClient>, errors::Error> createFetchClient(JSContext* jsContext,
-    uv_loop_t* uvLoop, errors::Error& pendingError,
-    std::function<void(JSContext*)> jsExecutePendingJobs);
 
 // Owned by the opaque JS object. The client outlives all such objects.
 // A null easy handle means closed. The host must not run JS after client close().

@@ -11,8 +11,8 @@ namespace amj::void_ptr {
 // Type-checked storage for C userdata slots. Delete the wrapper during cleanup;
 // it deletes owned payloads and leaves borrowed payloads alone.
 //
-// Create or assign with unique_ptr<T> to own a payload; cast<T>() returns T&.
-// Create or assign with T* to borrow a payload; cast<T*>() returns T*.
+// Construct or assign with unique_ptr<T> to own a payload; cast<T>() returns T&.
+// Construct or assign with T* to borrow a payload; cast<T*>() returns T*.
 // Assignment replaces the payload without reallocating the wrapper and destroys
 // the previous payload if owned. Allocation failure leaves the old payload intact.
 //
@@ -32,6 +32,14 @@ class VoidPtr {
         if (this->deleteFunction != nullptr) {
             this->deleteFunction(this->any);
         }
+    }
+
+    template <typename T> explicit VoidPtr(T* pointer) {
+        this->assign(pointer);
+    }
+
+    template <typename T> explicit VoidPtr(std::unique_ptr<T> pointer) {
+        this->assign(std::move(pointer));
     }
 
     template <typename T> void assign(T* pointer) {
@@ -98,17 +106,5 @@ class VoidPtr {
     std::any any = {}; // Contains a T*: owned when deleteFunction is non-null, otherwise borrowed.
     void (*deleteFunction)(std::any&) noexcept = nullptr;
 };
-
-template <typename T> std::unique_ptr<VoidPtr> create(T* pointer) {
-    std::unique_ptr<VoidPtr> voidPtr = std::make_unique<VoidPtr>();
-    voidPtr->assign(pointer);
-    return voidPtr;
-}
-
-template <typename T> std::unique_ptr<VoidPtr> create(std::unique_ptr<T> pointer) {
-    std::unique_ptr<VoidPtr> voidPtr = std::make_unique<VoidPtr>();
-    voidPtr->assign(std::move(pointer));
-    return voidPtr;
-}
 
 } // namespace amj::void_ptr

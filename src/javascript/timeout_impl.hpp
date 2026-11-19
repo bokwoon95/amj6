@@ -60,6 +60,10 @@ struct Timeout {
     bool shuttingDown = false;
 
     Timeout() = default;
+    // Returns validation failures; allocation exceptions propagate. Does not
+    // initialize or run the borrowed loop; supply an initialized loop.
+    static std::expected<std::unique_ptr<Timeout>, errors::Error> create(JSContext* jsContext,
+        uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
     ~Timeout();
     Timeout(const Timeout&) = delete;
     Timeout& operator=(const Timeout&) = delete;
@@ -71,11 +75,6 @@ struct Timeout {
     // or alter a pending JS exception. Wrong-thread use terminates the process.
     void shutdown();
 };
-
-// Returns validation failures; allocation exceptions propagate. Does not
-// initialize or run the borrowed loop; supply an initialized loop.
-std::expected<std::unique_ptr<Timeout>, errors::Error> createTimeout(JSContext* jsContext,
-    uv_loop_t* uvLoop, std::function<void(JSContext*)> jsExecutePendingJobs);
 
 // callback: function; delay: normalized integer milliseconds in [0, 2147483647].
 // Returns a timer ID in [1, INT32_MAX], or JS_EXCEPTION. JS owns coercion,
