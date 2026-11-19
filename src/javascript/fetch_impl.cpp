@@ -1,7 +1,7 @@
 #include "fetch_impl.hpp"
 
 #include "errors/errors.hpp"
-#include "intlimit/intlimit.hpp"
+#include "integers/integers.hpp"
 #include "javascript.hpp"
 #include "owned/quickjs.hpp"
 #include "owned/uv.hpp"
@@ -41,7 +41,7 @@
 
 namespace amj::javascript {
 namespace errors = amj::errors;
-namespace intlimit = amj::intlimit;
+namespace integers = amj::integers;
 namespace owned = amj::owned;
 namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
@@ -83,7 +83,7 @@ const CurlMultiErrorCategory curlMultiErrorCategory;
 // NOLINTNEXTLINE(misc-const-correctness): curl_write_callback requires char*.
 std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems, void* userdata) {
     FetchState* fetchState = static_cast<void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (intlimit::multiplyOverflows(size, nitems)) {
+    if (integers::multiplyOverflows(size, nitems)) {
         return CURL_WRITEFUNC_ERROR;
     }
     const std::size_t realsize = size * nitems;
@@ -91,7 +91,7 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
 
     // If responseHeadersComplete, we are handling response trailers.
     if (fetchState->responseHeadersComplete) {
-        if (intlimit::addOverflows(fetchState->responseTrailersSize, realsize)) {
+        if (integers::addOverflows(fetchState->responseTrailersSize, realsize)) {
             return CURL_WRITEFUNC_ERROR;
         }
         if (fetchState->responseTrailersSize + realsize > (4U << 10U /* 4 KiB */)) {
@@ -107,7 +107,7 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
     if (line.starts_with("HTTP/") && fetchState->responseRedirecting) {
         fetchState->responseHeadersSize = 0;
     }
-    if (intlimit::addOverflows(fetchState->responseHeadersSize, realsize)) {
+    if (integers::addOverflows(fetchState->responseHeadersSize, realsize)) {
         return CURL_WRITEFUNC_ERROR;
     }
     if (fetchState->responseHeadersSize + realsize > (10U << 20U /* 10 MiB */)) {
@@ -207,7 +207,7 @@ std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitem
 std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
     const void* userdata) {
     FetchState* fetchState = static_cast<const void_ptr::VoidPtr*>(userdata)->cast<FetchState*>();
-    if (intlimit::multiplyOverflows(size, nmemb)) {
+    if (integers::multiplyOverflows(size, nmemb)) {
         return CURL_WRITEFUNC_ERROR;
     }
     const std::size_t realsize = size * nmemb;
@@ -224,7 +224,7 @@ std::size_t curlWriteFunction(char* ptr, std::size_t size, std::size_t nmemb,
 
     // If the responseBufferSize exceeds the bodyBufferLimit, pause curl
     // transfers.
-    if (intlimit::addOverflows(fetchState->responseBufferSize, realsize)) {
+    if (integers::addOverflows(fetchState->responseBufferSize, realsize)) {
         return CURL_WRITEFUNC_ERROR;
     }
     if (fetchState->responseBufferSize + realsize > bodyBufferLimit) {
@@ -996,7 +996,7 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext* jsContext, JSVa
                     return std::nullopt;
                 }
             }
-            if (intlimit::addOverflows(offset, length) || offset + length > size) {
+            if (integers::addOverflows(offset, length) || offset + length > size) {
                 JS_ThrowInternalError(jsContext, "body: QuickJS bounds violations");
                 return std::nullopt;
             }

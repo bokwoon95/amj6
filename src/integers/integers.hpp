@@ -3,7 +3,7 @@
 #include <concepts>
 #include <limits>
 
-namespace amj::intlimit {
+namespace amj::integers {
 
 // Check mathematical results against T's bounds without performing unsafe
 // arithmetic. Both operands must have the same integral type, excluding bool.
@@ -93,4 +93,4 @@ constexpr bool divisionOverflows(T a, T b) noexcept {
     }
 }
 
-} // namespace amj::intlimit
+} // namespace amj::integers
