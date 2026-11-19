@@ -809,7 +809,7 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
     }
     uint32_t connectionHeaderIndex = static_cast<uint32_t>(-1);
     uint32_t contentLengthHeaderIndex = static_cast<uint32_t>(-1);
-    std::size_t contentLength;
+    std::size_t contentLength = 0;
     if (!JS_IsUndefined(headersJSValue.get())) {
         if (!JS_IsArray(headersJSValue.get())) {
             return std::unexpected(JS_ThrowTypeError(jsContext, "headers not an array"));
@@ -946,6 +946,10 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
         return std::unexpected(JS_EXCEPTION);
     }
     if (!JS_IsUndefined(bodyJSValue.get())) {
+        if (equalFoldASCII(fetchRequest.method, "GET") ||
+            equalFoldASCII(fetchRequest.method, "HEAD")) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
+        }
         if (JS_IsString(bodyJSValue.get())) {
             const std::optional<std::string> body = jsToString(jsContext, bodyJSValue.get());
             if (!body.has_value()) {
@@ -954,16 +958,8 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             if (body.value().size() > (32U << 20U /* 32 MiB */)) {
                 return std::unexpected(JS_ThrowRangeError(jsContext, "body exceeds 32 MiB"));
             }
-            if (!body.value().empty() &&
-                (fetchRequest.method == "GET" || fetchRequest.method == "HEAD")) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "GET/HEAD cannot have a body"));
-            }
             fetchRequest.body.assign(body.value().begin(), body.value().end());
-        } else {
-            if (JS_GetTypedArrayType(bodyJSValue.get()) != JS_TYPED_ARRAY_UINT8) {
-                return std::unexpected(JS_ThrowTypeError(jsContext,
-                    "body property must be a string or Uint8Array"));
-            }
+        } else if (JS_GetTypedArrayType(bodyJSValue.get()) == JS_TYPED_ARRAY_UINT8) {
             std::size_t byteOffset = 0;
             std::size_t byteLength = 0;
             const owned::JSValue buffer(jsContext,
@@ -997,6 +993,9 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
                 }
                 fetchRequest.body.assign(bytes + byteOffset, bytes + byteOffset + byteLength);
             }
+        } else {
+            return std::unexpected(JS_ThrowTypeError(jsContext,
+                "body property must be a string or Uint8Array"));
         }
     }
 

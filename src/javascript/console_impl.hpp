@@ -23,7 +23,7 @@ struct ConsoleData {
 
 // JS arguments: level (log/debug/info/warn/error) and already-formatted text.
 // Returns undefined, or JS_EXCEPTION. Borrows the ConsoleSink carrier retained
-// in functionData[0] by the module's JS_NewCFunctionData2 binding.
+// in functionData[0] by the module's JS_NewCFunctionData binding.
 JSValue consoleWrite(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv,
     int magic, JSValueConst* functionData);
 

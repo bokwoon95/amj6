@@ -67,6 +67,7 @@
 - Preserve bulk/range operations such as .insert(end(), first, last); do not replace them with single-element loops.
 - Preserve existing semantics: guard writes with .contains() when existing entries must not be overwritten.
 - DO NOT declare or assign variables in conditions or control-statement initializer clauses. Use a separate statement, then check the value.
+- DO NOT use QuickJS-NG specific APIs. PREFER upstream writing upstream QuickJS-compatible code. Unless QuickJS-NG deliberately breaks compatibility with upstream QuickJS, in that case we have no choice but to follow how QuickJS does it. DO NOT use QuickJS-NG-only helpers.
 
 ## JavaScript
 - JSDoc: Use () => Type, not { (): Type }, for plain function types.

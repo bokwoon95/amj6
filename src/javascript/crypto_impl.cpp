@@ -400,12 +400,21 @@ JSModuleDef* createCryptoImplModule(JSContext* jsContext, Crypto& crypto) {
                     return cryptoDigest(jsContext, thisValue, argc, argv, *crypto);
                 };
                 JSValueConst functionData = modulePrivateValue.get();
-                const JSValue digestFunction = JS_NewCFunctionData2(jsContext, digestCallback,
-                    "cryptoDigest", 3, 0, 1, &functionData);
-                if (JS_IsException(digestFunction)) {
+                owned::JSValue digestFunction(jsContext,
+                    JS_NewCFunctionData(jsContext, digestCallback, 3, 0, 1, &functionData));
+                if (JS_IsException(digestFunction.get())) {
                     return -1;
                 }
-                return JS_SetModuleExport(jsContext, jsModuleDef, "cryptoDigest", digestFunction);
+                const JSValue name = JS_NewStringLen(jsContext, "cryptoDigest", 12);
+                if (JS_IsException(name)) {
+                    return -1;
+                }
+                if (JS_DefinePropertyValueStr(jsContext, digestFunction.get(), "name", name,
+                        JS_PROP_CONFIGURABLE) < 0) {
+                    return -1;
+                }
+                return JS_SetModuleExport(jsContext, jsModuleDef, "cryptoDigest",
+                    digestFunction.release());
             });
         if (jsModuleDef == nullptr) {
             return nullptr;

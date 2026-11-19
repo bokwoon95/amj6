@@ -118,13 +118,22 @@ JSModuleDef* createConsoleImplModule(JSContext* jsContext,
                     return -1;
                 }
                 JSValueConst functionData = modulePrivateValue.get();
-                const JSValue function = JS_NewCFunctionData2(jsContext, consoleWrite,
-                    "consoleWrite", 2, 0, 1, &functionData);
-                if (JS_IsException(function)) {
+                owned::JSValue function(jsContext,
+                    JS_NewCFunctionData(jsContext, consoleWrite, 2, 0, 1, &functionData));
+                if (JS_IsException(function.get())) {
+                    return -1;
+                }
+                const JSValue name = JS_NewStringLen(jsContext, "consoleWrite", 12);
+                if (JS_IsException(name)) {
+                    return -1;
+                }
+                if (JS_DefinePropertyValueStr(jsContext, function.get(), "name", name,
+                        JS_PROP_CONFIGURABLE) < 0) {
                     return -1;
                 }
                 // SetModuleExport consumes function on both success and failure.
-                return JS_SetModuleExport(jsContext, jsModuleDef, "consoleWrite", function);
+                return JS_SetModuleExport(jsContext, jsModuleDef, "consoleWrite",
+                    function.release());
             });
         if (jsModuleDef == nullptr) {
             return nullptr;

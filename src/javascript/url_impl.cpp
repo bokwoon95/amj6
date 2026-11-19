@@ -292,8 +292,14 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
         if (!JS_IsArray(entries)) {
             return JS_ThrowTypeError(jsContext, "queryStringify: arg0: entries not an array");
         }
-        int64_t count = 0;
-        if (JS_GetLength(jsContext, entries, &count) < 0) {
+        const owned::JSValue entriesLength(jsContext,
+            JS_GetPropertyStr(jsContext, entries, "length"));
+        if (JS_IsException(entriesLength.get())) {
+            return JS_EXCEPTION;
+        }
+        // Array lengths are always unsigned 32-bit integers.
+        uint32_t count = 0;
+        if (JS_ToUint32(jsContext, &count, entriesLength.get()) < 0) {
             return JS_EXCEPTION;
         }
         if (count > 65535) {
@@ -315,8 +321,13 @@ JSValue queryStringify(JSContext* jsContext, JSValueConst /* thisValue */, int a
                 return JS_ThrowTypeError(jsContext,
                     "queryStringify: arg0: entries[%zu] not an array", index);
             }
-            int64_t length = 0;
-            if (JS_GetLength(jsContext, entryJSValue.get(), &length) < 0) {
+            const owned::JSValue entryLength(jsContext,
+                JS_GetPropertyStr(jsContext, entryJSValue.get(), "length"));
+            if (JS_IsException(entryLength.get())) {
+                return JS_EXCEPTION;
+            }
+            uint32_t length = 0;
+            if (JS_ToUint32(jsContext, &length, entryLength.get()) < 0) {
                 return JS_EXCEPTION;
             }
             if (length != 2) {

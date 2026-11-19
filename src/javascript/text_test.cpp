@@ -77,7 +77,6 @@ class TextTest : public testing::Test {
                     return testing::AssertionFailure()
                            << "Expected module evaluation to return a Promise";
                 }
-                JS_PromiseMarkAsHandled(jsContext, result.get());
                 exceptionValue = JS_PromiseResult(jsContext, result.get());
             }
         }
