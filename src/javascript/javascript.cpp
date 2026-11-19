@@ -179,4 +179,24 @@ bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, 
     return JS_DefinePropertyValueStr(jsContext, object, key, text, JS_PROP_C_W_E) >= 0;
 }
 
+bool equalFoldASCII(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); index++) {
+        char leftChar = left.at(index);
+        char rightChar = right.at(index);
+        if (leftChar >= 'a' && leftChar <= 'z') {
+            leftChar = static_cast<char>(leftChar - 'a' + 'A');
+        }
+        if (rightChar >= 'a' && rightChar <= 'z') {
+            rightChar = static_cast<char>(rightChar - 'a' + 'A');
+        }
+        if (leftChar != rightChar) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace amj::javascript

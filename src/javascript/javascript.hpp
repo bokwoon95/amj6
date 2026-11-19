@@ -81,4 +81,6 @@ std::optional<uint32_t> jsToUint32(JSContext* jsContext, JSValueConst jsValueCon
 // Returns false with a pending JS exception on failure.
 bool setstringfield(JSContext* jsContext, JSValueConst object, const char* key, std::string_view value);
 
+bool equalFoldASCII(std::string_view left, std::string_view right);
+
 } // namespace amj::javascript
