@@ -7,7 +7,6 @@
 
 #include <curl/curl.h>
 #include <curl/multi.h>
-#include <expected>
 #include <quickjs.h>
 #include <uv.h>
 
@@ -41,7 +40,8 @@ struct FetchRequest {
     std::vector<std::pair<std::string, std::string>> headers = {};
     std::vector<uint8_t> body = {};
 
-    static std::expected<FetchRequest, JSValue> fromJSValue(JSContext* jsContext,
+    // Failure leaves a pending JS exception.
+    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext,
         JSValueConst jsValue);
 };
 
