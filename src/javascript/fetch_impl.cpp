@@ -750,8 +750,9 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
     if (!headersLength.has_value()) {
         return std::unexpected(JS_EXCEPTION);
     }
-    std::optional<std::size_t> contentLength;
-    bool hasConnection = false;
+    uint32_t connectionHeaderIndex = static_cast<uint32_t>(-1);
+    uint32_t contentLengthHeaderIndex = static_cast<uint32_t>(-1);
+    std::size_t contentLength;
     for (uint32_t index = 0; index < headersLength.value(); index++) {
         const owned::JSValue headerJSValue(jsContext, JS_GetPropertyUint32(jsContext, headersJSValue.get(), index));
         if (JS_IsException(headerJSValue.get())) {
@@ -761,6 +762,7 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] not an array", static_cast<unsigned long>(index)));
         }
 
+        // Make sure header array has at least two elements.
         const std::optional<uint32_t> headerLength = jsToUint32(
             jsContext,
             owned::JSValue(jsContext, JS_GetPropertyStr(jsContext, headerJSValue.get(), "length")).get()
@@ -769,9 +771,10 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             return std::unexpected(JS_EXCEPTION);
         }
         if (headerLength.value() < 2) {
-            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] must have at least two strings (%lu present)", static_cast<unsigned long>(index), static_cast<unsigned long>(headerLength.value())));
+            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu] length must be at least 2 (is %lu)", static_cast<unsigned long>(index), static_cast<unsigned long>(headerLength.value())));
         }
 
+        // Get header name.
         const std::optional<std::string> headerName = jsToString(
             jsContext,
             owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 0)).get()
@@ -780,12 +783,13 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             return std::unexpected(JS_EXCEPTION);
         }
         if (headerName.value().empty() || headerName.value().find_first_not_of(httpTokenChars) != std::string::npos) {
-            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu][0]: invalid header name", static_cast<unsigned long>(index)));
+            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: invalid header name", static_cast<unsigned long>(index)));
         }
         if (equalFoldASCII(headerName.value(), "Transfer-Encoding") || equalFoldASCII(headerName.value(), "Keep-Alive") || equalFoldASCII(headerName.value(), "Upgrade") || equalFoldASCII(headerName.value(), "Expect")) {
-            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu][0]: forbidden header name: %s", static_cast<unsigned long>(index), headerName.value().c_str()));
+            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: forbidden header name: %s", static_cast<unsigned long>(index), headerName.value().c_str()));
         }
 
+        // Get header value.
         const std::optional<std::string> headerValue = jsToString(
             jsContext,
             owned::JSValue(jsContext, JS_GetPropertyUint32(jsContext, headerJSValue.get(), 1)).get()
@@ -803,41 +807,41 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
             if (c >= 0x80 && c <= 0xFF) {
                 continue;
             }
-            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu][1]: invalid header value", static_cast<unsigned long>(index)));
+            return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: invalid header value", static_cast<unsigned long>(index)));
         }
-
+        // Trim header value.
         std::string_view trimmedHeaderValue;
         const std::size_t i = headerValue.value().find_first_not_of(" \t");
         if (i != std::string::npos) {
             const std::size_t j = headerValue.value().find_last_not_of(" \t");
             trimmedHeaderValue = std::string_view(headerValue.value()).substr(i, j - i + 1);
         }
-
+        // Validate Connection header.
         if (equalFoldASCII(headerName.value(), "Connection")) {
-            if (hasConnection) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "Duplicate Connection header"));
+            if (connectionHeaderIndex != static_cast<uint32_t>(-1)) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Connection header specified more than once (previously at headers[%lu])", static_cast<unsigned long>(index), static_cast<unsigned long>(connectionHeaderIndex)));
             }
             if (!equalFoldASCII(trimmedHeaderValue, "close") && !equalFoldASCII(trimmedHeaderValue, "keep-alive")) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "Connection must be close or keep-alive"));
+                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Connection must be close or keep-alive", static_cast<unsigned long>(index)));
             }
-            hasConnection = true;
+            connectionHeaderIndex = index;
         }
-
+        // Validate Content-Length header.
         if (equalFoldASCII(headerName.value(), "Content-Length")) {
-            if (contentLength.has_value()) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "Duplicate Content-Length header"));
+            if (contentLengthHeaderIndex != static_cast<uint32_t>(-1)) {
+                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Content-Length header specified more than once (previously at headers[%lu])", static_cast<unsigned long>(index), static_cast<unsigned long>(contentLengthHeaderIndex)));
             }
             if (trimmedHeaderValue.empty() || trimmedHeaderValue.find_first_not_of("0123456789") != std::string_view::npos) {
-                return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length must be a nonnegative decimal integer"));
+                return std::unexpected(JS_ThrowTypeError(jsContext, "headers[%lu]: Content-Length header value must be a nonnegative decimal integer", static_cast<unsigned long>(index)));
             }
-            std::size_t parsedLength = 0;
-            const std::from_chars_result parseResult = std::from_chars(trimmedHeaderValue.data(), trimmedHeaderValue.data() + trimmedHeaderValue.size(), parsedLength);
-            if (parseResult.ec != std::errc() || parseResult.ptr != trimmedHeaderValue.data() + trimmedHeaderValue.size()) {
+            std::size_t num = 0;
+            const std::from_chars_result fromCharsResult = std::from_chars(trimmedHeaderValue.data(), trimmedHeaderValue.data() + trimmedHeaderValue.size(), num);
+            if (fromCharsResult.ec != std::errc() || fromCharsResult.ptr != trimmedHeaderValue.data() + trimmedHeaderValue.size()) {
                 return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length is out of range"));
             }
-            contentLength = parsedLength;
+            contentLengthHeaderIndex = index;
+            contentLength = num;
         }
-
         fetchRequest.headers.push_back({headerName.value(), headerValue.value()});
     }
 
@@ -890,10 +894,11 @@ std::expected<FetchRequest, JSValue> FetchRequest::fromJSValue(JSContext* jsCont
         }
     }
 
-    if (contentLength.has_value() && contentLength.value() != fetchRequest.body.size()) {
-        return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length does not match the request body byte length"));
+    if (contentLengthHeaderIndex != static_cast<uint32_t>(-1)) {
+        if (contentLength != fetchRequest.body.size()) {
+            return std::unexpected(JS_ThrowTypeError(jsContext, "Content-Length does not match the request body byte length"));
+        }
     }
-
     return fetchRequest;
 }
 
