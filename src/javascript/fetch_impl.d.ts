@@ -1,11 +1,11 @@
 // Normalized native contract, not the public browser fetch surface.
 declare module "amj:fetch_impl" {
   export interface FetchRequest {
-    method: string;
+    method?: string;
     url: string;
-    headers: Array<[string, string]>;
+    headers?: Array<[string, string]>;
     /** Strings are UTF-8 encoded. Uploads are limited to 32 MiB total. */
-    body: string | Uint8Array;
+    body?: string | Uint8Array;
   }
 
   export interface FetchResponse {
