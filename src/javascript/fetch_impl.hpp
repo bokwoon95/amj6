@@ -143,14 +143,6 @@ public:
 // release native storage. No module carrier owns or GC-marks this object.
 class FetchClient {
 public:
-    std::thread::id ownerThreadID = this_thread::get_id();
-
-    errors::Error& pendingError;
-
-    std::map<CURL*, FetchState> fetchStateMap = {};
-
-    owned::UvHandle<uv_async_t> uvAsyncHandle = {};
-
     static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext& jsContext,
         uv_loop_t& uvLoop, errors::Error& pendingError,
         std::function<void(JSContext&)> jsExecutePendingJobs);
@@ -161,11 +153,21 @@ public:
     FetchClient(FetchClient&&) = delete;
     FetchClient& operator=(FetchClient&&) = delete;
 
+    const std::thread::id ownerThreadID = this_thread::get_id();
+
+    errors::Error& pendingError;
+
+    std::map<CURL*, FetchState> fetchStateMap = {};
+
+    owned::UvHandle<uv_async_t> uvAsyncHandle = {};
+
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 
     [[nodiscard]] errors::Error close() noexcept;
 
 private:
+    FetchClient(JSContext& jsContext, uv_loop_t& uvLoop, errors::Error& pendingError);
+
     uint64_t fetchStateIDCounter = 0;
 
     bool closed = false;
@@ -183,8 +185,6 @@ private:
     owned::UvHandle<uv_timer_t> uvTimerHandle = {};
 
     std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
-
-    FetchClient(JSContext& jsContext, uv_loop_t& uvLoop, errors::Error& pendingError);
 
     [[nodiscard]] bool driveCurlTransfers(curl_socket_t socket, int eventBitmask);
 
