@@ -208,7 +208,8 @@ private:
 
 // Owned by the opaque JS object. The client outlives all such objects.
 // A null easy handle means closed. The host must not run JS after client close().
-struct FetchResponse {
+class FetchResponse {
+public:
     FetchClient* fetchClient = nullptr;
 
     CURL* curlEasyHandle = nullptr;
