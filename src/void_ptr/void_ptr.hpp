@@ -21,7 +21,7 @@ namespace amj::void_ptr {
 // must otherwise remain alive while in use. Construction and assignment may
 // throw but never leak a supplied owned payload.
 class VoidPtr {
-  public:
+public:
     VoidPtr() = default;
     VoidPtr(const VoidPtr&) = delete;
     VoidPtr& operator=(const VoidPtr&) = delete;
@@ -102,7 +102,7 @@ class VoidPtr {
         }
     }
 
-  private:
+private:
     std::any any = {}; // Contains a T*: owned when deleteFunction is non-null, otherwise borrowed.
     void (*deleteFunction)(std::any&) noexcept = nullptr;
 };

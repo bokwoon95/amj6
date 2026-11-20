@@ -15,7 +15,7 @@ namespace owned = amj::owned;
 namespace {
 
 class TextTest : public testing::Test {
-  protected:
+protected:
     JSRuntime* jsRuntime = nullptr;
     JSContext* jsContext = nullptr;
     std::string textSource = "";

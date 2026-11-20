@@ -41,7 +41,7 @@ TEST(KeyringErrors, CodesHaveStableCategoryAndMessages) {
 }
 
 class KeyringIntegration : public testing::Test {
-  protected:
+protected:
     std::string service = "";
     std::vector<std::string> services = {};
     const std::array<std::string, 2> users = {"test-user", "test-user-\xE7\x94\xA8\xE6\x88\xB7"};

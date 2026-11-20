@@ -52,7 +52,7 @@ constexpr std::size_t bodyBufferLimit = 256U << 10U /* 256 KiB */;
 
 // Retain native codes without allocating diagnostic strings in callbacks.
 class UvErrorCategory final : public std::error_category {
-  public:
+public:
     const char* name() const noexcept override {
         return "libuv";
     }
@@ -66,7 +66,7 @@ class UvErrorCategory final : public std::error_category {
 const UvErrorCategory uvErrorCategory;
 
 class CurlMultiErrorCategory final : public std::error_category {
-  public:
+public:
     const char* name() const noexcept override {
         return "curl.multi";
     }
@@ -80,9 +80,11 @@ class CurlMultiErrorCategory final : public std::error_category {
 const CurlMultiErrorCategory curlMultiErrorCategory;
 
 std::mutex classIDMutex = {};
+
 // Startup allocation failure may terminate.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 std::map<JSRuntime*, JSClassID> fetchClientClassIDMap = {};
+
 // Startup allocation failure may terminate.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 std::map<JSRuntime*, JSClassID> fetchResponseClassIDMap = {};
@@ -921,9 +923,11 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
                     // The transfer completed without receiving any response
                     // headers. Reject responseReadyPromise.
-                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
-                        fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
-                                                                 : std::string());
+                    std::string message = "";
+                    if (fetchState.error.errorMessage != nullptr) {
+                        message = *fetchState.error.errorMessage;
+                    }
+                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", message);
                     const JSValue result = JS_Call(fetchClient->jsContext,
                         fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
                         &error.get());
@@ -961,9 +965,11 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
             // Reject the responseReadPromise if the transfer encountered an error.
             if (fetchState.error.hasValue()) {
-                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
-                    fetchState.error.errorMessage != nullptr ? *fetchState.error.errorMessage
-                                                             : std::string());
+                std::string message = "";
+                if (fetchState.error.errorMessage != nullptr) {
+                    message = *fetchState.error.errorMessage;
+                }
+                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError", message);
                 const JSValue result = JS_Call(fetchClient->jsContext,
                     responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(fetchClient->jsContext, result);
@@ -1651,7 +1657,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
             ),
         });
     }
-    std::unique_ptr<FetchClient> fetchClient = std::make_unique<FetchClient>();
+    std::unique_ptr<FetchClient> fetchClient(new FetchClient());
     fetchClient->ownerThreadID = this_thread::get_id();
     fetchClient->pendingError = &pendingError;
     fetchClient->jsRuntime = JS_GetRuntime(jsContext);

@@ -10,7 +10,7 @@ namespace amj::owned {
 // Owns one QuickJS reference. The borrowed context must outlive this wrapper.
 // All operations, including destruction, require serialized runtime access.
 class JSValue {
-  public:
+public:
     JSValue() = default;
 
     // Adopts one reference. The context must be non-null and outlive this wrapper.
@@ -68,7 +68,7 @@ class JSValue {
         return std::exchange(jsValue, JS_UNDEFINED);
     }
 
-  private:
+private:
     JSContext* jsContext = nullptr; // Borrowed.
     ::JSValue jsValue = JS_UNDEFINED;
 };

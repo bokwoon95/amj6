@@ -8,7 +8,7 @@ namespace amj::keyring {
 namespace {
 
 class ErrorCategory final : public std::error_category {
-  public:
+public:
     const char* name() const noexcept override {
         return "amj.keyring";
     }

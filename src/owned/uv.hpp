@@ -33,7 +33,7 @@ template <typename T> class UvHandle {
                       std::is_same_v<T, uv_async_t>,
         "UvHandle only supports uv_poll_t, uv_timer_t, and uv_async_t");
 
-  public:
+public:
     UvHandle() = default;
 
     explicit UvHandle(std::unique_ptr<T> uvHandle) noexcept {
@@ -115,7 +115,7 @@ template <typename T> class UvHandle {
         return std::exchange(ownedUvHandle, nullptr);
     }
 
-  private:
+private:
     T* ownedUvHandle = nullptr;
     bool initialized = false;
 };

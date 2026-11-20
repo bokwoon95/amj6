@@ -35,7 +35,8 @@ enum class CurlTransferStatus : std::uint8_t {
     Completed,
 };
 
-struct FetchRequest {
+class FetchRequest {
+public:
     std::string method = "";
 
     std::string url = "";
@@ -49,7 +50,8 @@ struct FetchRequest {
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
-struct FetchState {
+class FetchState {
+public:
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
 
     uint64_t fetchStateID = 0;
@@ -138,7 +140,8 @@ struct FetchState {
 // free the context/runtime before destroying this object. Repeated close() and
 // destruction after close() never access QuickJS. Detached libuv callbacks only
 // release native storage. No module carrier owns or GC-marks this object.
-struct FetchClient {
+class FetchClient {
+public:
     std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
 
     uv_loop_t* uvLoop = nullptr;
@@ -166,8 +169,6 @@ struct FetchClient {
     std::thread::id ownerThreadID = {};
 
     bool closed = false; // Guards close() against repetition/reentrancy.
-
-    FetchClient() = default;
 
     // Returns validation/native failures; allocation exceptions propagate.
     static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext* jsContext,
@@ -200,6 +201,9 @@ struct FetchClient {
     static int curlTimerFunction(CURLM* curlMultiHandle, long timeout_ms, void* clientp) noexcept;
 
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+
+private:
+    FetchClient() = default;
 };
 
 // Owned by the opaque JS object. The client outlives all such objects.
