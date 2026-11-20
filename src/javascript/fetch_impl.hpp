@@ -38,7 +38,7 @@ enum class CurlTransferStatus : std::uint8_t {
 
 class FetchRequest {
 public:
-    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
+    static std::optional<FetchRequest> fromJSValue(JSContext& jsContext, JSValueConst jsValue);
 
     std::string method = "";
 
@@ -151,9 +151,9 @@ public:
 
     owned::UvHandle<uv_async_t> uvAsyncHandle = {};
 
-    static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext* jsContext,
-        uv_loop_t* uvLoop, errors::Error& pendingError,
-        std::function<void(JSContext*)> jsExecutePendingJobs);
+    static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext& jsContext,
+        uv_loop_t& uvLoop, errors::Error& pendingError,
+        std::function<void(JSContext&)> jsExecutePendingJobs);
 
     ~FetchClient();
     FetchClient(const FetchClient&) = delete;
@@ -174,7 +174,7 @@ private:
 
     uv_loop_t& uvLoop;
 
-    std::function<void(JSContext*)> jsExecutePendingJobs = {};
+    std::function<void(JSContext&)> jsExecutePendingJobs = {};
 
     std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
 
@@ -204,7 +204,7 @@ public:
 
     CURL* curlEasyHandle = nullptr;
 
-    static std::optional<FetchResponse*> fromThisValue(JSContext* jsContext,
+    static std::optional<std::reference_wrapper<FetchResponse>> fromThisValue(JSContext& jsContext,
         JSValueConst thisValue);
 
     static JSValue read(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
@@ -225,6 +225,6 @@ public:
 // Registers amj:fetch_impl, exporting fetchClient with send(fetchRequest).
 // Borrows fetchClient even on failure. Call once per context before fetch.js.
 // Returns a context-owned module, or nullptr with a pending exception.
-JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient);
+JSModuleDef* createFetchImplModule(JSContext& jsContext, FetchClient& fetchClient);
 
 } // namespace amj::javascript
