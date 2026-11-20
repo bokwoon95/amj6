@@ -48,6 +48,14 @@ struct Error {
     [[nodiscard]] std::string toString() const;
 };
 
+template <typename T>
+    requires (std::is_integral_v<T> || std::is_enum_v<T>)
+[[nodiscard]] Error code(T value, const std::error_category& category) noexcept {
+    return Error{
+        .errorCode = std::error_code(static_cast<int>(value), category),
+    };
+}
+
 [[nodiscard]] Error message(std::string errorMessage);
 
 // Captures at most 30 runtime frames; does nothing if the chain already has a trace.

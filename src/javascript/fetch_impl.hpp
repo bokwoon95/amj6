@@ -26,6 +26,7 @@
 namespace amj::javascript {
 namespace errors = amj::errors;
 namespace owned = amj::owned;
+namespace this_thread = std::this_thread;
 namespace void_ptr = amj::void_ptr;
 
 enum class CurlTransferStatus : std::uint8_t {
@@ -37,6 +38,8 @@ enum class CurlTransferStatus : std::uint8_t {
 
 class FetchRequest {
 public:
+    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
+
     std::string method = "";
 
     std::string url = "";
@@ -44,15 +47,13 @@ public:
     std::vector<std::pair<std::string, std::string>> headers = {};
 
     std::vector<uint8_t> body = {};
-
-    static std::optional<FetchRequest> fromJSValue(JSContext* jsContext, JSValueConst jsValue);
 };
 
 // Client-owned operation storage. Curl callbacks borrow this object, not its
 // parent client. Its address remains stable until the easy handle is removed.
 class FetchState {
 public:
-    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
+    std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
 
     uint64_t fetchStateID = 0;
 
@@ -142,72 +143,59 @@ public:
 // release native storage. No module carrier owns or GC-marks this object.
 class FetchClient {
 public:
-    std::unique_ptr<void_ptr::VoidPtr> selfVoidPtr = nullptr;
-
-    uv_loop_t* uvLoop = nullptr;
+    std::thread::id ownerThreadID = this_thread::get_id();
 
     errors::Error* pendingError = nullptr;
 
-    JSRuntime* jsRuntime = nullptr;
-
-    JSContext* jsContext = nullptr;
-
-    CURLM* ownedCurlMultiHandle = nullptr;
-
-    owned::UvHandle<uv_timer_t> uvTimerHandle = {};
+    std::map<CURL*, FetchState> fetchStateMap = {};
 
     owned::UvHandle<uv_async_t> uvAsyncHandle = {};
 
-    std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
-
-    std::map<CURL*, FetchState> fetchStateMap = {};
-
-    uint64_t fetchStateIDCounter = 0;
-
-    std::function<void(JSContext*)> jsExecutePendingJobs = {};
-
-    std::thread::id ownerThreadID = {};
-
-    bool closed = false; // Guards close() against repetition/reentrancy.
-
-    // Returns validation/native failures; allocation exceptions propagate.
     static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext* jsContext,
         uv_loop_t* uvLoop, errors::Error& pendingError,
         std::function<void(JSContext*)> jsExecutePendingJobs);
 
     ~FetchClient();
-
     FetchClient(const FetchClient&) = delete;
-
     FetchClient& operator=(const FetchClient&) = delete;
-
     FetchClient(FetchClient&&) = delete;
-
     FetchClient& operator=(FetchClient&&) = delete;
 
-    // Idempotent. Requires live QuickJS on the first call and never executes JS.
-    // Releases retained Promises without settling them and starts native handle closure.
-    // Completes synchronous cleanup before returning the first operational error;
-    // programmer/internal failures terminate. Destruction calls close() as fallback.
+    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+
     [[nodiscard]] errors::Error close() noexcept;
+
+private:
+    uint64_t fetchStateIDCounter = 0;
+
+    bool closed = false;
+
+    JSContext* jsContext = nullptr;
+
+    uv_loop_t* uvLoop = nullptr;
+
+    std::function<void(JSContext*)> jsExecutePendingJobs = {};
+
+    std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
+
+    CURLM* ownedCurlMultiHandle = nullptr;
+
+    owned::UvHandle<uv_timer_t> uvTimerHandle = {};
+
+    std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
+
+    FetchClient() = default;
 
     [[nodiscard]] bool driveCurlTransfers(curl_socket_t socket, int eventBitmask);
 
     static void uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept;
 
-    static int curlSocketFunction(CURL* curlEasyHandle, curl_socket_t socket, int what,
+    static int curlMSocketFunction(CURL* curlEasyHandle, curl_socket_t socket, int what,
         void* clientp, void* socketp) noexcept;
 
-    static int curlTimerFunction(CURLM* curlMultiHandle, long timeout_ms, void* clientp) noexcept;
-
-    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
-
-private:
-    FetchClient() = default;
+    static int curlMTimerFunction(CURLM* curlMultiHandle, long timeout_ms, void* clientp) noexcept;
 };
 
-// Owned by the opaque JS object. The client outlives all such objects.
-// A null easy handle means closed. The host must not run JS after client close().
 class FetchResponse {
 public:
     FetchClient* fetchClient = nullptr;
