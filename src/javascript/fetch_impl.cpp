@@ -65,6 +65,20 @@ public:
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 const UvErrorCategory uvErrorCategory;
 
+class CurlErrorCategory final : public std::error_category {
+public:
+    const char* name() const noexcept override {
+        return "curl";
+    }
+    std::string message(int code) const override {
+        return curl_easy_strerror(static_cast<CURLcode>(code));
+    }
+};
+
+// Startup allocation failure may terminate.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const CurlErrorCategory curlErrorCategory;
+
 class CurlMErrorCategory final : public std::error_category {
 public:
     const char* name() const noexcept override {
@@ -583,26 +597,10 @@ bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
         }
         FetchState& fetchState = fetchStateMap.at(curlMsg->easy_handle);
         fetchState.responseCurlTransferStatus = CurlTransferStatus::Completed;
-        if (curlMsg->data.result != CURLE_OK || !fetchState.responseHeadersComplete) {
-            fetchState.error.errorCode = errors::ErrorCode::GenericError;
-            std::string errorMessage;
-            if (fetchState.error.errorMessage != nullptr) {
-                errorMessage = *fetchState.error.errorMessage;
-            }
-            if (curlMsg->data.result != CURLE_OK) {
-                if (!errorMessage.empty()) {
-                    errorMessage.append(": ");
-                }
-                errorMessage.append(curl_easy_strerror(curlMsg->data.result));
-            }
-            if (!fetchState.responseHeadersComplete) {
-                if (!errorMessage.empty()) {
-                    errorMessage.append(": ");
-                }
-                errorMessage.append("HTTP response ended without final headers");
-            }
-            fetchState.error.errorMessage =
-                std::make_shared<const std::string>(std::move(errorMessage));
+        if (curlMsg->data.result != CURLE_OK) {
+            fetchState.error = errors::code(curlMsg->data.result, curlErrorCategory);
+        } else if (!fetchState.responseHeadersComplete) {
+            fetchState.error = errors::message("HTTP response ended without final headers");
         }
     }
 
@@ -921,11 +919,8 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
                     // The transfer completed without receiving any response
                     // headers. Reject responseReadyPromise.
-                    std::string message = "";
-                    if (fetchState.error.errorMessage != nullptr) {
-                        message = *fetchState.error.errorMessage;
-                    }
-                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError", message);
+                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
+                        fetchState.error.toString());
                     const JSValue result = JS_Call(fetchClient->jsContext,
                         fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
                         &error.get());
@@ -963,11 +958,8 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
             // Reject the responseReadPromise if the transfer encountered an error.
             if (fetchState.error.hasValue()) {
-                std::string message = "";
-                if (fetchState.error.errorMessage != nullptr) {
-                    message = *fetchState.error.errorMessage;
-                }
-                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError", message);
+                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
+                    fetchState.error.toString());
                 const JSValue result = JS_Call(fetchClient->jsContext,
                     responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(fetchClient->jsContext, result);
