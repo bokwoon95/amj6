@@ -556,8 +556,7 @@ bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
         curl_multi_socket_action(ownedCurlMultiHandle, socket, eventBitmask, &runningHandles);
     if (curlMCode != CURLM_OK) {
         if (!pendingError->hasValue()) {
-            pendingError->errorCode =
-                std::error_code(static_cast<int>(curlMCode), curlMErrorCategory);
+            *pendingError = errors::code(curlMCode, curlMErrorCategory);
         }
         return false;
     }
@@ -614,7 +613,7 @@ bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
         uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
         // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
         // this is the first error, so no second mailbox check is needed.
-        pendingError->errorCode = std::error_code(status, uvErrorCategory);
+        *pendingError = errors::code(status, uvErrorCategory);
         return false;
     }
     return true;
@@ -660,7 +659,7 @@ int FetchClient::curlMSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t s
                 uv_poll_init_socket(fetchClient->uvLoop, ownedUvPollHandle.get(), socket);
             if (status != 0) {
                 if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                    *fetchClient->pendingError = errors::code(status, uvErrorCategory);
                 }
                 return -1;
             }
@@ -679,7 +678,7 @@ int FetchClient::curlMSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t s
             const int status = uv_poll_stop(uvPollHandle);
             if (status != 0) {
                 if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                    *fetchClient->pendingError = errors::code(status, uvErrorCategory);
                 }
                 return -1;
             }
@@ -734,7 +733,7 @@ int FetchClient::curlMSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t s
         const int status = uv_poll_start(uvPollHandle, static_cast<int>(events), uvPollCallback);
         if (status != 0) {
             if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                *fetchClient->pendingError = errors::code(status, uvErrorCategory);
             }
             return -1;
         }
@@ -763,7 +762,7 @@ int FetchClient::curlMTimerFunction(CURLM* /* curlMultiHandle */, long timeout_m
             const int status = uv_timer_stop(fetchClient->uvTimerHandle.get());
             if (status != 0) {
                 if (!fetchClient->pendingError->hasValue()) {
-                    fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                    *fetchClient->pendingError = errors::code(status, uvErrorCategory);
                 }
                 return -1;
             }
@@ -795,7 +794,7 @@ int FetchClient::curlMTimerFunction(CURLM* /* curlMultiHandle */, long timeout_m
             static_cast<uint64_t>(timeout_ms), 0);
         if (status != 0) {
             if (!fetchClient->pendingError->hasValue()) {
-                fetchClient->pendingError->errorCode = std::error_code(status, uvErrorCategory);
+                *fetchClient->pendingError = errors::code(status, uvErrorCategory);
             }
             return -1;
         }
@@ -1007,9 +1006,7 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
                             curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                         if (curlMCode != CURLM_OK) {
                             if (!fetchClient->pendingError->hasValue()) {
-                                fetchClient->pendingError->errorCode =
-                                    std::error_code(static_cast<int>(curlMCode),
-                                        curlMErrorCategory);
+                                *fetchClient->pendingError = errors::code(curlMCode, curlMErrorCategory);
                             }
                             return;
                         }
@@ -1124,8 +1121,7 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
                 reinterpret_cast<uv_handle_t*>(fetchResponse->fetchClient->uvAsyncHandle.get())
             );
             if (!fetchResponse->fetchClient->pendingError->hasValue()) {
-                fetchResponse->fetchClient->pendingError->errorCode =
-                    std::error_code(status, uvErrorCategory);
+                *fetchResponse->fetchClient->pendingError = errors::code(status, uvErrorCategory);
             }
             return JS_ThrowInternalError(jsContext, "FetchResponse.read: uv_async_send: %s",
                 uv_strerror(status));
@@ -1629,7 +1625,7 @@ errors::Error FetchState::close() noexcept {
             if (curlMCode != CURLM_ABORTED_BY_CALLBACK && curlMCode != CURLM_OUT_OF_MEMORY) {
                 std::terminate();
             }
-            error.errorCode = std::error_code(static_cast<int>(curlMCode), curlMErrorCategory);
+            error = errors::code(curlMCode, curlMErrorCategory);
         }
         curlMultiHandle = nullptr;
     }
@@ -1664,9 +1660,7 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
         owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
         const int status = uv_async_init(uvLoop, uvAsyncHandle.get(), FetchClient::uvAsyncCallback);
         if (status != 0) {
-            return std::unexpected(errors::Error{
-                .errorCode = std::error_code(status, uvErrorCategory),
-            });
+            return std::unexpected(errors::code(status, uvErrorCategory));
         }
         uvAsyncHandle.setInitialized();
         uvAsyncHandle.get()->data = new void_ptr::VoidPtr(fetchClient.get());
@@ -1679,17 +1673,13 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
     fetchClient->curlVoidPtr = std::make_unique<void_ptr::VoidPtr>(fetchClient.get());
     fetchClient->ownedCurlMultiHandle = curl_multi_init();
     if (fetchClient->ownedCurlMultiHandle == nullptr) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::make_error_code(std::errc::not_enough_memory),
-        });
+        return std::unexpected(errors::code(std::errc::not_enough_memory, std::generic_category()));
     }
     {
         owned::UvHandle<uv_timer_t> uvTimerHandle(std::make_unique<uv_timer_t>());
         const int status = uv_timer_init(uvLoop, uvTimerHandle.get());
         if (status != 0) {
-            return std::unexpected(errors::Error{
-                .errorCode = std::error_code(status, uvErrorCategory),
-            });
+            return std::unexpected(errors::code(status, uvErrorCategory));
         }
         uvTimerHandle.setInitialized();
         uvTimerHandle.get()->data = new void_ptr::VoidPtr(fetchClient.get());
@@ -1699,30 +1689,22 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
     CURLMcode curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_SOCKETDATA,
         fetchClient->curlVoidPtr.get());
     if (curlMCode != CURLM_OK) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::error_code(static_cast<int>(curlMCode), curlMErrorCategory),
-        });
+        return std::unexpected(errors::code(curlMCode, curlMErrorCategory));
     }
     curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_SOCKETFUNCTION,
         FetchClient::curlMSocketFunction);
     if (curlMCode != CURLM_OK) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::error_code(static_cast<int>(curlMCode), curlMErrorCategory),
-        });
+        return std::unexpected(errors::code(curlMCode, curlMErrorCategory));
     }
     curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_TIMERDATA,
         fetchClient->curlVoidPtr.get());
     if (curlMCode != CURLM_OK) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::error_code(static_cast<int>(curlMCode), curlMErrorCategory),
-        });
+        return std::unexpected(errors::code(curlMCode, curlMErrorCategory));
     }
     curlMCode = curl_multi_setopt(fetchClient->ownedCurlMultiHandle, CURLMOPT_TIMERFUNCTION,
         FetchClient::curlMTimerFunction);
     if (curlMCode != CURLM_OK) {
-        return std::unexpected(errors::Error{
-            .errorCode = std::error_code(static_cast<int>(curlMCode), curlMErrorCategory),
-        });
+        return std::unexpected(errors::code(curlMCode, curlMErrorCategory));
     }
     return fetchClient;
 }
@@ -1877,8 +1859,7 @@ JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClien
                                 reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get())
                             );
                             if (!fetchClient->pendingError->hasValue()) {
-                                fetchClient->pendingError->errorCode =
-                                    std::error_code(status, uvErrorCategory);
+                                *fetchClient->pendingError = errors::code(status, uvErrorCategory);
                             }
                         }
                     } catch (...) {
