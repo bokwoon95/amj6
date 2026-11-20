@@ -919,11 +919,11 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
                     // The transfer completed without receiving any response
                     // headers. Reject responseReadyPromise.
-                    owned::JSValue error = jsNewError(fetchClient->jsContext, "TypeError",
+                    owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
                         fetchState.error.toString());
                     const JSValue result = JS_Call(fetchClient->jsContext,
                         fetchState.responseReadyPromise.rejectFunction.get(), JS_UNDEFINED, 1,
-                        &error.get());
+                        &jsError.get());
                     JS_FreeValue(fetchClient->jsContext, result);
                     fetchClient->jsExecutePendingJobs(fetchClient->jsContext);
                     continue;
@@ -958,8 +958,8 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
 
             // Reject the responseReadPromise if the transfer encountered an error.
             if (fetchState.error.hasValue()) {
-                owned::JSValue jsError = jsNewError(fetchClient->jsContext, "TypeError",
-                    fetchState.error.toString());
+                owned::JSValue jsError =
+                    jsNewError(fetchClient->jsContext, "TypeError", fetchState.error.toString());
                 const JSValue result = JS_Call(fetchClient->jsContext,
                     responseReadPromise.rejectFunction.get(), JS_UNDEFINED, 1, &jsError.get());
                 JS_FreeValue(fetchClient->jsContext, result);
@@ -998,7 +998,8 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
                             curl_multi_remove_handle(fetchState.curlMultiHandle, curlEasyHandle);
                         if (curlMCode != CURLM_OK) {
                             if (!fetchClient->pendingError->hasValue()) {
-                                *fetchClient->pendingError = errors::code(curlMCode, curlMErrorCategory);
+                                *fetchClient->pendingError =
+                                    errors::code(curlMCode, curlMErrorCategory);
                             }
                             return;
                         }
