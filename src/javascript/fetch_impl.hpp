@@ -145,7 +145,7 @@ class FetchClient {
 public:
     std::thread::id ownerThreadID = this_thread::get_id();
 
-    errors::Error* pendingError = nullptr;
+    errors::Error& pendingError;
 
     std::map<CURL*, FetchState> fetchStateMap = {};
 
@@ -170,9 +170,9 @@ private:
 
     bool closed = false;
 
-    JSContext* jsContext = nullptr;
+    JSContext& jsContext;
 
-    uv_loop_t* uvLoop = nullptr;
+    uv_loop_t& uvLoop;
 
     std::function<void(JSContext*)> jsExecutePendingJobs = {};
 
@@ -184,7 +184,7 @@ private:
 
     std::map<curl_socket_t, owned::UvHandle<uv_poll_t>> uvPollHandleMap = {};
 
-    FetchClient() = default;
+    FetchClient(JSContext& jsContext, uv_loop_t& uvLoop, errors::Error& pendingError);
 
     [[nodiscard]] bool driveCurlTransfers(curl_socket_t socket, int eventBitmask);
 
@@ -198,7 +198,9 @@ private:
 
 class FetchResponse {
 public:
-    FetchClient* fetchClient = nullptr;
+    explicit FetchResponse(FetchClient& fetchClient);
+
+    FetchClient& fetchClient;
 
     CURL* curlEasyHandle = nullptr;
 
