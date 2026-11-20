@@ -1714,18 +1714,20 @@ errors::Error FetchClient::close() noexcept {
         return {};
     }
     closed = true;
-    errors::Error error;
+    errors::Error firstError;
     if (pendingError != nullptr) {
-        error = *pendingError;
+        firstError = *pendingError;
     }
     for (std::pair<CURL* const, FetchState>& entry : fetchStateMap) {
-        const errors::Error closeError = entry.second.close();
-        if (!error.hasValue()) {
+        const errors::Error error = entry.second.close();
+        if (pendingError != nullptr) {
+        }
+        if (!firstError.hasValue()) {
             if (pendingError != nullptr) {
-                error = *pendingError;
+                firstError = *pendingError;
             }
-            if (!error.hasValue()) {
-                error = closeError;
+            if (!firstError.hasValue()) {
+                firstError = error;
             }
         }
     }
@@ -1737,9 +1739,9 @@ errors::Error FetchClient::close() noexcept {
         }
         ownedCurlMultiHandle = nullptr;
     }
-    if (!error.hasValue()) {
+    if (!firstError.hasValue()) {
         if (pendingError != nullptr) {
-            error = *pendingError;
+            firstError = *pendingError;
         }
     }
     // Multi cleanup can invoke socket callbacks; release their dependencies last.
@@ -1747,7 +1749,7 @@ errors::Error FetchClient::close() noexcept {
     uvPollHandleMap.clear();
     uvTimerHandle.reset();
     uvAsyncHandle.reset();
-    return error;
+    return firstError;
 }
 
 JSModuleDef* createFetchImplModule(JSContext* jsContext, FetchClient& fetchClient) {
