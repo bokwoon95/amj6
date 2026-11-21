@@ -51,6 +51,14 @@ public:
 
 class FetchState {
 public:
+    FetchState() = default;
+
+    ~FetchState();
+    FetchState(const FetchState&) = delete;
+    FetchState& operator=(const FetchState&) = delete;
+    FetchState(FetchState&&) = delete;
+    FetchState& operator=(FetchState&&) = delete;
+
     std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
 
     uint64_t fetchStateID = 0;
@@ -95,19 +103,7 @@ public:
 
     std::optional<owned::JSPromise> responseReadPromise = {};
 
-    FetchState() = default;
-
-    ~FetchState();
-
     [[nodiscard]] errors::Error close() noexcept;
-
-    FetchState(const FetchState&) = delete;
-
-    FetchState& operator=(const FetchState&) = delete;
-
-    FetchState(FetchState&&) = delete;
-
-    FetchState& operator=(FetchState&&) = delete;
 
     static std::size_t curlHeaderFunction(char* buffer, std::size_t size, std::size_t nitems,
         void* userdata) noexcept;
