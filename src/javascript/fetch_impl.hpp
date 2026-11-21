@@ -38,7 +38,7 @@ enum class CurlTransferStatus : std::uint8_t {
 
 class FetchRequest {
 public:
-    static std::optional<FetchRequest> fromJSValue(JSContext& jsContext, JSValueConst jsValue);
+    static std::optional<FetchRequest> create(JSContext& jsContext, JSValueConst jsValue);
 
     std::string method = "";
 
@@ -49,8 +49,6 @@ public:
     std::vector<uint8_t> body = {};
 };
 
-// Client-owned operation storage. Curl callbacks borrow this object, not its
-// parent client. Its address remains stable until the easy handle is removed.
 class FetchState {
 public:
     std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
@@ -101,9 +99,6 @@ public:
 
     ~FetchState();
 
-    // Idempotent native teardown; releases JS references without settling Promises.
-    // Normal return means detached and cleaned up, even when an error is returned.
-    // First call requires live QuickJS. Do not use this state after closing it.
     [[nodiscard]] errors::Error close() noexcept;
 
     FetchState(const FetchState&) = delete;
@@ -121,26 +116,6 @@ public:
         void* userdata) noexcept;
 };
 
-// Host-owned, one per context/loop pair, at a stable address. Borrows the context
-// and initialized loop. All use/destruction requires their owner thread.
-// Borrows the host's pendingError shared by modules on the same loop.
-// Preserve the first error; use hasValue() to check its value. After uv_run or
-// direct JS execution returns, the host must inspect it before resuming work.
-// Pending errors suspend fetch work; close this client before clearing the
-// error with errors::Error(). Promise rejection/recreation is a host decision.
-//
-// jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
-// QuickJS jobs until none remain, handling job exceptions too. If a native JS
-// call reports pendingError, stop draining jobs and return to the adapter/host.
-// It runs after native promise settlement. It must not run/pump libuv or another event loop,
-// close or destroy any native module service, free the context/runtime, or
-// throw. Host teardown must wait until JS execution and native callbacks return;
-// JS must not resume after teardown begins. Captures must be native-only.
-//
-// Explicitly close while QuickJS is alive, drain native close callbacks, then
-// free the context/runtime before destroying this object. Repeated close() and
-// destruction after close() never access QuickJS. Detached libuv callbacks only
-// release native storage. No module carrier owns or GC-marks this object.
 class FetchClient {
 public:
     static std::expected<std::unique_ptr<FetchClient>, errors::Error> create(JSContext& jsContext,
@@ -159,11 +134,9 @@ public:
 
     std::map<CURL*, FetchState> fetchStateMap = {};
 
-    // Wake the event loop for a promise settlement pass; records native failure.
-    // Returns false if pendingError has a value.
-    [[nodiscard]] bool triggerPromiseSettlement();
-
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+
+    [[nodiscard]] bool triggerPromiseSettlement();
 
     [[nodiscard]] errors::Error close() noexcept;
 
@@ -178,6 +151,13 @@ private:
 
     uv_loop_t& uvLoop;
 
+    // jsExecutePendingJobs reports/consumes pending JS exceptions and executes queued
+    // QuickJS jobs until none remain, handling job exceptions too. If a native JS
+    // call reports pendingError, stop draining jobs and return to the adapter/host.
+    // It runs after native promise settlement. It must not run/pump libuv or another event loop,
+    // close or destroy any native module service, free the context/runtime, or
+    // throw. Host teardown must wait until JS execution and native callbacks return;
+    // JS must not resume after teardown begins. Captures must be native-only.
     std::function<void(JSContext&)> jsExecutePendingJobs = {};
 
     std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;

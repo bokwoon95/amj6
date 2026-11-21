@@ -105,7 +105,7 @@ std::map<const JSRuntime*, JSClassID> fetchResponseClassIDMap = {};
 
 } // namespace
 
-std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext& jsContext, JSValueConst jsValue) {
+std::optional<FetchRequest> FetchRequest::create(JSContext& jsContext, JSValueConst jsValue) {
     const std::string_view httpTokenChars =
         "!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~";
     if (!JS_IsObject(jsValue)) {
@@ -1343,9 +1343,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             return JS_ThrowTypeError(jsContext,
                 "FetchClient.send: requires at least 1 argument (%d provided)", argc);
         }
-        std::optional<FetchRequest> fetchRequestResult =
-            FetchRequest::fromJSValue(*jsContext, argv[0]);
-        if (!fetchRequestResult.has_value()) {
+        std::optional<FetchRequest> fetchRequest = FetchRequest::create(*jsContext, argv[0]);
+        if (!fetchRequest.has_value()) {
             return JS_EXCEPTION;
         }
         if (fetchClient->fetchStateMap.size() >= 64) {
@@ -1361,7 +1360,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         fetchState.curlVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
-        fetchState.request = fetchRequestResult.value();
+        fetchState.request = fetchRequest.value();
         curlEasyHandle = ownedCurlEasyHandle.get();
         fetchState.ownedCurlEasyHandle = ownedCurlEasyHandle.release();
         bool hasContentType = false;
