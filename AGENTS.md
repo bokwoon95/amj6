@@ -16,7 +16,6 @@
 - Write C++ like Go: prefer straightforward conditionals and loops, useful zero values, and structs/classes.
 - Write C++ that is NOT intimidating for a Go/Java programmer to read!!
     - We are writing a networked desktop app, NOT a high performance number cruncher!! Correctness, readability, performance, in that order!! We are not competing against other C++ code, our comptetitors are programs written in Python or JavaScript so simply being written in C++ is already a huge performance win!!
-    - DO NOT use member initializer lists. Always set each this->field manually like it was a dumb Java program.
     - Avoid using std::move() as a microoptimization if stupidly copying is not catastrophically slow. It's not about being imposing a small syntactic overhead, it's about imposing a _huge_ understanding overhead as a Go programmer would have to ask why std::move is even needed (when omitting it would be JUST as correct just with a little more allocations).
     - DO NOT use emplace variants unless required for correctness. Prefer explicit values with push_back, insert, or insert_or_assign, preserving overwrite semantics.
     - DO NOT use function-try-blocks; put try/catch inside the function body.
@@ -55,7 +54,6 @@
 - We are not writing high performance code, readability is more important:
     - Do not use struct of arrays if array of structs is more natural.
     - Semantic order of class members is more important than struct packing.
-    - Do NOT use #ifdef. Use only #if defined().
 - Add NOLINT(bugprone-throwing-static-initialization) to globals whose only potential initialization failure is allocation failure; startup termination is acceptable. Account for Windows STL allocations even when macOS lint passes.
 - NEVER mix platform-specific implementations in one file. Put them in separate \*\_windows.cpp, \*\_darwin.cpp, and \*\_linux.cpp files. Guard each ENTIRE file, including all includes, with #if defined(_WIN32), #if defined(__APPLE__), or #if defined(__linux__), respectively.
 - Do NOT use #ifdef. Use only #if defined().
@@ -67,7 +65,8 @@
 - Preserve bulk/range operations such as .insert(end(), first, last); do not replace them with single-element loops.
 - Preserve existing semantics: guard writes with .contains() when existing entries must not be overwritten.
 - DO NOT declare or assign variables in conditions or control-statement initializer clauses. Use a separate statement, then check the value.
-- DO NOT use QuickJS-NG specific APIs. PREFER upstream writing upstream QuickJS-compatible code. Unless QuickJS-NG deliberately breaks compatibility with upstream QuickJS, in that case we have no choice but to follow how QuickJS does it. DO NOT use QuickJS-NG-only helpers.
+- DO NOT use QuickJS-NG specific APIs. PREFER upstream writing upstream QuickJS-compatible code. Unless QuickJS-NG deliberately breaks compatibility with upstream QuickJS, in that case we have no choice but to follow how QuickJS-NG does it. DO NOT use QuickJS-NG-only helpers.
+- Avoid using `friend`.
 
 ## JavaScript
 - JSDoc: Use () => Type, not { (): Type }, for plain function types.

@@ -159,7 +159,9 @@ public:
 
     std::map<CURL*, FetchState> fetchStateMap = {};
 
-    owned::UvHandle<uv_async_t> uvAsyncHandle = {};
+    // Wake the event loop for a promise settlement pass; records native failure.
+    // Returns false if pendingError has a value.
+    [[nodiscard]] bool triggerPromiseSettlement();
 
     static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 
@@ -181,6 +183,8 @@ private:
     std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
 
     CURLM* ownedCurlMultiHandle = nullptr;
+
+    owned::UvHandle<uv_async_t> uvAsyncHandle = {};
 
     owned::UvHandle<uv_timer_t> uvTimerHandle = {};
 

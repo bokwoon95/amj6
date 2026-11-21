@@ -180,7 +180,8 @@ std::optional<FetchRequest> FetchRequest::fromJSValue(JSContext& jsContext, JSVa
             return std::nullopt;
         }
         const std::optional<uint32_t> headersLength = jsToUint32(&jsContext,
-            owned::JSValue(&jsContext, JS_GetPropertyStr(&jsContext, headersJSValue.get(), "length"))
+            owned::JSValue(&jsContext,
+                JS_GetPropertyStr(&jsContext, headersJSValue.get(), "length"))
                 .get());
         if (!headersLength.has_value()) {
             return std::nullopt;
@@ -461,12 +462,11 @@ std::size_t FetchState::curlHeaderFunction(char* buffer, std::size_t size, std::
         if (responseCode == 301 || responseCode == 302 || responseCode == 303 ||
             responseCode == 307 || responseCode == 308) {
             curl_header* curlHeader = nullptr;
-            const CURLHcode curlHCode = curl_easy_header(fetchState.ownedCurlEasyHandle,
-                "location", 0, CURLH_HEADER, -1, &curlHeader);
+            const CURLHcode curlHCode = curl_easy_header(fetchState.ownedCurlEasyHandle, "location",
+                0, CURLH_HEADER, -1, &curlHeader);
             if (curlHCode != CURLHE_OK) {
                 if (curlHCode != CURLHE_MISSING && curlHCode != CURLHE_NOHEADERS) {
-                    fetchState.error =
-                        errors::message("Could not obtain response redirect header");
+                    fetchState.error = errors::message("Could not obtain response redirect header");
                     return CURL_WRITEFUNC_ERROR;
                 }
             }
@@ -556,8 +556,22 @@ std::size_t FetchState::curlWriteFunction(char* ptr, std::size_t size, std::size
     }
 }
 
-// Drive curl transfers, then mark the ones that have completed. Returns true
-// on success, or false if a fatal error is recorded in pendingError.
+bool FetchClient::triggerPromiseSettlement() {
+    if (pendingError.hasValue()) {
+        return false;
+    }
+    uv_ref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
+    const int status = uv_async_send(uvAsyncHandle.get());
+    if (status != 0) {
+        uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
+        if (!pendingError.hasValue()) {
+            pendingError = errors::code(status, uvErrorCategory);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
     // Check for pendingErrors before we call curl_multi_socket_action().
     if (pendingError.hasValue()) {
@@ -604,17 +618,7 @@ bool FetchClient::driveCurlTransfers(curl_socket_t socket, int eventBitmask) {
         }
     }
 
-    // Signal the uv async handle, which triggers uvAsyncCallback().
-    uv_ref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
-    const int status = uv_async_send(uvAsyncHandle.get());
-    if (status != 0) {
-        uv_unref(reinterpret_cast<uv_handle_t*>(uvAsyncHandle.get()));
-        // Nothing since the post-curl checkpoint can invoke JS/curl callbacks;
-        // this is the first error, so no second mailbox check is needed.
-        pendingError = errors::code(status, uvErrorCategory);
-        return false;
-    }
-    return true;
+    return triggerPromiseSettlement();
 }
 
 // curl calls this function to specify which socket events should trigger
@@ -638,7 +642,8 @@ int FetchClient::curlMSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t s
         FetchClient& fetchClient;
         curl_socket_t socket = CURL_SOCKET_BAD;
     };
-    FetchClient& fetchClient = *static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
+    FetchClient& fetchClient =
+        *static_cast<const void_ptr::VoidPtr*>(clientp)->cast<FetchClient*>();
     try {
         // Stop watching this socket and close its poll handle.
         if (what == CURL_POLL_REMOVE) {
@@ -1039,8 +1044,8 @@ FetchResponse::FetchResponse(FetchClient& fetchClient) : fetchClient(fetchClient
 
 // Validate the receiver without requiring an open or ready response.
 // The returned reference is borrowed; failures leave a pending JS exception.
-std::optional<std::reference_wrapper<FetchResponse>> FetchResponse::fromThisValue(JSContext& jsContext,
-    JSValueConst thisValue) {
+std::optional<std::reference_wrapper<FetchResponse>>
+FetchResponse::fromThisValue(JSContext& jsContext, JSValueConst thisValue) {
     JSClassID fetchResponseClassID = 0;
     {
         const JSRuntime& jsRuntime = *JS_GetRuntime(&jsContext);
@@ -1107,17 +1112,9 @@ JSValue FetchResponse::read(JSContext* jsContext, JSValueConst thisValue, int /*
             .resolveFunction = owned::JSValue(jsContext, resolvingFunctions.at(0)),
             .rejectFunction = owned::JSValue(jsContext, resolvingFunctions.at(1)),
         };
-        uv_ref(reinterpret_cast<uv_handle_t*>(fetchResponse.fetchClient.uvAsyncHandle.get()));
-        const int status = uv_async_send(fetchResponse.fetchClient.uvAsyncHandle.get());
-        if (status != 0) {
-            uv_unref(
-                reinterpret_cast<uv_handle_t*>(fetchResponse.fetchClient.uvAsyncHandle.get())
-            );
-            if (!fetchResponse.fetchClient.pendingError.hasValue()) {
-                fetchResponse.fetchClient.pendingError = errors::code(status, uvErrorCategory);
-            }
-            return JS_ThrowInternalError(jsContext, "FetchResponse.read: uv_async_send: %s",
-                uv_strerror(status));
+        const bool ok = fetchResponse.fetchClient.triggerPromiseSettlement();
+        if (!ok) {
+            return JS_ThrowInternalError(jsContext, "FetchResponse.read: native failure");
         }
         return JS_DupValue(jsContext, fetchState.responseReadPromise.value().promise.get());
     } catch (const std::bad_alloc&) {
@@ -1531,7 +1528,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             fetchClient->fetchStateMap.erase(curlEasyHandle);
             return JS_EXCEPTION;
         }
-        std::unique_ptr<FetchResponse> fetchResponse = std::make_unique<FetchResponse>(*fetchClient);
+        std::unique_ptr<FetchResponse> fetchResponse =
+            std::make_unique<FetchResponse>(*fetchClient);
         fetchResponse->curlEasyHandle = curlEasyHandle;
         void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
         if (JS_SetOpaque(response.get(), voidPtr) < 0) {
@@ -1650,7 +1648,8 @@ std::expected<std::unique_ptr<FetchClient>, errors::Error> FetchClient::create(J
     std::unique_ptr<FetchClient> fetchClient(new FetchClient(jsContext, uvLoop, pendingError));
     {
         owned::UvHandle<uv_async_t> uvAsyncHandle(std::make_unique<uv_async_t>());
-        const int status = uv_async_init(&uvLoop, uvAsyncHandle.get(), FetchClient::uvAsyncCallback);
+        const int status =
+            uv_async_init(&uvLoop, uvAsyncHandle.get(), FetchClient::uvAsyncCallback);
         if (status != 0) {
             return std::unexpected(errors::code(status, uvErrorCategory));
         }
@@ -1835,16 +1834,7 @@ JSModuleDef* createFetchImplModule(JSContext& jsContext, FetchClient& fetchClien
                         // from inside a QuickJS finalizer.
                         fetchClient->fetchStateMap.at(fetchResponse.curlEasyHandle).abandoned =
                             true;
-                        uv_ref(reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get()));
-                        const int status = uv_async_send(fetchClient->uvAsyncHandle.get());
-                        if (status != 0) {
-                            uv_unref(
-                                reinterpret_cast<uv_handle_t*>(fetchClient->uvAsyncHandle.get())
-                            );
-                            if (!fetchClient->pendingError.hasValue()) {
-                                fetchClient->pendingError = errors::code(status, uvErrorCategory);
-                            }
-                        }
+                        std::ignore = fetchClient->triggerPromiseSettlement();
                     } catch (...) {
                         if (fetchClient == nullptr) {
                             std::terminate(); // No reporter means invalid callback storage.
@@ -1874,8 +1864,8 @@ JSModuleDef* createFetchImplModule(JSContext& jsContext, FetchClient& fetchClien
             return nullptr;
         }
         const JSValue send = JS_NewCFunction(&jsContext, FetchClient::send, "send", 1);
-        if (JS_IsException(send) || JS_DefinePropertyValueStr(&jsContext, client.get(), "send", send,
-                                        JS_PROP_ENUMERABLE) < 0) {
+        if (JS_IsException(send) || JS_DefinePropertyValueStr(&jsContext, client.get(), "send",
+                                        send, JS_PROP_ENUMERABLE) < 0) {
             return nullptr;
         }
         owned::JSValue prototype(&jsContext, JS_NewObject(&jsContext));
