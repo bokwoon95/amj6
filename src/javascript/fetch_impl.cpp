@@ -1312,12 +1312,12 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
     try {
         JSClassID fetchClientClassID = 0;
         {
-            const JSRuntime& jsRuntime = *JS_GetRuntime(jsContext);
+            const JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(classIDMutex);
-            if (!fetchClientClassIDMap.contains(&jsRuntime)) {
+            if (!fetchClientClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowInternalError(jsContext, "FetchClient class is not registered");
             }
-            fetchClientClassID = fetchClientClassIDMap.at(&jsRuntime);
+            fetchClientClassID = fetchClientClassIDMap.at(jsRuntime);
         }
         const void* opaque = JS_GetOpaque2(jsContext, thisValue, fetchClientClassID);
         if (opaque == nullptr) {
@@ -1332,12 +1332,12 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         }
         JSClassID fetchResponseClassID = 0;
         {
-            const JSRuntime& jsRuntime = *JS_GetRuntime(jsContext);
+            const JSRuntime* jsRuntime = JS_GetRuntime(jsContext);
             const std::lock_guard<std::mutex> lock(classIDMutex);
-            if (!fetchResponseClassIDMap.contains(&jsRuntime)) {
+            if (!fetchResponseClassIDMap.contains(jsRuntime)) {
                 return JS_ThrowInternalError(jsContext, "FetchResponse class is not registered");
             }
-            fetchResponseClassID = fetchResponseClassIDMap.at(&jsRuntime);
+            fetchResponseClassID = fetchResponseClassIDMap.at(jsRuntime);
         }
         if (argc < 1) {
             return JS_ThrowTypeError(jsContext,
