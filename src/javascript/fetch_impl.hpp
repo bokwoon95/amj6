@@ -36,8 +36,7 @@ enum class CurlTransferStatus : std::uint8_t {
     Completed,
 };
 
-class FetchRequest {
-public:
+struct FetchRequest {
     static std::optional<FetchRequest> create(JSContext& jsContext, JSValueConst jsValue);
 
     std::string method = "";
@@ -49,8 +48,7 @@ public:
     std::vector<uint8_t> body = {};
 };
 
-class FetchState {
-public:
+struct FetchState {
     FetchState() = default;
 
     ~FetchState();
@@ -178,7 +176,7 @@ private:
 
 class FetchResponse {
 public:
-    explicit FetchResponse(FetchClient& fetchClient);
+    FetchResponse(FetchClient& fetchClient, CURL* curlEasyHandle);
 
     FetchClient& fetchClient;
 

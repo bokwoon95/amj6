@@ -1040,7 +1040,10 @@ void FetchClient::uvAsyncCallback(uv_async_t* uvAsyncHandle) noexcept {
     }
 }
 
-FetchResponse::FetchResponse(FetchClient& fetchClient) : fetchClient(fetchClient) {}
+FetchResponse::FetchResponse(FetchClient& fetchClient, CURL* curlEasyHandle)
+    : fetchClient(fetchClient) {
+    this->curlEasyHandle = curlEasyHandle;
+}
 
 // Validate the receiver without requiring an open or ready response.
 // The returned reference is borrowed; failures leave a pending JS exception.
@@ -1528,8 +1531,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             return JS_EXCEPTION;
         }
         std::unique_ptr<FetchResponse> fetchResponse =
-            std::make_unique<FetchResponse>(*fetchClient);
-        fetchResponse->curlEasyHandle = curlEasyHandle;
+            std::make_unique<FetchResponse>(*fetchClient, curlEasyHandle);
         void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
         if (JS_SetOpaque(response.get(), voidPtr) < 0) {
             delete voidPtr;
