@@ -11,15 +11,15 @@ namespace amj::void_ptr {
 // Type-checked storage for C userdata slots. Delete the wrapper during cleanup;
 // it deletes owned payloads and leaves borrowed payloads alone.
 //
-// Construct or assign with unique_ptr<T> to own a payload; cast<T>() returns T&.
+// Construct or assign with a non-pointer rvalue to own a payload; cast<T>() returns T&.
 // Construct or assign with T* to borrow a payload; cast<T*>() returns T*.
 // Assignment replaces the payload without reallocating the wrapper and destroys
 // the previous payload if owned. Allocation failure leaves the old payload intact.
 //
 // is<T>() checks both payload type and ownership mode. cast<T>() terminates on
-// mismatch. Owned payloads must be non-null; borrowed pointers may be null and
-// must otherwise remain alive while in use. Construction and assignment may
-// throw but never leak a supplied owned payload.
+// mismatch. Borrowed pointers may be null and must otherwise remain alive while
+// in use. Construction and assignment may throw; owned payloads are move-constructed
+// into heap storage, leaving the supplied object in a moved-from state.
 class VoidPtr {
 public:
     VoidPtr() = default;
@@ -38,8 +38,11 @@ public:
         this->assign(pointer);
     }
 
-    template <typename T> explicit VoidPtr(std::unique_ptr<T> pointer) {
-        this->assign(std::move(pointer));
+    template <typename T>
+        requires (!std::is_lvalue_reference_v<T>
+            && !std::is_pointer_v<std::remove_cvref_t<T>>)
+    explicit VoidPtr(T&& value) {
+        this->assign(std::forward<T>(value));
     }
 
     template <typename T> void assign(T* pointer) {
@@ -51,12 +54,13 @@ public:
         this->deleteFunction = nullptr;
     }
 
-    template <typename T> void assign(std::unique_ptr<T> pointer) {
-        static_assert(!std::is_pointer_v<T> && !std::is_array_v<T>);
-        if (pointer == nullptr) {
-            std::terminate();
-        }
-        std::any replacement = pointer.get();
+    template <typename T>
+        requires (!std::is_lvalue_reference_v<T>
+            && !std::is_pointer_v<std::remove_cvref_t<T>>)
+    void assign(T&& value) {
+        static_assert(!std::is_array_v<T>);
+        std::any replacement = static_cast<T*>(nullptr);
+        std::unique_ptr<T> pointer = std::make_unique<T>(std::forward<T>(value));
         T** replacementPointer = std::any_cast<T*>(&replacement);
         if (replacementPointer == nullptr) {
             std::terminate();

@@ -159,10 +159,10 @@ JSValue timeoutSet(JSContext* jsContext, JSValueConst /* thisValue */, int argc,
                 uv_strerror(status));
         }
         uvTimerHandle.setInitialized();
-        uvTimerHandle.get()->data = new void_ptr::VoidPtr(std::make_unique<TimerData>(TimerData{
+        uvTimerHandle.get()->data = new void_ptr::VoidPtr(TimerData{
             .timeout = &timeout,
             .timerID = timerID,
-        }));
+        });
         timeout.timerMap.try_emplace(timerID);
         Timeout::Timer& timer = timeout.timerMap.at(timerID);
         timer.callback = std::move(callback);

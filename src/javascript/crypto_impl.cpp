@@ -293,19 +293,19 @@ JSValue cryptoDigest(JSContext* jsContext, JSValueConst /* thisValue */, int arg
         if (byteOffset > bufferLength || byteLength > bufferLength - byteOffset) {
             return JS_ThrowTypeError(jsContext, "Invalid digest input bounds");
         }
-        std::unique_ptr<DigestWork> digestWork = std::make_unique<DigestWork>();
-        digestWork->digestType = digestType;
-        digestWork->input.resize(byteLength);
+        DigestWork digestWork;
+        digestWork.digestType = digestType;
+        digestWork.input.resize(byteLength);
         if (byteLength != 0) {
             if (bytes == nullptr) {
                 return JS_ThrowInternalError(jsContext, "Missing digest input storage");
             }
             // Snapshot the validated slice before returning or invoking any JS.
-            std::copy_n(bytes + byteOffset, byteLength, digestWork->input.data());
+            std::copy_n(bytes + byteOffset, byteLength, digestWork.input.data());
         }
-        DigestWork* submittedWork = digestWork.get();
         std::unique_ptr<void_ptr::VoidPtr> voidPtr =
             std::make_unique<void_ptr::VoidPtr>(std::move(digestWork));
+        DigestWork* submittedWork = &voidPtr->cast<DigestWork>();
         owned::JSValue completion(jsContext, JS_DupValue(jsContext, argv[2]));
         crypto.pendingDigests.insert_or_assign(&submittedWork->uvWork, std::move(completion));
         const auto doDigest = [](uv_work_t* uvWork) noexcept {

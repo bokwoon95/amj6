@@ -665,10 +665,10 @@ int FetchClient::curlMSocketFunction(CURL* /* curlEasyHandle */, curl_socket_t s
             }
             ownedUvPollHandle.setInitialized();
             ownedUvPollHandle.get()->data =
-                new void_ptr::VoidPtr(std::make_unique<PollData>(PollData{
+                new void_ptr::VoidPtr(PollData{
                     .fetchClient = fetchClient,
                     .socket = socket,
-                }));
+                });
             fetchClient.uvPollHandleMap.insert_or_assign(socket, std::move(ownedUvPollHandle));
         }
         uv_poll_t& uvPollHandle = *fetchClient.uvPollHandleMap.at(socket).get();
@@ -1530,9 +1530,8 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             fetchClient->fetchStateMap.erase(curlEasyHandle);
             return JS_EXCEPTION;
         }
-        std::unique_ptr<FetchResponse> fetchResponse =
-            std::make_unique<FetchResponse>(*fetchClient, curlEasyHandle);
-        void_ptr::VoidPtr* voidPtr = new void_ptr::VoidPtr(std::move(fetchResponse));
+        void_ptr::VoidPtr* voidPtr =
+            new void_ptr::VoidPtr(FetchResponse(*fetchClient, curlEasyHandle));
         if (JS_SetOpaque(response.get(), voidPtr) < 0) {
             delete voidPtr;
             const errors::Error closeError = fetchState.close();
