@@ -128,11 +128,11 @@ public:
 
     std::map<CURL*, FetchState> fetchStateMap = {};
 
-    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
+    [[nodiscard]] errors::Error close() noexcept;
 
     [[nodiscard]] bool triggerPromiseSettlement();
 
-    [[nodiscard]] errors::Error close() noexcept;
+    static JSValue send(JSContext* jsContext, JSValueConst thisValue, int argc, JSValueConst* argv);
 
 private:
     FetchClient(JSContext& jsContext, uv_loop_t& uvLoop, errors::Error& pendingError);
