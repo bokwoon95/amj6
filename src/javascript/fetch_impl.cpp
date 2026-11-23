@@ -1360,7 +1360,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
         }
         fetchClient->fetchStateMap.try_emplace(ownedCurlEasyHandle.get());
         FetchState& fetchState = fetchClient->fetchStateMap.at(ownedCurlEasyHandle.get());
-        fetchState.curlVoidPtr = std::make_unique<void_ptr::VoidPtr>(&fetchState);
+        fetchState.curlVoidPtr.assign(&fetchState);
         fetchClient->fetchStateIDCounter++;
         fetchState.fetchStateID = fetchClient->fetchStateIDCounter;
         fetchState.request = fetchRequest.value();
@@ -1459,7 +1459,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_HEADERDATA,
-            fetchState.curlVoidPtr.get());
+            &fetchState.curlVoidPtr);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1469,7 +1469,7 @@ JSValue FetchClient::send(JSContext* jsContext, JSValueConst thisValue, int argc
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
         curlCode = curl_easy_setopt(fetchState.ownedCurlEasyHandle, CURLOPT_WRITEDATA,
-            fetchState.curlVoidPtr.get());
+            &fetchState.curlVoidPtr);
         if (curlCode != CURLE_OK) {
             throw std::runtime_error(curl_easy_strerror(curlCode));
         }
@@ -1629,7 +1629,6 @@ errors::Error FetchState::close() noexcept {
     }
     curl_slist_free_all(ownedCurlRequestHeaders);
     ownedCurlRequestHeaders = nullptr;
-    curlVoidPtr.reset();
     responseReadyPromise = {};
     responseReadPromise = std::nullopt;
     return error;

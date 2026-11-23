@@ -57,7 +57,7 @@ struct FetchState {
     FetchState(FetchState&&) = delete;
     FetchState& operator=(FetchState&&) = delete;
 
-    std::unique_ptr<void_ptr::VoidPtr> curlVoidPtr = nullptr;
+    void_ptr::VoidPtr curlVoidPtr = {};
 
     uint64_t fetchStateID = 0;
 
