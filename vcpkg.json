@@ -12,7 +12,7 @@
     {
       "name": "curl",
       "default-features": false,
-      "features": ["openssl"]
+      "features": ["ssl"]
     },
     "gtest",
     "libuv",

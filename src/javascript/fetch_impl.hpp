@@ -57,9 +57,9 @@ struct FetchState {
     FetchState(FetchState&&) = delete;
     FetchState& operator=(FetchState&&) = delete;
 
-    void_ptr::VoidPtr curlVoidPtr = {};
-
     uint64_t fetchStateID = 0;
+
+    void_ptr::VoidPtr curlVoidPtr = {};
 
     CURLM* curlMultiHandle = nullptr;
 
@@ -174,8 +174,7 @@ private:
     static int curlMTimerFunction(CURLM* curlMultiHandle, long timeout_ms, void* clientp) noexcept;
 };
 
-class FetchResponse {
-public:
+struct FetchResponse {
     FetchResponse(FetchClient& fetchClient, CURL* curlEasyHandle);
 
     FetchClient& fetchClient;
