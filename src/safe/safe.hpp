@@ -2,7 +2,6 @@
 
 #include <any>
 #include <cstdint>
-#include <exception>
 #include <functional>
 #include <memory>
 #include <optional>
