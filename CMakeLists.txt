@@ -101,6 +101,24 @@ list(APPEND amj_libraries amj_integers)
 add_library(amj_void_ptr STATIC src/void_ptr/void_ptr.cpp)
 list(APPEND amj_libraries amj_void_ptr)
 
+## == src/safe == ##
+
+add_library(amj_safe STATIC src/safe/safe.cpp)
+list(APPEND amj_libraries amj_safe)
+target_link_libraries(amj_safe PRIVATE cpptrace::cpptrace)
+
+add_library(amj_safe_quickjs STATIC src/safe/quickjs.cpp)
+list(APPEND amj_libraries amj_safe_quickjs)
+target_link_libraries(amj_safe_quickjs PUBLIC amj_safe qjs)
+
+add_library(amj_safe_uv STATIC src/safe/uv.cpp)
+list(APPEND amj_libraries amj_safe_uv)
+target_link_libraries(amj_safe_uv PUBLIC amj_safe $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+
+add_library(amj_safe_curl STATIC src/safe/curl.cpp)
+list(APPEND amj_libraries amj_safe_curl)
+target_link_libraries(amj_safe_curl PUBLIC amj_safe CURL::libcurl)
+
 ## == src/owned == ##
 
 add_library(amj_owned STATIC
