@@ -2,6 +2,8 @@ TODO: make context::Context compose well with other context::Context types, just
 
 TODO: touch up owned/curl.hpp then make fetch_impl.hpp/.cpp use it instead of raw pointers.
 
+TODO: some kind of CheckedPtr wrapper
+
 urlParse
 urlWithComponent
 queryStringParse
