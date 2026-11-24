@@ -4,6 +4,7 @@
 
 #include <curl/curl.h>
 
+#include <curl/multi.h>
 #include <expected>
 #include <system_error>
 

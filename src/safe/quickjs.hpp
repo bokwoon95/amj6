@@ -2,6 +2,7 @@
 
 #include "safe.hpp"
 
+#include <memory>
 #include <quickjs.h>
 
 #include <optional>
