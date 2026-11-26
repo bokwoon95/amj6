@@ -48,20 +48,16 @@ CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept : head(std::move
     this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
 }
 
-CURL* CurlEasyHandle::get(std::source_location location) const noexcept {
+CURL* CurlEasyHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedHandle == nullptr) {
-        fail("access through a closed or moved curl easy handle", location);
+        fail("access through a closed or moved curl easy handle", sourceLocation);
     }
     return ownedHandle;
 }
 
-Borrowed<CurlEasyHandle> CurlEasyHandle::borrow(std::source_location location) noexcept {
-    return Borrowed<CurlEasyHandle>(get(location), head, location);
-}
-
-std::error_code CurlEasyHandle::close(std::source_location location) noexcept {
+std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexcept {
     if (head.next != &head) {
-        fail("closing a curl easy handle with outstanding borrowers", location, head);
+        fail("closing a curl easy handle with outstanding borrowers", sourceLocation, head);
     }
     CURL* handle = std::exchange(ownedHandle, nullptr);
     if (handle != nullptr) {
@@ -88,20 +84,16 @@ CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept : head(std::m
     this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
 }
 
-CURLM* CurlMultiHandle::get(std::source_location location) const noexcept {
+CURLM* CurlMultiHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedHandle == nullptr) {
-        fail("access through a closed or moved curl multi handle", location);
+        fail("access through a closed or moved curl multi handle", sourceLocation);
     }
     return ownedHandle;
 }
 
-Borrowed<CurlMultiHandle> CurlMultiHandle::borrow(std::source_location location) noexcept {
-    return Borrowed<CurlMultiHandle>(get(location), head, location);
-}
-
-std::error_code CurlMultiHandle::close(std::source_location location) noexcept {
+std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noexcept {
     if (head.next != &head) {
-        fail("closing a curl multi handle with outstanding borrowers", location, head);
+        fail("closing a curl multi handle with outstanding borrowers", sourceLocation, head);
     }
     CURLM* handle = std::exchange(ownedHandle, nullptr);
     if (handle == nullptr) {

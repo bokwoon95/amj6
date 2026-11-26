@@ -24,15 +24,18 @@ public:
     UvLoop& operator=(UvLoop&&) = delete;
 
     [[nodiscard]] uv_loop_t*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<UvLoop>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<UvLoop>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
 
     // On failure the loop remains owned and usable. Drain pending close callbacks
     // before closure; destroying a loop that cannot close is fatal.
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     std::unique_ptr<uv_loop_t> ownedLoop = nullptr;
@@ -53,13 +56,17 @@ public:
     UvTimerHandle& operator=(UvTimerHandle&&) = delete;
 
     [[nodiscard]] uv_timer_t*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<UvTimerHandle>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        uv_timer_t* handle = this->get(sourceLocation);
+        return Borrowed<UvTimerHandle>::makeBorrowed(handle, this->ownedState->head,
+            sourceLocation);
+    }
 
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     struct UvTimerState {
@@ -80,11 +87,14 @@ public:
     UvPollHandle& operator=(UvPollHandle&&) = delete;
 
     [[nodiscard]] uv_poll_t*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
     [[nodiscard]] Borrowed<UvPollHandle>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        uv_poll_t* handle = this->get(sourceLocation);
+        return Borrowed<UvPollHandle>::makeBorrowed(handle, this->ownedState->head, sourceLocation);
+    }
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     struct UvPollState {
@@ -105,11 +115,15 @@ public:
     UvAsyncHandle& operator=(UvAsyncHandle&&) = delete;
 
     [[nodiscard]] uv_async_t*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
     [[nodiscard]] Borrowed<UvAsyncHandle>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        uv_async_t* handle = this->get(sourceLocation);
+        return Borrowed<UvAsyncHandle>::makeBorrowed(handle, this->ownedState->head,
+            sourceLocation);
+    }
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     struct UvAsyncState {

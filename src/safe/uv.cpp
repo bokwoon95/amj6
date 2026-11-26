@@ -51,20 +51,16 @@ UvLoop::UvLoop(UvLoop&& other) noexcept : head(std::move(other.head)) {
     this->ownedLoop = std::move(other.ownedLoop);
 }
 
-uv_loop_t* UvLoop::get(std::source_location location) const noexcept {
+uv_loop_t* UvLoop::get(std::source_location sourceLocation) const noexcept {
     if (ownedLoop == nullptr) {
-        fail("access through a closed or moved libuv loop", location);
+        fail("access through a closed or moved libuv loop", sourceLocation);
     }
     return ownedLoop.get();
 }
 
-Borrowed<UvLoop> UvLoop::borrow(std::source_location location) noexcept {
-    return Borrowed<UvLoop>(get(location), head, location);
-}
-
-std::error_code UvLoop::close(std::source_location location) noexcept {
+std::error_code UvLoop::close(std::source_location sourceLocation) noexcept {
     if (head.next != &head) {
-        fail("closing a libuv loop with outstanding borrowers", location, head);
+        fail("closing a libuv loop with outstanding borrowers", sourceLocation, head);
     }
     if (ownedLoop == nullptr) {
         return {};
@@ -99,29 +95,24 @@ UvTimerHandle::UvTimerHandle(UvTimerHandle&& other) noexcept {
     this->ownedState = std::move(other.ownedState);
 }
 
-uv_timer_t* UvTimerHandle::get(std::source_location location) const noexcept {
+uv_timer_t* UvTimerHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedState == nullptr) {
-        fail("access through a closed or moved libuv timer", location);
+        fail("access through a closed or moved libuv timer", sourceLocation);
     }
     return &ownedState->handle;
 }
 
-Borrowed<UvTimerHandle> UvTimerHandle::borrow(std::source_location location) noexcept {
-    uv_timer_t* handle = get(location);
-    return Borrowed<UvTimerHandle>(handle, ownedState->head, location);
-}
-
-std::error_code UvTimerHandle::close(std::source_location location) noexcept {
+std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexcept {
     if (ownedState == nullptr) {
         return {};
     }
     if (ownedState->head.next != &ownedState->head) {
-        fail("closing a libuv timer with outstanding borrowers", location, ownedState->head);
+        fail("closing a libuv timer with outstanding borrowers", sourceLocation, ownedState->head);
     }
     // libuv requires conversion between its concrete handle and base C structs.
     uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&ownedState->handle);
     if (uv_is_closing(handle) != 0) {
-        fail("libuv timer closed outside its owner", location);
+        fail("libuv timer closed outside its owner", sourceLocation);
     }
     std::ignore = ownedState.release();
     uv_close(handle, [](uv_handle_t* handle) noexcept {
@@ -153,29 +144,25 @@ UvPollHandle::UvPollHandle(UvPollHandle&& other) noexcept {
     this->ownedState = std::move(other.ownedState);
 }
 
-uv_poll_t* UvPollHandle::get(std::source_location location) const noexcept {
+uv_poll_t* UvPollHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedState == nullptr) {
-        fail("access through a closed or moved libuv poll handle", location);
+        fail("access through a closed or moved libuv poll handle", sourceLocation);
     }
     return &ownedState->handle;
 }
 
-Borrowed<UvPollHandle> UvPollHandle::borrow(std::source_location location) noexcept {
-    uv_poll_t* handle = get(location);
-    return Borrowed<UvPollHandle>(handle, ownedState->head, location);
-}
-
-std::error_code UvPollHandle::close(std::source_location location) noexcept {
+std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcept {
     if (ownedState == nullptr) {
         return {};
     }
     if (ownedState->head.next != &ownedState->head) {
-        fail("closing a libuv poll handle with outstanding borrowers", location, ownedState->head);
+        fail("closing a libuv poll handle with outstanding borrowers", sourceLocation,
+            ownedState->head);
     }
     // libuv requires conversion between its concrete handle and base C structs.
     uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&ownedState->handle);
     if (uv_is_closing(handle) != 0) {
-        fail("libuv poll handle closed outside its owner", location);
+        fail("libuv poll handle closed outside its owner", sourceLocation);
     }
     std::ignore = ownedState.release();
     uv_close(handle, [](uv_handle_t* handle) noexcept {
@@ -207,29 +194,25 @@ UvAsyncHandle::UvAsyncHandle(UvAsyncHandle&& other) noexcept {
     this->ownedState = std::move(other.ownedState);
 }
 
-uv_async_t* UvAsyncHandle::get(std::source_location location) const noexcept {
+uv_async_t* UvAsyncHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedState == nullptr) {
-        fail("access through a closed or moved libuv async handle", location);
+        fail("access through a closed or moved libuv async handle", sourceLocation);
     }
     return &ownedState->handle;
 }
 
-Borrowed<UvAsyncHandle> UvAsyncHandle::borrow(std::source_location location) noexcept {
-    uv_async_t* handle = get(location);
-    return Borrowed<UvAsyncHandle>(handle, ownedState->head, location);
-}
-
-std::error_code UvAsyncHandle::close(std::source_location location) noexcept {
+std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexcept {
     if (ownedState == nullptr) {
         return {};
     }
     if (ownedState->head.next != &ownedState->head) {
-        fail("closing a libuv async handle with outstanding borrowers", location, ownedState->head);
+        fail("closing a libuv async handle with outstanding borrowers", sourceLocation,
+            ownedState->head);
     }
     // libuv requires conversion between its concrete handle and base C structs.
     uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&ownedState->handle);
     if (uv_is_closing(handle) != 0) {
-        fail("libuv async handle closed outside its owner", location);
+        fail("libuv async handle closed outside its owner", sourceLocation);
     }
     std::ignore = ownedState.release();
     uv_close(handle, [](uv_handle_t* handle) noexcept {

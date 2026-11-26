@@ -24,7 +24,10 @@ public:
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<QuickJSRuntime>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<QuickJSRuntime>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
@@ -48,7 +51,10 @@ public:
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<QuickJSContext>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<QuickJSContext>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
@@ -71,16 +77,19 @@ public:
     QuickJSValue& operator=(QuickJSValue&&) = delete;
 
     [[nodiscard]] JSValue
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<QuickJSValue>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<QuickJSValue>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
     [[nodiscard]] JSValue
 
-    release(std::source_location location = std::source_location::current()) noexcept;
+    release(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     std::optional<Borrowed<QuickJSContext>> context = std::nullopt;

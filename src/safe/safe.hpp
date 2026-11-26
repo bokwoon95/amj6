@@ -11,8 +11,6 @@ namespace amj::safe {
 struct Borrower {
     Borrower() noexcept;
 
-    Borrower(Borrower& neighbor, std::source_location sourceLocation) noexcept;
-
     ~Borrower();
     Borrower(const Borrower&) = delete;
     Borrower& operator=(const Borrower&) = delete;
@@ -24,18 +22,14 @@ struct Borrower {
     std::source_location sourceLocation = {};
 };
 
-[[noreturn]] void fail(const char* reason, std::source_location location) noexcept;
+[[noreturn]] void fail(const char* reason, std::source_location sourceLocation) noexcept;
 
-[[noreturn]] void fail(const char* reason, std::source_location location,
+[[noreturn]] void fail(const char* reason, std::source_location sourceLocation,
     const Borrower& head) noexcept;
 
 template <typename T> class Borrowed {
 public:
     Borrowed() = default;
-
-    Borrowed(decltype(std::declval<const T&>().get()) item, Borrower& neighbor,
-        std::source_location location) noexcept
-        : item(item), borrower(neighbor, location) {}
 
     ~Borrowed() = default;
     Borrowed(const Borrowed&) = delete;
@@ -43,17 +37,29 @@ public:
     Borrowed(Borrowed&& other) noexcept : item(other.item), borrower(std::move(other.borrower)) {}
     Borrowed& operator=(Borrowed&&) = delete;
 
+    [[nodiscard]] static Borrowed<T> makeBorrowed(decltype(std::declval<const T&>().get()) item,
+        Borrower& neighbor, std::source_location sourceLocation) noexcept {
+        Borrowed<T> borrowed;
+        borrowed.item = item;
+        borrowed.borrower.sourceLocation = sourceLocation;
+        borrowed.borrower.previous = &neighbor;
+        borrowed.borrower.next = neighbor.next;
+        borrowed.borrower.previous->next = &borrowed.borrower;
+        borrowed.borrower.next->previous = &borrowed.borrower;
+        return borrowed;
+    }
+
     [[nodiscard]] decltype(std::declval<const T&>().get())
-    get(std::source_location location = std::source_location::current()) const noexcept {
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.next == &borrower) {
-            fail("access through an empty or moved borrow", location);
+            fail("access through an empty or moved borrow", sourceLocation);
         }
         return item;
     }
 
     [[nodiscard]] Borrowed<T>
-    borrow(std::source_location location = std::source_location::current()) const noexcept {
-        return Borrowed<T>(get(location), *borrower.next, location);
+    borrow(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        return makeBorrowed(this->get(sourceLocation), *this->borrower.next, sourceLocation);
     }
 
 private:

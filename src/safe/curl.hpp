@@ -25,11 +25,14 @@ public:
     CurlEasyHandle& operator=(CurlEasyHandle&&) = delete;
 
     [[nodiscard]] CURL*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
     [[nodiscard]] Borrowed<CurlEasyHandle>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<CurlEasyHandle>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     CURL* ownedHandle = nullptr;
@@ -46,12 +49,15 @@ public:
     CurlMultiHandle& operator=(CurlMultiHandle&&) = delete;
 
     [[nodiscard]] CURLM*
-    get(std::source_location location = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
     [[nodiscard]] Borrowed<CurlMultiHandle>
-    borrow(std::source_location location = std::source_location::current()) noexcept;
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        return Borrowed<CurlMultiHandle>::makeBorrowed(this->get(sourceLocation), this->head,
+            sourceLocation);
+    }
     // Failed cleanup retains ownership; destruction with an unhandled error is fatal.
     [[nodiscard]] std::error_code
-    close(std::source_location location = std::source_location::current()) noexcept;
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     CURLM* ownedHandle = nullptr;
