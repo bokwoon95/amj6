@@ -4,68 +4,156 @@
 
 #include <quickjs.h>
 
-#include <memory>
+#include <new>
+#include <source_location>
 #include <system_error>
 #include <tuple>
+#include <utility>
 
 namespace amj::safe {
 
-OwnedJSValue::OwnedJSValue(const Borrowed<JSContext*>& jsContext, JSValue jsValue) {
-    try {
-        lifetime = std::make_shared<Lifetime>();
-        lifetime->creationTrace = captureTrace();
-        this->jsContext = jsContext;
-        this->jsValue = jsValue;
-    } catch (...) {
-        JS_FreeValue(jsContext.get(), jsValue);
-        throw;
+QuickJSRuntime::QuickJSRuntime() : jsRuntime(JS_NewRuntime()) {
+    if (jsRuntime == nullptr) {
+        throw std::bad_alloc();
     }
 }
 
-OwnedJSValue::~OwnedJSValue() noexcept {
-    std::ignore = close();
+QuickJSRuntime::~QuickJSRuntime() noexcept {
+    const std::error_code error = close();
+    if (error) {
+        fail("QuickJS runtime cleanup failed", std::source_location::current());
+    }
 }
 
-JSValue OwnedJSValue::get() const {
-    if (lifetime == nullptr || lifetime->state != ResourceState::Live) {
-        fail("access through a closed or moved JS value", lifetime.get());
+QuickJSRuntime::QuickJSRuntime(QuickJSRuntime&& other) noexcept
+    : jsRuntime(std::exchange(other.jsRuntime, nullptr)), head(std::move(other.head)) {}
+
+JSRuntime* QuickJSRuntime::get(std::source_location sourceLocation) const noexcept {
+    if (jsRuntime == nullptr) {
+        fail("access through a closed or moved QuickJS runtime", sourceLocation);
     }
-    if (!jsContext.has_value()) {
-        fail("JS value has no context", lifetime.get());
-    }
-    std::ignore = jsContext.value().get();
-    return jsValue;
+    return jsRuntime;
 }
 
-JSValue OwnedJSValue::release() {
-    const JSValue result = get();
-    lifetime->state = ResourceState::Closed;
-    lifetime->closureTrace = captureTrace();
-    jsValue = JS_UNDEFINED;
-    jsContext.reset();
+Borrowed<QuickJSRuntime> QuickJSRuntime::borrow(std::source_location sourceLocation) noexcept {
+    return Borrowed<QuickJSRuntime>(get(sourceLocation), head, sourceLocation);
+}
+
+std::error_code QuickJSRuntime::close(std::source_location sourceLocation) noexcept {
+    if (head.next != &head) {
+        fail("closing a QuickJS runtime with outstanding borrowers", sourceLocation, head);
+    }
+    JSRuntime* runtime = std::exchange(jsRuntime, nullptr);
+    if (runtime != nullptr) {
+        JS_FreeRuntime(runtime);
+    }
+    return {};
+}
+
+QuickJSContext::QuickJSContext(Borrowed<QuickJSRuntime> quickjsRuntime) {
+    jsContext = JS_NewContext(quickjsRuntime.get());
+    if (jsContext == nullptr) {
+        throw std::bad_alloc();
+    }
+    this->quickjsRuntime.emplace(std::move(quickjsRuntime));
+}
+
+QuickJSContext::~QuickJSContext() noexcept {
+    const std::error_code error = close();
+    if (error) {
+        fail("QuickJS context cleanup failed", std::source_location::current());
+    }
+}
+
+QuickJSContext::QuickJSContext(QuickJSContext&& other) noexcept
+    : quickjsRuntime(std::move(other.quickjsRuntime)),
+      jsContext(std::exchange(other.jsContext, nullptr)), head(std::move(other.head)) {
+    other.quickjsRuntime.reset();
+}
+
+JSContext* QuickJSContext::get(std::source_location location) const noexcept {
+    if (jsContext == nullptr) {
+        fail("access through a closed or moved QuickJS context", location);
+    }
+    return jsContext;
+}
+
+Borrowed<QuickJSContext> QuickJSContext::borrow(std::source_location location) noexcept {
+    return Borrowed<QuickJSContext>(get(location), head, location);
+}
+
+std::error_code QuickJSContext::close(std::source_location location) noexcept {
+    if (head.next != &head) {
+        fail("closing a QuickJS context with outstanding borrowers", location, head);
+    }
+    JSContext* context = std::exchange(jsContext, nullptr);
+    if (context != nullptr) {
+        JS_FreeContext(context);
+        quickjsRuntime.reset();
+    }
+    return {};
+}
+
+QuickJSValue::QuickJSValue(Borrowed<QuickJSContext> context, JSValue value) noexcept
+    : value(value) {
+    std::ignore = context.get();
+    this->context.emplace(std::move(context));
+    live = true;
+}
+
+QuickJSValue::~QuickJSValue() noexcept {
+    const std::error_code error = close();
+    if (error) {
+        fail("QuickJS value cleanup failed", std::source_location::current());
+    }
+}
+
+QuickJSValue::QuickJSValue(QuickJSValue&& other) noexcept
+    : context(std::move(other.context)), value(std::exchange(other.value, JS_UNDEFINED)),
+      live(std::exchange(other.live, false)), head(std::move(other.head)) {
+    other.context.reset();
+}
+
+JSValue QuickJSValue::get(std::source_location location) const noexcept {
+    if (!live) {
+        fail("access through a closed or moved QuickJS value", location);
+    }
+    return value;
+}
+
+Borrowed<QuickJSValue> QuickJSValue::borrow(std::source_location location) noexcept {
+    return Borrowed<QuickJSValue>(get(location), head, location);
+}
+
+JSValue QuickJSValue::release(std::source_location location) noexcept {
+    const JSValue result = get(location);
+    if (head.next != &head) {
+        fail("releasing a QuickJS value with outstanding borrowers", location, head);
+    }
+    value = JS_UNDEFINED;
+    live = false;
+    context.reset();
     return result;
 }
 
-std::error_code OwnedJSValue::close() noexcept {
-    if (lifetime == nullptr || lifetime->state == ResourceState::Closed) {
+std::error_code QuickJSValue::close(std::source_location location) noexcept {
+    if (head.next != &head) {
+        fail("closing a QuickJS value with outstanding borrowers", location, head);
+    }
+    if (!live) {
         return {};
     }
-    if (lifetime->state == ResourceState::Closing) {
-        fail("reentrant JS value closure", lifetime.get());
-    }
-    lifetime->state = ResourceState::Closing;
-    lifetime->closureTrace = captureTrace();
-    if (!jsContext.has_value()) {
-        fail("JS value has no context during closure", lifetime.get());
+    live = false;
+    const JSValue releasedValue = std::exchange(value, JS_UNDEFINED);
+    if (!context.has_value()) {
+        fail("QuickJS value has no context during cleanup", location);
     }
     try {
-        JS_FreeValue(jsContext.value().get(), jsValue);
+        JS_FreeValue(context.value().get(location), releasedValue);
     } catch (...) {
-        fail("JS value cleanup threw", lifetime.get());
+        fail("QuickJS value cleanup failed", location);
     }
-    jsValue = JS_UNDEFINED;
-    jsContext.reset();
-    lifetime->state = ResourceState::Closed;
+    context.reset();
     return {};
 }
 

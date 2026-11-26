@@ -5,20 +5,125 @@
 #include <uv.h>
 
 #include <expected>
+#include <memory>
+#include <source_location>
 #include <system_error>
 
 namespace amj::safe {
 
 std::error_code uvError(int status) noexcept;
 
-// Factories return initialized handles with null data. If data is later set,
-// it must point to an owned VoidPtr, deleted by the final close callback.
-// Closure schedules deletion: the loop must remain alive and be drained.
-std::expected<Owned<uv_timer_t*>, std::error_code>
-createUvTimer(const Borrowed<uv_loop_t*>& uvLoop);
-std::expected<Owned<uv_async_t*>, std::error_code> createUvAsync(const Borrowed<uv_loop_t*>& uvLoop,
-    uv_async_cb callback);
-std::expected<Owned<uv_poll_t*>, std::error_code> createUvPoll(const Borrowed<uv_loop_t*>& uvLoop,
+class UvLoop {
+public:
+    UvLoop();
+
+    ~UvLoop() noexcept;
+    UvLoop(const UvLoop&) = delete;
+    UvLoop& operator=(const UvLoop&) = delete;
+    UvLoop(UvLoop&& other) noexcept;
+    UvLoop& operator=(UvLoop&&) = delete;
+
+    [[nodiscard]] uv_loop_t*
+    get(std::source_location location = std::source_location::current()) const noexcept;
+
+    [[nodiscard]] Borrowed<UvLoop>
+    borrow(std::source_location location = std::source_location::current()) noexcept;
+
+    // On failure the loop remains owned and usable. Drain pending close callbacks
+    // before closure; destroying a loop that cannot close is fatal.
+    [[nodiscard]] std::error_code
+    close(std::source_location location = std::source_location::current()) noexcept;
+
+private:
+    std::unique_ptr<uv_loop_t> ownedLoop = nullptr;
+    Borrower head = {};
+};
+
+// Each handle owns stable heap state retained until its close callback. The C
+// handle's data field is reserved for this state. Successful close() schedules
+// closure; it does not wait for completion. The loop borrow is released last,
+// after handle storage and the empty borrower sentinel are destroyed.
+class UvTimerHandle {
+public:
+    explicit UvTimerHandle(Borrowed<UvLoop> loop);
+    ~UvTimerHandle() noexcept;
+    UvTimerHandle(const UvTimerHandle&) = delete;
+    UvTimerHandle& operator=(const UvTimerHandle&) = delete;
+    UvTimerHandle(UvTimerHandle&& other) noexcept;
+    UvTimerHandle& operator=(UvTimerHandle&&) = delete;
+
+    [[nodiscard]] uv_timer_t*
+    get(std::source_location location = std::source_location::current()) const noexcept;
+
+    [[nodiscard]] Borrowed<UvTimerHandle>
+    borrow(std::source_location location = std::source_location::current()) noexcept;
+
+    [[nodiscard]] std::error_code
+    close(std::source_location location = std::source_location::current()) noexcept;
+
+private:
+    struct UvTimerState {
+        Borrowed<UvLoop> loop = {};
+        uv_timer_t handle = {};
+        Borrower head = {};
+    };
+    std::unique_ptr<UvTimerState> ownedState = nullptr;
+};
+
+class UvPollHandle {
+public:
+    UvPollHandle(Borrowed<UvLoop> loop, uv_os_sock_t socket);
+    ~UvPollHandle() noexcept;
+    UvPollHandle(const UvPollHandle&) = delete;
+    UvPollHandle& operator=(const UvPollHandle&) = delete;
+    UvPollHandle(UvPollHandle&& other) noexcept;
+    UvPollHandle& operator=(UvPollHandle&&) = delete;
+
+    [[nodiscard]] uv_poll_t*
+    get(std::source_location location = std::source_location::current()) const noexcept;
+    [[nodiscard]] Borrowed<UvPollHandle>
+    borrow(std::source_location location = std::source_location::current()) noexcept;
+    [[nodiscard]] std::error_code
+    close(std::source_location location = std::source_location::current()) noexcept;
+
+private:
+    struct UvPollState {
+        Borrowed<UvLoop> loop = {};
+        uv_poll_t handle = {};
+        Borrower head = {};
+    };
+    std::unique_ptr<UvPollState> ownedState = nullptr;
+};
+
+class UvAsyncHandle {
+public:
+    UvAsyncHandle(Borrowed<UvLoop> loop, uv_async_cb callback);
+    ~UvAsyncHandle() noexcept;
+    UvAsyncHandle(const UvAsyncHandle&) = delete;
+    UvAsyncHandle& operator=(const UvAsyncHandle&) = delete;
+    UvAsyncHandle(UvAsyncHandle&& other) noexcept;
+    UvAsyncHandle& operator=(UvAsyncHandle&&) = delete;
+
+    [[nodiscard]] uv_async_t*
+    get(std::source_location location = std::source_location::current()) const noexcept;
+    [[nodiscard]] Borrowed<UvAsyncHandle>
+    borrow(std::source_location location = std::source_location::current()) noexcept;
+    [[nodiscard]] std::error_code
+    close(std::source_location location = std::source_location::current()) noexcept;
+
+private:
+    struct UvAsyncState {
+        Borrowed<UvLoop> loop = {};
+        uv_async_t handle = {};
+        Borrower head = {};
+    };
+    std::unique_ptr<UvAsyncState> ownedState = nullptr;
+};
+
+std::expected<UvTimerHandle, std::error_code> createUvTimer(Borrowed<UvLoop> loop);
+std::expected<UvPollHandle, std::error_code> createUvPoll(Borrowed<UvLoop> loop,
     uv_os_sock_t socket);
+std::expected<UvAsyncHandle, std::error_code> createUvAsync(Borrowed<UvLoop> loop,
+    uv_async_cb callback);
 
 } // namespace amj::safe

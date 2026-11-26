@@ -2,37 +2,97 @@
 
 #include "safe.hpp"
 
-#include <memory>
 #include <quickjs.h>
 
 #include <optional>
+#include <source_location>
 #include <system_error>
 
 namespace amj::safe {
 
-class OwnedJSValue {
+class QuickJSRuntime {
 public:
-    OwnedJSValue(const Borrowed<JSContext*>& jsContext, JSValue jsValue);
-    ~OwnedJSValue() noexcept;
-    OwnedJSValue(const OwnedJSValue&) = delete;
-    OwnedJSValue& operator=(const OwnedJSValue&) = delete;
-    OwnedJSValue(OwnedJSValue&&) noexcept = default;
-    OwnedJSValue& operator=(OwnedJSValue&&) = delete;
+    QuickJSRuntime();
 
-    [[nodiscard]] JSValue get() const;
-    [[nodiscard]] JSValue release();
-    [[nodiscard]] std::error_code close() noexcept;
+    ~QuickJSRuntime() noexcept;
+    QuickJSRuntime(const QuickJSRuntime&) = delete;
+    QuickJSRuntime& operator=(const QuickJSRuntime&) = delete;
+    QuickJSRuntime(QuickJSRuntime&& other) noexcept;
+    QuickJSRuntime& operator=(QuickJSRuntime&&) = delete;
+
+    [[nodiscard]] JSRuntime*
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+
+    [[nodiscard]] Borrowed<QuickJSRuntime>
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
+
+    [[nodiscard]] std::error_code
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
-    std::optional<Borrowed<JSContext*>> jsContext = std::nullopt;
-    JSValue jsValue = JS_UNDEFINED;
-    std::shared_ptr<Lifetime> lifetime = nullptr;
+    JSRuntime* jsRuntime = nullptr;
+    Borrower head = {};
 };
 
-struct OwnedJSPromise {
-    std::optional<OwnedJSValue> promise = std::nullopt;
-    std::optional<OwnedJSValue> resolveFunction = std::nullopt;
-    std::optional<OwnedJSValue> rejectFunction = std::nullopt;
+class QuickJSContext {
+public:
+    explicit QuickJSContext(Borrowed<QuickJSRuntime> quickjsRuntime);
+
+    ~QuickJSContext() noexcept;
+    QuickJSContext(const QuickJSContext&) = delete;
+    QuickJSContext& operator=(const QuickJSContext&) = delete;
+    QuickJSContext(QuickJSContext&& other) noexcept;
+    QuickJSContext& operator=(QuickJSContext&&) = delete;
+
+    [[nodiscard]] JSContext*
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+
+    [[nodiscard]] Borrowed<QuickJSContext>
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
+
+    [[nodiscard]] std::error_code
+    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
+
+private:
+    std::optional<Borrowed<QuickJSRuntime>> quickjsRuntime = std::nullopt;
+    JSContext* jsContext = nullptr;
+    Borrower head = {};
+};
+
+// Adopts one owned JSValue reference. Call JS_DupValue explicitly when starting
+// from a borrowed value. The context borrow remains registered through cleanup.
+class QuickJSValue {
+public:
+    QuickJSValue(Borrowed<QuickJSContext> context, JSValue value) noexcept;
+    ~QuickJSValue() noexcept;
+    QuickJSValue(const QuickJSValue&) = delete;
+    QuickJSValue& operator=(const QuickJSValue&) = delete;
+    QuickJSValue(QuickJSValue&& other) noexcept;
+    QuickJSValue& operator=(QuickJSValue&&) = delete;
+
+    [[nodiscard]] JSValue
+    get(std::source_location location = std::source_location::current()) const noexcept;
+
+    [[nodiscard]] Borrowed<QuickJSValue>
+    borrow(std::source_location location = std::source_location::current()) noexcept;
+    [[nodiscard]] JSValue
+
+    release(std::source_location location = std::source_location::current()) noexcept;
+
+    [[nodiscard]] std::error_code
+    close(std::source_location location = std::source_location::current()) noexcept;
+
+private:
+    std::optional<Borrowed<QuickJSContext>> context = std::nullopt;
+    JSValue value = JS_UNDEFINED;
+    bool live = false;
+    Borrower head = {};
+};
+
+struct QuickJSPromise {
+    std::optional<QuickJSValue> promise = std::nullopt;
+    std::optional<QuickJSValue> resolveFunction = std::nullopt;
+    std::optional<QuickJSValue> rejectFunction = std::nullopt;
 };
 
 } // namespace amj::safe
