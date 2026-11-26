@@ -64,10 +64,17 @@ public:
     [[nodiscard]] static std::expected<UvTimerHandle, std::error_code>
     create(Borrowed<UvLoop> uvLoop) noexcept;
 
-    ~UvTimerHandle() noexcept;
+    ~UvTimerHandle() noexcept {
+        const std::error_code errorCode = close();
+        if (errorCode) {
+            fail("libuv timer cleanup failed", std::source_location::current());
+        }
+    };
     UvTimerHandle(const UvTimerHandle&) = delete;
     UvTimerHandle& operator=(const UvTimerHandle&) = delete;
-    UvTimerHandle(UvTimerHandle&& other) noexcept;
+    UvTimerHandle(UvTimerHandle&& other) noexcept {
+        state = std::move(other.state);
+    };
     UvTimerHandle& operator=(UvTimerHandle&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -105,10 +112,17 @@ public:
     [[nodiscard]] static std::expected<UvPollHandle, std::error_code> create(Borrowed<UvLoop> loop,
         uv_os_sock_t socket) noexcept;
 
-    ~UvPollHandle() noexcept;
+    ~UvPollHandle() noexcept {
+        const std::error_code errorCode = close();
+        if (errorCode) {
+            fail("libuv poll handle cleanup failed", std::source_location::current());
+        }
+    };
     UvPollHandle(const UvPollHandle&) = delete;
     UvPollHandle& operator=(const UvPollHandle&) = delete;
-    UvPollHandle(UvPollHandle&& other) noexcept;
+    UvPollHandle(UvPollHandle&& other) noexcept {
+        state = std::move(other.state);
+    };
     UvPollHandle& operator=(UvPollHandle&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -146,10 +160,17 @@ public:
     [[nodiscard]] static std::expected<UvAsyncHandle, std::error_code>
     create(Borrowed<UvLoop> uvLoop, uv_async_cb uvAsyncCallback) noexcept;
 
-    ~UvAsyncHandle() noexcept;
+    ~UvAsyncHandle() noexcept {
+        const std::error_code errorCode = close();
+        if (errorCode) {
+            fail("libuv async handle cleanup failed", std::source_location::current());
+        }
+    };
     UvAsyncHandle(const UvAsyncHandle&) = delete;
     UvAsyncHandle& operator=(const UvAsyncHandle&) = delete;
-    UvAsyncHandle(UvAsyncHandle&& other) noexcept;
+    UvAsyncHandle(UvAsyncHandle&& other) noexcept {
+        state = std::move(other.state);
+    };
     UvAsyncHandle& operator=(UvAsyncHandle&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -160,7 +181,7 @@ public:
         if (state == nullptr) {
             fail("access through a closed or moved libuv async handle", sourceLocation);
         }
-        return &state->handle;
+        return &state->uvAsyncHandle;
     }
 
     [[nodiscard]] Borrowed<UvAsyncHandle>
@@ -168,15 +189,15 @@ public:
         if (state == nullptr) {
             fail("borrowing a closed or moved libuv async handle", sourceLocation);
         }
-        return Borrowed<UvAsyncHandle>(sourceLocation, state->head, &state->handle);
+        return Borrowed<UvAsyncHandle>(sourceLocation, state->head, &state->uvAsyncHandle);
     }
 
 private:
     UvAsyncHandle() noexcept = default;
 
     struct State {
-        Borrowed<UvLoop> loop = {};
-        uv_async_t handle = {};
+        Borrowed<UvLoop> uvLoop = {};
+        uv_async_t uvAsyncHandle = {};
         Borrower head = {};
     };
     std::unique_ptr<State> state = nullptr;

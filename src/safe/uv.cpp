@@ -77,17 +77,6 @@ UvTimerHandle::create(Borrowed<UvLoop> uvLoop) noexcept {
     }
 }
 
-UvTimerHandle::~UvTimerHandle() noexcept {
-    const std::error_code errorCode = close();
-    if (errorCode) {
-        fail("libuv timer cleanup failed", std::source_location::current());
-    }
-}
-
-UvTimerHandle::UvTimerHandle(UvTimerHandle&& other) noexcept {
-    state = std::move(other.state);
-}
-
 std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
         return {};
@@ -95,23 +84,19 @@ std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexce
     if (state->head.next != &state->head) {
         fail("closing a libuv timer with outstanding borrowers", sourceLocation, state->head);
     }
-    // libuv requires conversion between its concrete handle and base C structs.
-    uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&state->uvTimerHandle);
-    if (uv_is_closing(handle) != 0) {
-        fail("libuv timer closed outside its owner", sourceLocation);
-    }
     std::ignore = state.release();
-    uv_close(handle, [](uv_handle_t* handle) noexcept {
-        delete static_cast<State*>(handle->data);
-    });
+    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvTimerHandle),
+        [](uv_handle_t* uvHandle) noexcept {
+            delete static_cast<State*>(uvHandle->data);
+        });
     return {};
 }
 
-std::expected<UvPollHandle, std::error_code> UvPollHandle::create(Borrowed<UvLoop> loop,
+std::expected<UvPollHandle, std::error_code> UvPollHandle::create(Borrowed<UvLoop> uvLoop,
     uv_os_sock_t socket) noexcept {
     try {
         std::unique_ptr<State> state = std::make_unique<State>(State{
-            .uvLoop = std::move(loop),
+            .uvLoop = std::move(uvLoop),
         });
         const int status = uv_poll_init_socket(state->uvLoop.get(), &state->uvPollHandle, socket);
         if (status != 0) {
@@ -126,17 +111,6 @@ std::expected<UvPollHandle, std::error_code> UvPollHandle::create(Borrowed<UvLoo
     }
 }
 
-UvPollHandle::~UvPollHandle() noexcept {
-    const std::error_code error = close();
-    if (error) {
-        fail("libuv poll handle cleanup failed", std::source_location::current());
-    }
-}
-
-UvPollHandle::UvPollHandle(UvPollHandle&& other) noexcept {
-    state = std::move(other.state);
-}
-
 std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
         return {};
@@ -144,46 +118,31 @@ std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcep
     if (state->head.next != &state->head) {
         fail("closing a libuv poll handle with outstanding borrowers", sourceLocation, state->head);
     }
-    // libuv requires conversion between its concrete handle and base C structs.
-    uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&state->uvPollHandle);
-    if (uv_is_closing(handle) != 0) {
-        fail("libuv poll handle closed outside its owner", sourceLocation);
-    }
     std::ignore = state.release();
-    uv_close(handle, [](uv_handle_t* handle) noexcept {
-        delete static_cast<State*>(handle->data);
-    });
+    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvPollHandle),
+        [](uv_handle_t* uvHandle) noexcept {
+            delete static_cast<State*>(uvHandle->data);
+        });
     return {};
 }
 
-std::expected<UvAsyncHandle, std::error_code> UvAsyncHandle::create(Borrowed<UvLoop> loop,
+std::expected<UvAsyncHandle, std::error_code> UvAsyncHandle::create(Borrowed<UvLoop> uvLoop,
     uv_async_cb callback) noexcept {
     try {
         std::unique_ptr<State> state = std::make_unique<State>(State{
-            .loop = std::move(loop),
+            .uvLoop = std::move(uvLoop),
         });
-        const int status = uv_async_init(state->loop.get(), &state->handle, callback);
+        const int status = uv_async_init(state->uvLoop.get(), &state->uvAsyncHandle, callback);
         if (status != 0) {
             return std::unexpected(std::error_code(status, uvErrorCategory));
         }
-        state->handle.data = state.get();
+        state->uvAsyncHandle.data = state.get();
         UvAsyncHandle uvAsyncHandle;
         uvAsyncHandle.state = std::move(state);
         return uvAsyncHandle;
     } catch (const std::bad_alloc&) {
         return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
     }
-}
-
-UvAsyncHandle::~UvAsyncHandle() noexcept {
-    const std::error_code error = close();
-    if (error) {
-        fail("libuv async handle cleanup failed", std::source_location::current());
-    }
-}
-
-UvAsyncHandle::UvAsyncHandle(UvAsyncHandle&& other) noexcept {
-    state = std::move(other.state);
 }
 
 std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexcept {
@@ -194,15 +153,11 @@ std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexce
         fail("closing a libuv async handle with outstanding borrowers", sourceLocation,
             state->head);
     }
-    // libuv requires conversion between its concrete handle and base C structs.
-    uv_handle_t* handle = reinterpret_cast<uv_handle_t*>(&state->handle);
-    if (uv_is_closing(handle) != 0) {
-        fail("libuv async handle closed outside its owner", sourceLocation);
-    }
     std::ignore = state.release();
-    uv_close(handle, [](uv_handle_t* handle) noexcept {
-        delete static_cast<State*>(handle->data);
-    });
+    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvAsyncHandle),
+        [](uv_handle_t* uvHandle) noexcept {
+            delete static_cast<State*>(uvHandle->data);
+        });
     return {};
 }
 
