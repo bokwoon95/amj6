@@ -12,8 +12,9 @@
 
 namespace amj::safe {
 
-QuickJSRuntime::QuickJSRuntime() : jsRuntime(JS_NewRuntime()) {
-    if (jsRuntime == nullptr) {
+QuickJSRuntime::QuickJSRuntime() {
+    this->jsRuntime = JS_NewRuntime();
+    if (this->jsRuntime == nullptr) {
         throw std::bad_alloc();
     }
 }
@@ -25,8 +26,9 @@ QuickJSRuntime::~QuickJSRuntime() noexcept {
     }
 }
 
-QuickJSRuntime::QuickJSRuntime(QuickJSRuntime&& other) noexcept
-    : jsRuntime(std::exchange(other.jsRuntime, nullptr)), head(std::move(other.head)) {}
+QuickJSRuntime::QuickJSRuntime(QuickJSRuntime&& other) noexcept : head(std::move(other.head)) {
+    this->jsRuntime = std::exchange(other.jsRuntime, nullptr);
+}
 
 JSRuntime* QuickJSRuntime::get(std::source_location sourceLocation) const noexcept {
     if (jsRuntime == nullptr) {
@@ -51,8 +53,8 @@ std::error_code QuickJSRuntime::close(std::source_location sourceLocation) noexc
 }
 
 QuickJSContext::QuickJSContext(Borrowed<QuickJSRuntime> quickjsRuntime) {
-    jsContext = JS_NewContext(quickjsRuntime.get());
-    if (jsContext == nullptr) {
+    this->jsContext = JS_NewContext(quickjsRuntime.get());
+    if (this->jsContext == nullptr) {
         throw std::bad_alloc();
     }
     this->quickjsRuntime.emplace(std::move(quickjsRuntime));
@@ -66,8 +68,8 @@ QuickJSContext::~QuickJSContext() noexcept {
 }
 
 QuickJSContext::QuickJSContext(QuickJSContext&& other) noexcept
-    : quickjsRuntime(std::move(other.quickjsRuntime)),
-      jsContext(std::exchange(other.jsContext, nullptr)), head(std::move(other.head)) {
+    : quickjsRuntime(std::move(other.quickjsRuntime)), head(std::move(other.head)) {
+    this->jsContext = std::exchange(other.jsContext, nullptr);
     other.quickjsRuntime.reset();
 }
 
@@ -94,11 +96,11 @@ std::error_code QuickJSContext::close(std::source_location location) noexcept {
     return {};
 }
 
-QuickJSValue::QuickJSValue(Borrowed<QuickJSContext> context, JSValue value) noexcept
-    : value(value) {
+QuickJSValue::QuickJSValue(Borrowed<QuickJSContext> context, JSValue value) noexcept {
     std::ignore = context.get();
     this->context.emplace(std::move(context));
-    live = true;
+    this->value = value;
+    this->live = true;
 }
 
 QuickJSValue::~QuickJSValue() noexcept {
@@ -109,8 +111,9 @@ QuickJSValue::~QuickJSValue() noexcept {
 }
 
 QuickJSValue::QuickJSValue(QuickJSValue&& other) noexcept
-    : context(std::move(other.context)), value(std::exchange(other.value, JS_UNDEFINED)),
-      live(std::exchange(other.live, false)), head(std::move(other.head)) {
+    : context(std::move(other.context)), head(std::move(other.head)) {
+    this->value = std::exchange(other.value, JS_UNDEFINED);
+    this->live = std::exchange(other.live, false);
     other.context.reset();
 }
 

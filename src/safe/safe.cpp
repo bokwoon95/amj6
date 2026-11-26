@@ -8,29 +8,37 @@
 
 namespace amj::safe {
 
-Borrower::Borrower() noexcept : previous(this), next(this) {}
+Borrower::Borrower() noexcept {
+    this->previous = this;
+    this->next = this;
+}
 
-Borrower::Borrower(Borrower& neighbor, std::source_location location) noexcept
-    : previous(&neighbor), next(neighbor.next), sourceLocation(location) {
-    previous->next = this;
-    next->previous = this;
+Borrower::Borrower(Borrower& neighbor, std::source_location sourceLocation) noexcept {
+    this->previous = &neighbor;
+    this->next = neighbor.next;
+    this->sourceLocation = sourceLocation;
+    this->previous->next = this;
+    this->next->previous = this;
 }
 
 Borrower::~Borrower() {
-    previous->next = next;
-    next->previous = previous;
+    this->previous->next = this->next;
+    this->next->previous = this->previous;
 }
 
-Borrower::Borrower(Borrower&& other) noexcept
-    : previous(this), next(this), sourceLocation(other.sourceLocation) {
-    if (other.next != &other) {
-        previous = other.previous;
-        next = other.next;
-        previous->next = this;
-        next->previous = this;
+Borrower::Borrower(Borrower&& other) noexcept {
+    if (other.next == &other) {
+        this->previous = this;
+        this->next = this;
+    } else {
+        this->previous = other.previous;
+        this->next = other.next;
+        this->previous->next = this;
+        this->next->previous = this;
         other.previous = &other;
         other.next = &other;
     }
+    this->sourceLocation = other.sourceLocation;
 }
 
 [[noreturn]] void fail(const char* reason, std::source_location location) noexcept {

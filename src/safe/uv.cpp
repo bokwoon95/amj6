@@ -31,8 +31,9 @@ std::error_code uvError(int status) noexcept {
     return {status, uvCategory};
 }
 
-UvLoop::UvLoop() : ownedLoop(std::make_unique<uv_loop_t>()) {
-    const int status = uv_loop_init(ownedLoop.get());
+UvLoop::UvLoop() {
+    this->ownedLoop = std::make_unique<uv_loop_t>();
+    const int status = uv_loop_init(this->ownedLoop.get());
     if (status != 0) {
         throw std::system_error(uvError(status));
     }
@@ -46,8 +47,9 @@ UvLoop::~UvLoop() noexcept {
     }
 }
 
-UvLoop::UvLoop(UvLoop&& other) noexcept
-    : ownedLoop(std::move(other.ownedLoop)), head(std::move(other.head)) {}
+UvLoop::UvLoop(UvLoop&& other) noexcept : head(std::move(other.head)) {
+    this->ownedLoop = std::move(other.ownedLoop);
+}
 
 uv_loop_t* UvLoop::get(std::source_location location) const noexcept {
     if (ownedLoop == nullptr) {
@@ -75,15 +77,15 @@ std::error_code UvLoop::close(std::source_location location) noexcept {
     return {};
 }
 
-UvTimerHandle::UvTimerHandle(Borrowed<UvLoop> loop)
-    : ownedState(std::make_unique<UvTimerState>(UvTimerState{
-          .loop = std::move(loop),
-      })) {
-    const int status = uv_timer_init(ownedState->loop.get(), &ownedState->handle);
+UvTimerHandle::UvTimerHandle(Borrowed<UvLoop> loop) {
+    this->ownedState = std::make_unique<UvTimerState>(UvTimerState{
+        .loop = std::move(loop),
+    });
+    const int status = uv_timer_init(this->ownedState->loop.get(), &this->ownedState->handle);
     if (status != 0) {
         throw std::system_error(uvError(status));
     }
-    ownedState->handle.data = ownedState.get();
+    this->ownedState->handle.data = this->ownedState.get();
 }
 
 UvTimerHandle::~UvTimerHandle() noexcept {
@@ -93,8 +95,9 @@ UvTimerHandle::~UvTimerHandle() noexcept {
     }
 }
 
-UvTimerHandle::UvTimerHandle(UvTimerHandle&& other) noexcept
-    : ownedState(std::move(other.ownedState)) {}
+UvTimerHandle::UvTimerHandle(UvTimerHandle&& other) noexcept {
+    this->ownedState = std::move(other.ownedState);
+}
 
 uv_timer_t* UvTimerHandle::get(std::source_location location) const noexcept {
     if (ownedState == nullptr) {
@@ -127,15 +130,16 @@ std::error_code UvTimerHandle::close(std::source_location location) noexcept {
     return {};
 }
 
-UvPollHandle::UvPollHandle(Borrowed<UvLoop> loop, uv_os_sock_t socket)
-    : ownedState(std::make_unique<UvPollState>(UvPollState{
-          .loop = std::move(loop),
-      })) {
-    const int status = uv_poll_init_socket(ownedState->loop.get(), &ownedState->handle, socket);
+UvPollHandle::UvPollHandle(Borrowed<UvLoop> loop, uv_os_sock_t socket) {
+    this->ownedState = std::make_unique<UvPollState>(UvPollState{
+        .loop = std::move(loop),
+    });
+    const int status =
+        uv_poll_init_socket(this->ownedState->loop.get(), &this->ownedState->handle, socket);
     if (status != 0) {
         throw std::system_error(uvError(status));
     }
-    ownedState->handle.data = ownedState.get();
+    this->ownedState->handle.data = this->ownedState.get();
 }
 
 UvPollHandle::~UvPollHandle() noexcept {
@@ -145,8 +149,9 @@ UvPollHandle::~UvPollHandle() noexcept {
     }
 }
 
-UvPollHandle::UvPollHandle(UvPollHandle&& other) noexcept
-    : ownedState(std::move(other.ownedState)) {}
+UvPollHandle::UvPollHandle(UvPollHandle&& other) noexcept {
+    this->ownedState = std::move(other.ownedState);
+}
 
 uv_poll_t* UvPollHandle::get(std::source_location location) const noexcept {
     if (ownedState == nullptr) {
@@ -179,15 +184,16 @@ std::error_code UvPollHandle::close(std::source_location location) noexcept {
     return {};
 }
 
-UvAsyncHandle::UvAsyncHandle(Borrowed<UvLoop> loop, uv_async_cb callback)
-    : ownedState(std::make_unique<UvAsyncState>(UvAsyncState{
-          .loop = std::move(loop),
-      })) {
-    const int status = uv_async_init(ownedState->loop.get(), &ownedState->handle, callback);
+UvAsyncHandle::UvAsyncHandle(Borrowed<UvLoop> loop, uv_async_cb callback) {
+    this->ownedState = std::make_unique<UvAsyncState>(UvAsyncState{
+        .loop = std::move(loop),
+    });
+    const int status =
+        uv_async_init(this->ownedState->loop.get(), &this->ownedState->handle, callback);
     if (status != 0) {
         throw std::system_error(uvError(status));
     }
-    ownedState->handle.data = ownedState.get();
+    this->ownedState->handle.data = this->ownedState.get();
 }
 
 UvAsyncHandle::~UvAsyncHandle() noexcept {
@@ -197,8 +203,9 @@ UvAsyncHandle::~UvAsyncHandle() noexcept {
     }
 }
 
-UvAsyncHandle::UvAsyncHandle(UvAsyncHandle&& other) noexcept
-    : ownedState(std::move(other.ownedState)) {}
+UvAsyncHandle::UvAsyncHandle(UvAsyncHandle&& other) noexcept {
+    this->ownedState = std::move(other.ownedState);
+}
 
 uv_async_t* UvAsyncHandle::get(std::source_location location) const noexcept {
     if (ownedState == nullptr) {

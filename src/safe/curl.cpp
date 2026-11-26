@@ -30,10 +30,11 @@ std::error_code curlMultiError(CURLMcode code) noexcept {
     return {static_cast<int>(code), curlMultiCategory};
 }
 
-CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept : ownedHandle(ownedHandle) {
+CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept {
     if (ownedHandle == nullptr) {
         fail("cannot adopt a null curl easy handle", std::source_location::current());
     }
+    this->ownedHandle = ownedHandle;
 }
 
 CurlEasyHandle::~CurlEasyHandle() noexcept {
@@ -43,8 +44,9 @@ CurlEasyHandle::~CurlEasyHandle() noexcept {
     }
 }
 
-CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept
-    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
+CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept : head(std::move(other.head)) {
+    this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
+}
 
 CURL* CurlEasyHandle::get(std::source_location location) const noexcept {
     if (ownedHandle == nullptr) {
@@ -68,10 +70,11 @@ std::error_code CurlEasyHandle::close(std::source_location location) noexcept {
     return {};
 }
 
-CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept : ownedHandle(ownedHandle) {
+CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept {
     if (ownedHandle == nullptr) {
         fail("cannot adopt a null curl multi handle", std::source_location::current());
     }
+    this->ownedHandle = ownedHandle;
 }
 
 CurlMultiHandle::~CurlMultiHandle() noexcept {
@@ -81,8 +84,9 @@ CurlMultiHandle::~CurlMultiHandle() noexcept {
     }
 }
 
-CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept
-    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
+CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept : head(std::move(other.head)) {
+    this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
+}
 
 CURLM* CurlMultiHandle::get(std::source_location location) const noexcept {
     if (ownedHandle == nullptr) {

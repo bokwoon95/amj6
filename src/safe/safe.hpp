@@ -10,8 +10,8 @@ namespace amj::safe {
 // and closure must be serialized. Raw C resources must not escape their borrow.
 struct Borrower {
     Borrower() noexcept;
-    Borrower(Borrower& neighbor,
-        std::source_location location = std::source_location::current()) noexcept;
+
+    Borrower(Borrower& neighbor, std::source_location sourceLocation) noexcept;
 
     ~Borrower();
     Borrower(const Borrower&) = delete;
@@ -34,7 +34,7 @@ public:
     Borrowed() = default;
 
     Borrowed(decltype(std::declval<const T&>().get()) item, Borrower& neighbor,
-        std::source_location location = std::source_location::current()) noexcept
+        std::source_location location) noexcept
         : item(item), borrower(neighbor, location) {}
 
     ~Borrowed() = default;
@@ -51,8 +51,6 @@ public:
         return item;
     }
 
-    // Explicitly create an independently registered borrow beside this one's
-    // neighbor. No owner or sentinel pointer is needed to insert into the list.
     [[nodiscard]] Borrowed<T>
     borrow(std::source_location location = std::source_location::current()) const noexcept {
         return Borrowed<T>(get(location), *borrower.next, location);
