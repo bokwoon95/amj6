@@ -31,12 +31,6 @@ template <typename T> class Borrowed {
 public:
     Borrowed() = default;
 
-    ~Borrowed() = default;
-    Borrowed(const Borrowed&) = delete;
-    Borrowed& operator=(const Borrowed&) = delete;
-    Borrowed(Borrowed&& other) noexcept : item(other.item), borrower(std::move(other.borrower)) {}
-    Borrowed& operator=(Borrowed&&) = delete;
-
     [[nodiscard]] static Borrowed<T> makeBorrowed(decltype(std::declval<const T&>().get()) item,
         Borrower& neighbor, std::source_location sourceLocation) noexcept {
         Borrowed<T> borrowed;
@@ -48,6 +42,12 @@ public:
         borrowed.borrower.next->previous = &borrowed.borrower;
         return borrowed;
     }
+
+    ~Borrowed() = default;
+    Borrowed(const Borrowed&) = delete;
+    Borrowed& operator=(const Borrowed&) = delete;
+    Borrowed(Borrowed&& other) noexcept : item(other.item), borrower(std::move(other.borrower)) {}
+    Borrowed& operator=(Borrowed&&) = delete;
 
     [[nodiscard]] decltype(std::declval<const T&>().get())
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
