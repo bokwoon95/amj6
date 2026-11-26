@@ -10,7 +10,6 @@
 #include <source_location>
 #include <string>
 #include <system_error>
-#include <tuple>
 #include <utility>
 
 namespace amj::safe {
@@ -84,8 +83,7 @@ std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexce
     if (state->head.next != &state->head) {
         fail("closing a libuv timer with outstanding borrowers", sourceLocation, state->head);
     }
-    std::ignore = state.release();
-    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvTimerHandle),
+    uv_close(reinterpret_cast<uv_handle_t*>(&state.release()->uvTimerHandle),
         [](uv_handle_t* uvHandle) noexcept {
             delete static_cast<State*>(uvHandle->data);
         });
@@ -118,8 +116,7 @@ std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcep
     if (state->head.next != &state->head) {
         fail("closing a libuv poll handle with outstanding borrowers", sourceLocation, state->head);
     }
-    std::ignore = state.release();
-    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvPollHandle),
+    uv_close(reinterpret_cast<uv_handle_t*>(&state.release()->uvPollHandle),
         [](uv_handle_t* uvHandle) noexcept {
             delete static_cast<State*>(uvHandle->data);
         });
@@ -153,8 +150,7 @@ std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexce
         fail("closing a libuv async handle with outstanding borrowers", sourceLocation,
             state->head);
     }
-    std::ignore = state.release();
-    uv_close(reinterpret_cast<uv_handle_t*>(&state->uvAsyncHandle),
+    uv_close(reinterpret_cast<uv_handle_t*>(&state.release()->uvAsyncHandle),
         [](uv_handle_t* uvHandle) noexcept {
             delete static_cast<State*>(uvHandle->data);
         });

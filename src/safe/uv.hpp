@@ -2,13 +2,13 @@
 
 #include "safe.hpp"
 
-#include <utility>
 #include <uv.h>
 
 #include <expected>
 #include <memory>
 #include <source_location>
 #include <system_error>
+#include <utility>
 
 namespace amj::safe {
 
@@ -25,9 +25,7 @@ public:
     };
     UvLoop(const UvLoop&) = delete;
     UvLoop& operator=(const UvLoop&) = delete;
-    UvLoop(UvLoop&& other) noexcept {
-        state = std::move(other.state);
-    };
+    UvLoop(UvLoop&& other) noexcept : state(std::move(other.state)) {};
     UvLoop& operator=(UvLoop&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -72,9 +70,7 @@ public:
     };
     UvTimerHandle(const UvTimerHandle&) = delete;
     UvTimerHandle& operator=(const UvTimerHandle&) = delete;
-    UvTimerHandle(UvTimerHandle&& other) noexcept {
-        state = std::move(other.state);
-    };
+    UvTimerHandle(UvTimerHandle&& other) noexcept : state(std::move(other.state)) {};
     UvTimerHandle& operator=(UvTimerHandle&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -120,9 +116,7 @@ public:
     };
     UvPollHandle(const UvPollHandle&) = delete;
     UvPollHandle& operator=(const UvPollHandle&) = delete;
-    UvPollHandle(UvPollHandle&& other) noexcept {
-        state = std::move(other.state);
-    };
+    UvPollHandle(UvPollHandle&& other) noexcept : state(std::move(other.state)) {};
     UvPollHandle& operator=(UvPollHandle&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -168,9 +162,7 @@ public:
     };
     UvAsyncHandle(const UvAsyncHandle&) = delete;
     UvAsyncHandle& operator=(const UvAsyncHandle&) = delete;
-    UvAsyncHandle(UvAsyncHandle&& other) noexcept {
-        state = std::move(other.state);
-    };
+    UvAsyncHandle(UvAsyncHandle&& other) noexcept : state(std::move(other.state)) {};
     UvAsyncHandle& operator=(UvAsyncHandle&&) = delete;
 
     [[nodiscard]] std::error_code

@@ -30,11 +30,10 @@ std::error_code curlMultiError(CURLMcode code) noexcept {
     return {static_cast<int>(code), curlMultiCategory};
 }
 
-CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept {
+CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept : ownedHandle(ownedHandle) {
     if (ownedHandle == nullptr) {
         fail("cannot adopt a null curl easy handle", std::source_location::current());
     }
-    this->ownedHandle = ownedHandle;
 }
 
 CurlEasyHandle::~CurlEasyHandle() noexcept {
@@ -44,9 +43,8 @@ CurlEasyHandle::~CurlEasyHandle() noexcept {
     }
 }
 
-CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept : head(std::move(other.head)) {
-    ownedHandle = std::exchange(other.ownedHandle, nullptr);
-}
+CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept
+    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
 
 std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexcept {
     if (head.next != &head) {
@@ -59,11 +57,10 @@ std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexc
     return {};
 }
 
-CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept {
+CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept : ownedHandle(ownedHandle) {
     if (ownedHandle == nullptr) {
         fail("cannot adopt a null curl multi handle", std::source_location::current());
     }
-    this->ownedHandle = ownedHandle;
 }
 
 CurlMultiHandle::~CurlMultiHandle() noexcept {
@@ -73,9 +70,8 @@ CurlMultiHandle::~CurlMultiHandle() noexcept {
     }
 }
 
-CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept : head(std::move(other.head)) {
-    ownedHandle = std::exchange(other.ownedHandle, nullptr);
-}
+CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept
+    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
 
 std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noexcept {
     if (head.next != &head) {

@@ -38,6 +38,11 @@
     4. Braced initializers are encouraged for containers, pairs, tuples, and structs: `T t = {...};` or `push_back({...})`.
 - Every struct data member MUST have an explicit default member initializer, even when omitting it would produce identical behavior. Use = {}; for containers, = ""; for strings, = nullptr; for pointers, and the appropriate zero value for scalars. Never omit an initializer merely because the type default-constructs itself. Before completing a struct change, check every field for compliance.
     - Default member initializers should default to the type's zero value, like Go. It is up to the callers to set the fields to any other meaningful value besides the zero value.
+- Constructor member initializer lists: use them for unconditional member initialization, including ownership transfers. Keep conditional member setup in explicit `if`/`else` branches in the constructor body, assigning each affected member once on each path.
+    - Do not initialize a member to a placeholder in the initializer list and then conditionally overwrite it in the body. Keep all alternatives together in the body instead of splitting them between the initializer list and the body.
+    - A constructor may mix the two: initialize unconditional members in the initializer list and handle conditional members in the body. Keep initializer-list entries in member declaration order.
+    - Retain the required explicit zero-valued default member initializers; these do not count as placeholder constructor initialization.
+    - When a member requires direct construction (such as a reference, const member, or non-default-constructible type), initialize it in the initializer list; do not introduce invalid assignment or duplicate ownership/link-repair logic to avoid direct construction.
 - Prefer struct designated initializers (aka struct literals) over struct constructors.
     - Prefer struct literals if it means we can avoid declaring a variable.
     - Do NOT define designated initializers in one line. EACH MEMBER SHOULD BE IN ITS OWN LINE.

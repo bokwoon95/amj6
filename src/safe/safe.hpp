@@ -9,10 +9,7 @@ namespace amj::safe {
 // Empty/unlinked nodes point to themselves. All borrowing, access, movement,
 // and closure must be serialized. Raw C resources must not escape their borrow.
 struct Borrower {
-    Borrower() noexcept {
-        previous = this;
-        next = this;
-    };
+    Borrower() noexcept : previous(this), next(this) {};
 
     ~Borrower() {
         previous->next = next;
@@ -20,8 +17,7 @@ struct Borrower {
     };
     Borrower(const Borrower&) = delete;
     Borrower& operator=(const Borrower&) = delete;
-    Borrower(Borrower&& other) noexcept {
-        sourceLocation = other.sourceLocation;
+    Borrower(Borrower&& other) noexcept : sourceLocation(other.sourceLocation) {
         if (other.next == &other) {
             previous = this;
             next = this;
@@ -51,8 +47,8 @@ public:
     Borrowed() = default;
 
     Borrowed(std::source_location sourceLocation, Borrower& previous,
-        decltype(std::declval<const T&>().get()) resource) noexcept {
-        this->resource = resource;
+        decltype(std::declval<const T&>().get()) resource) noexcept
+        : resource(resource) {
         borrower.sourceLocation = sourceLocation;
         borrower.previous = &previous;
         borrower.next = previous.next;
@@ -63,9 +59,8 @@ public:
     ~Borrowed() = default;
     Borrowed(const Borrowed&) = delete;
     Borrowed& operator=(const Borrowed&) = delete;
-    Borrowed(Borrowed&& other) noexcept : borrower(std::move(other.borrower)) {
-        resource = other.resource;
-    }
+    Borrowed(Borrowed&& other) noexcept
+        : borrower(std::move(other.borrower)), resource(other.resource) {}
     Borrowed& operator=(Borrowed&&) = delete;
 
     [[nodiscard]] decltype(std::declval<const T&>().get())
