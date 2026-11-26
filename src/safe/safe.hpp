@@ -9,17 +9,36 @@ namespace amj::safe {
 // Empty/unlinked nodes point to themselves. All borrowing, access, movement,
 // and closure must be serialized. Raw C resources must not escape their borrow.
 struct Borrower {
-    Borrower() noexcept;
+    Borrower() noexcept {
+        previous = this;
+        next = this;
+    };
 
-    ~Borrower();
+    ~Borrower() {
+        previous->next = next;
+        next->previous = previous;
+    };
     Borrower(const Borrower&) = delete;
     Borrower& operator=(const Borrower&) = delete;
-    Borrower(Borrower&& other) noexcept;
+    Borrower(Borrower&& other) noexcept {
+        sourceLocation = other.sourceLocation;
+        if (other.next == &other) {
+            previous = this;
+            next = this;
+        } else {
+            previous = other.previous;
+            next = other.next;
+            previous->next = this;
+            next->previous = this;
+            other.previous = &other;
+            other.next = &other;
+        }
+    };
     Borrower& operator=(Borrower&&) = delete;
 
+    std::source_location sourceLocation = {};
     Borrower* previous = nullptr;
     Borrower* next = nullptr;
-    std::source_location sourceLocation = {};
 };
 
 [[noreturn]] void fail(const char* reason, std::source_location sourceLocation) noexcept;
@@ -31,22 +50,22 @@ template <typename T> class Borrowed {
 public:
     Borrowed() = default;
 
-    [[nodiscard]] static Borrowed<T> makeBorrowed(decltype(std::declval<const T&>().get()) item,
-        Borrower& neighbor, std::source_location sourceLocation) noexcept {
-        Borrowed<T> borrowed;
-        borrowed.item = item;
-        borrowed.borrower.sourceLocation = sourceLocation;
-        borrowed.borrower.previous = &neighbor;
-        borrowed.borrower.next = neighbor.next;
-        borrowed.borrower.previous->next = &borrowed.borrower;
-        borrowed.borrower.next->previous = &borrowed.borrower;
-        return borrowed;
+    Borrowed(std::source_location sourceLocation, Borrower& previous,
+        decltype(std::declval<const T&>().get()) resource) noexcept {
+        this->resource = resource;
+        borrower.sourceLocation = sourceLocation;
+        borrower.previous = &previous;
+        borrower.next = previous.next;
+        borrower.previous->next = &borrower;
+        borrower.next->previous = &borrower;
     }
 
     ~Borrowed() = default;
     Borrowed(const Borrowed&) = delete;
     Borrowed& operator=(const Borrowed&) = delete;
-    Borrowed(Borrowed&& other) noexcept : item(other.item), borrower(std::move(other.borrower)) {}
+    Borrowed(Borrowed&& other) noexcept : borrower(std::move(other.borrower)) {
+        resource = other.resource;
+    }
     Borrowed& operator=(Borrowed&&) = delete;
 
     [[nodiscard]] decltype(std::declval<const T&>().get())
@@ -54,17 +73,20 @@ public:
         if (borrower.next == &borrower) {
             fail("access through an empty or moved borrow", sourceLocation);
         }
-        return item;
+        return resource;
     }
 
     [[nodiscard]] Borrowed<T>
     borrow(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        return makeBorrowed(this->get(sourceLocation), *this->borrower.next, sourceLocation);
+        if (borrower.next == &borrower) {
+            fail("borrowing through an empty or moved borrow", sourceLocation);
+        }
+        return Borrowed<T>(sourceLocation, *borrower.next, resource);
     }
 
 private:
-    decltype(std::declval<const T&>().get()) item = {};
     Borrower borrower = {};
+    decltype(std::declval<const T&>().get()) resource = {};
 };
 
 } // namespace amj::safe

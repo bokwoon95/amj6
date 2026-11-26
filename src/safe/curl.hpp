@@ -25,11 +25,18 @@ public:
     CurlEasyHandle& operator=(CurlEasyHandle&&) = delete;
 
     [[nodiscard]] CURL*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (ownedHandle == nullptr) {
+            fail("access through a closed or moved curl easy handle", sourceLocation);
+        }
+        return ownedHandle;
+    }
     [[nodiscard]] Borrowed<CurlEasyHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        return Borrowed<CurlEasyHandle>::makeBorrowed(this->get(sourceLocation), this->head,
-            sourceLocation);
+        if (ownedHandle == nullptr) {
+            fail("borrowing a closed or moved curl easy handle", sourceLocation);
+        }
+        return Borrowed<CurlEasyHandle>(sourceLocation, head, ownedHandle);
     }
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
@@ -49,11 +56,18 @@ public:
     CurlMultiHandle& operator=(CurlMultiHandle&&) = delete;
 
     [[nodiscard]] CURLM*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (ownedHandle == nullptr) {
+            fail("access through a closed or moved curl multi handle", sourceLocation);
+        }
+        return ownedHandle;
+    }
     [[nodiscard]] Borrowed<CurlMultiHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        return Borrowed<CurlMultiHandle>::makeBorrowed(this->get(sourceLocation), this->head,
-            sourceLocation);
+        if (ownedHandle == nullptr) {
+            fail("borrowing a closed or moved curl multi handle", sourceLocation);
+        }
+        return Borrowed<CurlMultiHandle>(sourceLocation, head, ownedHandle);
     }
     // Failed cleanup retains ownership; destruction with an unhandled error is fatal.
     [[nodiscard]] std::error_code

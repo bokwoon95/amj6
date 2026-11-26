@@ -4,7 +4,7 @@
 
 #include <quickjs.h>
 
-#include <new>
+#include <expected>
 #include <source_location>
 #include <system_error>
 #include <tuple>
@@ -12,11 +12,13 @@
 
 namespace amj::safe {
 
-QuickJSRuntime::QuickJSRuntime() {
-    this->jsRuntime = JS_NewRuntime();
-    if (this->jsRuntime == nullptr) {
-        throw std::bad_alloc();
+std::expected<QuickJSRuntime, std::error_code> QuickJSRuntime::create() noexcept {
+    QuickJSRuntime quickjsRuntime;
+    quickjsRuntime.jsRuntime = JS_NewRuntime();
+    if (quickjsRuntime.jsRuntime == nullptr) {
+        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
     }
+    return quickjsRuntime;
 }
 
 QuickJSRuntime::~QuickJSRuntime() noexcept {
@@ -27,14 +29,7 @@ QuickJSRuntime::~QuickJSRuntime() noexcept {
 }
 
 QuickJSRuntime::QuickJSRuntime(QuickJSRuntime&& other) noexcept : head(std::move(other.head)) {
-    this->jsRuntime = std::exchange(other.jsRuntime, nullptr);
-}
-
-JSRuntime* QuickJSRuntime::get(std::source_location sourceLocation) const noexcept {
-    if (jsRuntime == nullptr) {
-        fail("access through a closed or moved QuickJS runtime", sourceLocation);
-    }
-    return jsRuntime;
+    jsRuntime = std::exchange(other.jsRuntime, nullptr);
 }
 
 std::error_code QuickJSRuntime::close(std::source_location sourceLocation) noexcept {
@@ -48,12 +43,15 @@ std::error_code QuickJSRuntime::close(std::source_location sourceLocation) noexc
     return {};
 }
 
-QuickJSContext::QuickJSContext(Borrowed<QuickJSRuntime> quickjsRuntime) {
-    this->jsContext = JS_NewContext(quickjsRuntime.get());
-    if (this->jsContext == nullptr) {
-        throw std::bad_alloc();
+std::expected<QuickJSContext, std::error_code>
+QuickJSContext::create(Borrowed<QuickJSRuntime> quickjsRuntime) noexcept {
+    QuickJSContext quickjsContext;
+    quickjsContext.jsContext = JS_NewContext(quickjsRuntime.get());
+    if (quickjsContext.jsContext == nullptr) {
+        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
     }
-    this->quickjsRuntime.emplace(std::move(quickjsRuntime));
+    quickjsContext.quickjsRuntime.emplace(std::move(quickjsRuntime));
+    return std::expected<QuickJSContext, std::error_code>(std::in_place, std::move(quickjsContext));
 }
 
 QuickJSContext::~QuickJSContext() noexcept {
@@ -65,15 +63,8 @@ QuickJSContext::~QuickJSContext() noexcept {
 
 QuickJSContext::QuickJSContext(QuickJSContext&& other) noexcept
     : quickjsRuntime(std::move(other.quickjsRuntime)), head(std::move(other.head)) {
-    this->jsContext = std::exchange(other.jsContext, nullptr);
+    jsContext = std::exchange(other.jsContext, nullptr);
     other.quickjsRuntime.reset();
-}
-
-JSContext* QuickJSContext::get(std::source_location sourceLocation) const noexcept {
-    if (jsContext == nullptr) {
-        fail("access through a closed or moved QuickJS context", sourceLocation);
-    }
-    return jsContext;
 }
 
 std::error_code QuickJSContext::close(std::source_location sourceLocation) noexcept {
@@ -92,7 +83,7 @@ QuickJSValue::QuickJSValue(Borrowed<QuickJSContext> context, JSValue value) noex
     std::ignore = context.get();
     this->context.emplace(std::move(context));
     this->value = value;
-    this->live = true;
+    live = true;
 }
 
 QuickJSValue::~QuickJSValue() noexcept {
@@ -104,16 +95,9 @@ QuickJSValue::~QuickJSValue() noexcept {
 
 QuickJSValue::QuickJSValue(QuickJSValue&& other) noexcept
     : context(std::move(other.context)), head(std::move(other.head)) {
-    this->value = std::exchange(other.value, JS_UNDEFINED);
-    this->live = std::exchange(other.live, false);
+    value = std::exchange(other.value, JS_UNDEFINED);
+    live = std::exchange(other.live, false);
     other.context.reset();
-}
-
-JSValue QuickJSValue::get(std::source_location sourceLocation) const noexcept {
-    if (!live) {
-        fail("access through a closed or moved QuickJS value", sourceLocation);
-    }
-    return value;
 }
 
 JSValue QuickJSValue::release(std::source_location sourceLocation) noexcept {

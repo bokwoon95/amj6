@@ -4,6 +4,7 @@
 
 #include <quickjs.h>
 
+#include <expected>
 #include <optional>
 #include <source_location>
 #include <system_error>
@@ -12,7 +13,7 @@ namespace amj::safe {
 
 class QuickJSRuntime {
 public:
-    QuickJSRuntime();
+    [[nodiscard]] static std::expected<QuickJSRuntime, std::error_code> create() noexcept;
 
     ~QuickJSRuntime() noexcept;
     QuickJSRuntime(const QuickJSRuntime&) = delete;
@@ -21,25 +22,35 @@ public:
     QuickJSRuntime& operator=(QuickJSRuntime&&) = delete;
 
     [[nodiscard]] JSRuntime*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (jsRuntime == nullptr) {
+            fail("access through a closed or moved QuickJS runtime", sourceLocation);
+        }
+        return jsRuntime;
+    }
 
     [[nodiscard]] Borrowed<QuickJSRuntime>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        return Borrowed<QuickJSRuntime>::makeBorrowed(this->get(sourceLocation), this->head,
-            sourceLocation);
+        if (jsRuntime == nullptr) {
+            fail("borrowing a closed or moved QuickJS runtime", sourceLocation);
+        }
+        return Borrowed<QuickJSRuntime>(sourceLocation, head, jsRuntime);
     }
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
+    QuickJSRuntime() noexcept = default;
+
     JSRuntime* jsRuntime = nullptr;
     Borrower head = {};
 };
 
 class QuickJSContext {
 public:
-    explicit QuickJSContext(Borrowed<QuickJSRuntime> quickjsRuntime);
+    [[nodiscard]] static std::expected<QuickJSContext, std::error_code>
+    create(Borrowed<QuickJSRuntime> quickjsRuntime) noexcept;
 
     ~QuickJSContext() noexcept;
     QuickJSContext(const QuickJSContext&) = delete;
@@ -48,18 +59,27 @@ public:
     QuickJSContext& operator=(QuickJSContext&&) = delete;
 
     [[nodiscard]] JSContext*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (jsContext == nullptr) {
+            fail("access through a closed or moved QuickJS context", sourceLocation);
+        }
+        return jsContext;
+    }
 
     [[nodiscard]] Borrowed<QuickJSContext>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        return Borrowed<QuickJSContext>::makeBorrowed(this->get(sourceLocation), this->head,
-            sourceLocation);
+        if (jsContext == nullptr) {
+            fail("borrowing a closed or moved QuickJS context", sourceLocation);
+        }
+        return Borrowed<QuickJSContext>(sourceLocation, head, jsContext);
     }
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
+    QuickJSContext() noexcept = default;
+
     std::optional<Borrowed<QuickJSRuntime>> quickjsRuntime = std::nullopt;
     JSContext* jsContext = nullptr;
     Borrower head = {};
@@ -77,12 +97,19 @@ public:
     QuickJSValue& operator=(QuickJSValue&&) = delete;
 
     [[nodiscard]] JSValue
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (!live) {
+            fail("access through a closed or moved QuickJS value", sourceLocation);
+        }
+        return value;
+    }
 
     [[nodiscard]] Borrowed<QuickJSValue>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        return Borrowed<QuickJSValue>::makeBorrowed(this->get(sourceLocation), this->head,
-            sourceLocation);
+        if (!live) {
+            fail("borrowing a closed or moved QuickJS value", sourceLocation);
+        }
+        return Borrowed<QuickJSValue>(sourceLocation, head, value);
     }
     [[nodiscard]] JSValue
 

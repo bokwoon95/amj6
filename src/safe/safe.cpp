@@ -8,31 +8,6 @@
 
 namespace amj::safe {
 
-Borrower::Borrower() noexcept {
-    this->previous = this;
-    this->next = this;
-}
-
-Borrower::~Borrower() {
-    this->previous->next = this->next;
-    this->next->previous = this->previous;
-}
-
-Borrower::Borrower(Borrower&& other) noexcept {
-    if (other.next == &other) {
-        this->previous = this;
-        this->next = this;
-    } else {
-        this->previous = other.previous;
-        this->next = other.next;
-        this->previous->next = this;
-        this->next->previous = this;
-        other.previous = &other;
-        other.next = &other;
-    }
-    this->sourceLocation = other.sourceLocation;
-}
-
 [[noreturn]] void fail(const char* reason, std::source_location sourceLocation) noexcept {
     std::fprintf(stderr, "Fatal lifetime violation: %s\nAt %s:%u in %s\n", reason,
         sourceLocation.file_name(), sourceLocation.line(), sourceLocation.function_name());

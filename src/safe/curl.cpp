@@ -45,14 +45,7 @@ CurlEasyHandle::~CurlEasyHandle() noexcept {
 }
 
 CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept : head(std::move(other.head)) {
-    this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
-}
-
-CURL* CurlEasyHandle::get(std::source_location sourceLocation) const noexcept {
-    if (ownedHandle == nullptr) {
-        fail("access through a closed or moved curl easy handle", sourceLocation);
-    }
-    return ownedHandle;
+    ownedHandle = std::exchange(other.ownedHandle, nullptr);
 }
 
 std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexcept {
@@ -81,14 +74,7 @@ CurlMultiHandle::~CurlMultiHandle() noexcept {
 }
 
 CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept : head(std::move(other.head)) {
-    this->ownedHandle = std::exchange(other.ownedHandle, nullptr);
-}
-
-CURLM* CurlMultiHandle::get(std::source_location sourceLocation) const noexcept {
-    if (ownedHandle == nullptr) {
-        fail("access through a closed or moved curl multi handle", sourceLocation);
-    }
-    return ownedHandle;
+    ownedHandle = std::exchange(other.ownedHandle, nullptr);
 }
 
 std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noexcept {
