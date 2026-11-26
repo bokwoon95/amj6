@@ -13,17 +13,17 @@
 namespace amj::safe {
 
 std::expected<QuickJSRuntime, std::error_code> QuickJSRuntime::create() noexcept {
-    QuickJSRuntime quickjsRuntime;
-    quickjsRuntime.jsRuntime = JS_NewRuntime();
-    if (quickjsRuntime.jsRuntime == nullptr) {
+    QuickJSRuntime quickJSRuntime;
+    quickJSRuntime.jsRuntime = JS_NewRuntime();
+    if (quickJSRuntime.jsRuntime == nullptr) {
         return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
     }
-    return quickjsRuntime;
+    return quickJSRuntime;
 }
 
 QuickJSRuntime::~QuickJSRuntime() noexcept {
-    const std::error_code error = close();
-    if (error) {
+    const std::error_code errorCode = close();
+    if (errorCode) {
         fail("QuickJS runtime cleanup failed", std::source_location::current());
     }
 }
