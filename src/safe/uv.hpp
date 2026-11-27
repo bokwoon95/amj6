@@ -3,6 +3,11 @@
 #include "safe.hpp"
 
 #include <uv.h>
+#if defined(_WIN32)
+#include <uv/win.h>
+#else
+#include <uv/unix.h>
+#endif
 
 #include <array>
 #include <exception>
@@ -57,7 +62,7 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<UvLoop>(sourceLocation, state->head, &state->uvLoop);
+        return Borrowed<UvLoop>(sourceLocation, state->borrowers, &state->uvLoop);
     }
 
 private:
@@ -65,7 +70,7 @@ private:
 
     struct State {
         uv_loop_t uvLoop = {};
-        Borrower head = {};
+        Borrower borrowers = {};
     };
     std::unique_ptr<State> state = nullptr;
 };
@@ -112,7 +117,7 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<UvTimerHandle>(sourceLocation, state->head, &state->uvTimerHandle);
+        return Borrowed<UvTimerHandle>(sourceLocation, state->borrowers, &state->uvTimerHandle);
     }
 
 private:
@@ -121,7 +126,7 @@ private:
     struct State {
         Borrowed<UvLoop> uvLoop = {};
         uv_timer_t uvTimerHandle = {};
-        Borrower head = {};
+        Borrower borrowers = {};
     };
     std::unique_ptr<State> state = nullptr;
 };
@@ -168,7 +173,7 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<UvPollHandle>(sourceLocation, state->head, &state->uvPollHandle);
+        return Borrowed<UvPollHandle>(sourceLocation, state->borrowers, &state->uvPollHandle);
     }
 
 private:
@@ -177,7 +182,7 @@ private:
     struct State {
         Borrowed<UvLoop> uvLoop = {};
         uv_poll_t uvPollHandle = {};
-        Borrower head = {};
+        Borrower borrowers = {};
     };
     std::unique_ptr<State> state = nullptr;
 };
@@ -224,7 +229,7 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<UvAsyncHandle>(sourceLocation, state->head, &state->uvAsyncHandle);
+        return Borrowed<UvAsyncHandle>(sourceLocation, state->borrowers, &state->uvAsyncHandle);
     }
 
 private:
@@ -233,7 +238,7 @@ private:
     struct State {
         Borrowed<UvLoop> uvLoop = {};
         uv_async_t uvAsyncHandle = {};
-        Borrower head = {};
+        Borrower borrowers = {};
     };
     std::unique_ptr<State> state = nullptr;
 };

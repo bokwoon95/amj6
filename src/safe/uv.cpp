@@ -3,6 +3,11 @@
 #include "safe.hpp"
 
 #include <uv.h>
+#if defined(_WIN32)
+#include <uv/win.h>
+#else
+#include <uv/unix.h>
+#endif
 
 #include <array>
 #include <exception>
@@ -49,10 +54,10 @@ std::error_code UvLoop::close(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
         return {};
     }
-    if (!state->head.empty()) {
+    if (!state->borrowers.empty()) {
         fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                 "Closing a libuv loop with outstanding borrowers"}));
-        for (const Borrower& borrower : state->head) {
+        for (const Borrower& borrower : state->borrowers) {
             fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
         }
         printStackTrace(std::cerr, 1, 30);
@@ -89,10 +94,10 @@ std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexce
     if (state == nullptr) {
         return {};
     }
-    if (!state->head.empty()) {
+    if (!state->borrowers.empty()) {
         fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                 "Closing a libuv timer with outstanding borrowers"}));
-        for (const Borrower& borrower : state->head) {
+        for (const Borrower& borrower : state->borrowers) {
             fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
         }
         printStackTrace(std::cerr, 1, 30);
@@ -128,10 +133,10 @@ std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcep
     if (state == nullptr) {
         return {};
     }
-    if (!state->head.empty()) {
+    if (!state->borrowers.empty()) {
         fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                 "Closing a libuv poll handle with outstanding borrowers"}));
-        for (const Borrower& borrower : state->head) {
+        for (const Borrower& borrower : state->borrowers) {
             fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
         }
         printStackTrace(std::cerr, 1, 30);
@@ -167,10 +172,10 @@ std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexce
     if (state == nullptr) {
         return {};
     }
-    if (!state->head.empty()) {
+    if (!state->borrowers.empty()) {
         fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                 "Closing a libuv async handle with outstanding borrowers"}));
-        for (const Borrower& borrower : state->head) {
+        for (const Borrower& borrower : state->borrowers) {
             fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
         }
         printStackTrace(std::cerr, 1, 30);

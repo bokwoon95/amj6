@@ -56,9 +56,6 @@ private:
 // are contained; argument evaluation before entry remains outside the catch.
 void fprintln(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
 
-// The owner embeds a sentinel named head; every Borrowed<T> embeds another node.
-// Empty/unlinked nodes point to themselves. All borrowing, access, movement,
-// and closure must be serialized. Raw C resources must not escape their borrow.
 class Borrower {
     struct Iterator {
         const Borrower* current = nullptr;
