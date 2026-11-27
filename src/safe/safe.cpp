@@ -75,7 +75,7 @@ void PrintArg::print(std::ostream& out) const {
 
 void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept {
     try {
-        bool wasString = false;
+        bool wasString = true;
         for (const PrintArg& printArg : printArgs) {
             const bool isString = std::holds_alternative<std::string_view>(printArg.value);
             if (!wasString && !isString) {
