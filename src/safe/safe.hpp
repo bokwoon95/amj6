@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <variant>
 
@@ -39,10 +40,12 @@ struct PrintArg {
 
     PrintArg(std::source_location sourceLocation) noexcept : value(sourceLocation) {}
 
+    PrintArg(std::error_code errorCode) noexcept : value(errorCode) {}
+
     void print(std::ostream& out) const;
 
     const std::variant<std::string_view, bool, std::int64_t, std::uint64_t, long double,
-        std::source_location>
+        std::source_location, std::error_code>
         value = {};
 };
 
@@ -137,7 +140,7 @@ public:
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Access through an empty or moved borrow\n"}));
+                                 ": borrowed handle is empty or moved-from\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -148,7 +151,7 @@ public:
     borrow(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Borrowing through an empty or moved borrow\n"}));
+                                 ": borrowed handle is empty or moved-from\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -156,7 +159,6 @@ public:
     }
 
 private:
-    // Reborrowing a const handle changes only its list bookkeeping, not resource.
     mutable Borrower borrower = {};
     decltype(std::declval<const T&>().get()) resource = {};
 };

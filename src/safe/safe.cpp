@@ -10,12 +10,13 @@
 #include <source_location>
 #include <span>
 #include <string_view>
+#include <system_error>
 #include <variant>
 
 namespace amj::safe {
 
 void PrintArg::print(std::ostream& out) const {
-    static_assert(std::variant_size_v<decltype(value)> == 6);
+    static_assert(std::variant_size_v<decltype(value)> == 7);
     switch (value.index()) {
         case 0: {
             const std::string_view* text = std::get_if<0>(&value);
@@ -62,6 +63,14 @@ void PrintArg::print(std::ostream& out) const {
             if (sourceLocation != nullptr) {
                 out << sourceLocation->file_name() << ':' << sourceLocation->line() << ':'
                     << sourceLocation->column() << ':' << sourceLocation->function_name();
+                return;
+            }
+            break;
+        }
+        case 6: {
+            const std::error_code* errorCode = std::get_if<6>(&value);
+            if (errorCode != nullptr) {
+                out << errorCode->message();
                 return;
             }
             break;

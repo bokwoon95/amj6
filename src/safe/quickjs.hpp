@@ -40,7 +40,8 @@ public:
     QuickJSRuntime(const QuickJSRuntime&) = delete;
     QuickJSRuntime& operator=(const QuickJSRuntime&) = delete;
     QuickJSRuntime(QuickJSRuntime&& other) noexcept
-        : jsRuntime(std::exchange(other.jsRuntime, nullptr)), head(std::move(other.head)) {}
+        : jsRuntime(std::exchange(other.jsRuntime, nullptr)),
+          borrowers(std::move(other.borrowers)) {}
     QuickJSRuntime& operator=(QuickJSRuntime&&) = delete;
 
     [[nodiscard]] JSRuntime*
@@ -62,15 +63,15 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<QuickJSRuntime>(sourceLocation, head, jsRuntime);
+        return Borrowed<QuickJSRuntime>(sourceLocation, borrowers, jsRuntime);
     }
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (!head.empty()) {
+        if (!borrowers.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                  " Closing a QuickJS runtime with outstanding borrowers\n"}));
-            for (const Borrower& borrower : head) {
+            for (const Borrower& borrower : borrowers) {
                 print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
             }
             printStackTrace(std::cerr, 1, 30);
@@ -87,7 +88,7 @@ private:
     QuickJSRuntime() noexcept = default;
 
     JSRuntime* jsRuntime = nullptr;
-    Borrower head = {};
+    Borrower borrowers = {};
 };
 
 class QuickJSContext {
