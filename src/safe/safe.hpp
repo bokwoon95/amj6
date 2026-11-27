@@ -46,10 +46,6 @@ struct PrintArg {
         value = {};
 };
 
-// Inserts a space between adjacent non-string arguments. No newline is appended.
-// Output failures are contained; argument evaluation before entry remains outside the catch.
-void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
-
 class Borrower {
     struct Iterator {
         const Borrower* current = nullptr;
@@ -117,6 +113,8 @@ private:
     Borrower* previous = nullptr;
     Borrower* next = nullptr;
 };
+
+void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
 
 void printStackTrace(std::ostream& out, size_t skip, size_t maxDepth) noexcept;
 
