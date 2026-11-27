@@ -196,7 +196,7 @@ public:
     QuickJSValue(QuickJSValue&& other) noexcept
         : quickJSContext(std::move(other.quickJSContext)),
           value(std::exchange(other.value, JS_UNDEFINED)), live(std::exchange(other.live, false)),
-          head(std::move(other.head)) {
+          borrowers(std::move(other.borrowers)) {
         other.quickJSContext.reset();
     }
     QuickJSValue& operator=(QuickJSValue&&) = delete;
@@ -220,16 +220,16 @@ public:
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
-        return Borrowed<QuickJSValue>(sourceLocation, head, value);
+        return Borrowed<QuickJSValue>(sourceLocation, borrowers, value);
     }
 
     [[nodiscard]] JSValue
     release(std::source_location sourceLocation = std::source_location::current()) noexcept {
         const JSValue result = get(sourceLocation);
-        if (!head.empty()) {
+        if (!borrowers.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                  " Releasing a QuickJS value with outstanding borrowers\n"}));
-            for (const Borrower& borrower : head) {
+            for (const Borrower& borrower : borrowers) {
                 print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
             }
             printStackTrace(std::cerr, 1, 30);
@@ -243,10 +243,10 @@ public:
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (!head.empty()) {
+        if (!borrowers.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                                  " Closing a QuickJS value with outstanding borrowers\n"}));
-            for (const Borrower& borrower : head) {
+            for (const Borrower& borrower : borrowers) {
                 print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
             }
             printStackTrace(std::cerr, 1, 30);
@@ -279,7 +279,7 @@ private:
     std::optional<Borrowed<QuickJSContext>> quickJSContext = std::nullopt;
     JSValue value = JS_UNDEFINED;
     bool live = false;
-    Borrower head = {};
+    Borrower borrowers = {};
 };
 
 struct QuickJSPromise {
