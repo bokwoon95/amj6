@@ -9,10 +9,7 @@
 #include <uv/unix.h>
 #endif
 
-#include <array>
-#include <exception>
 #include <expected>
-#include <iostream>
 #include <memory>
 #include <source_location>
 #include <system_error>
@@ -24,44 +21,20 @@ class UvLoop {
 public:
     [[nodiscard]] static std::expected<UvLoop, std::error_code> create() noexcept;
 
-    ~UvLoop() noexcept {
-        const std::error_code errorCode = close();
-        if (errorCode) {
-            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
-                                 ": UvLoop.close: ", errorCode, "\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-    };
+    ~UvLoop() noexcept;
     UvLoop(const UvLoop&) = delete;
     UvLoop& operator=(const UvLoop&) = delete;
-    UvLoop(UvLoop&& other) noexcept : state(std::move(other.state)) {};
+    UvLoop(UvLoop&& other) noexcept : state(std::move(other.state)) {}
     UvLoop& operator=(UvLoop&&) = delete;
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
     [[nodiscard]] uv_loop_t*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (state == nullptr) {
-            print(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, ": UvLoop is empty or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return &state->uvLoop;
-    }
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<UvLoop>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (state == nullptr) {
-            print(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, ": UvLoop is empty or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<UvLoop>(sourceLocation, state->borrowers, &state->uvLoop);
-    }
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     UvLoop() noexcept = default;
@@ -78,44 +51,20 @@ public:
     [[nodiscard]] static std::expected<UvTimerHandle, std::error_code>
     create(Borrowed<UvLoop> uvLoop) noexcept;
 
-    ~UvTimerHandle() noexcept {
-        const std::error_code errorCode = close();
-        if (errorCode) {
-            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
-                                 ": UvTimerHandler.close: ", errorCode, "\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-    };
+    ~UvTimerHandle() noexcept;
     UvTimerHandle(const UvTimerHandle&) = delete;
     UvTimerHandle& operator=(const UvTimerHandle&) = delete;
-    UvTimerHandle(UvTimerHandle&& other) noexcept : state(std::move(other.state)) {};
+    UvTimerHandle(UvTimerHandle&& other) noexcept : state(std::move(other.state)) {}
     UvTimerHandle& operator=(UvTimerHandle&&) = delete;
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
     [[nodiscard]] uv_timer_t*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvTimerHandle is empty or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return &state->uvTimerHandle;
-    }
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<UvTimerHandle>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvTimerHandle is empty or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<UvTimerHandle>(sourceLocation, state->borrowers, &state->uvTimerHandle);
-    }
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     UvTimerHandle() noexcept = default;
@@ -133,44 +82,20 @@ public:
     [[nodiscard]] static std::expected<UvPollHandle, std::error_code> create(Borrowed<UvLoop> loop,
         uv_os_sock_t socket) noexcept;
 
-    ~UvPollHandle() noexcept {
-        const std::error_code errorCode = close();
-        if (errorCode) {
-            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
-                                 ": UvPollHandle.close: ", errorCode, "\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-    };
+    ~UvPollHandle() noexcept;
     UvPollHandle(const UvPollHandle&) = delete;
     UvPollHandle& operator=(const UvPollHandle&) = delete;
-    UvPollHandle(UvPollHandle&& other) noexcept : state(std::move(other.state)) {};
+    UvPollHandle(UvPollHandle&& other) noexcept : state(std::move(other.state)) {}
     UvPollHandle& operator=(UvPollHandle&&) = delete;
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
     [[nodiscard]] uv_poll_t*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvPollHandle is closed or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return &state->uvPollHandle;
-    }
-    [[nodiscard]] Borrowed<UvPollHandle>
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvPollHandle is closed or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<UvPollHandle>(sourceLocation, state->borrowers, &state->uvPollHandle);
-    }
+    [[nodiscard]] Borrowed<UvPollHandle>
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     UvPollHandle() noexcept = default;
@@ -188,44 +113,20 @@ public:
     [[nodiscard]] static std::expected<UvAsyncHandle, std::error_code>
     create(Borrowed<UvLoop> uvLoop, uv_async_cb uvAsyncCallback) noexcept;
 
-    ~UvAsyncHandle() noexcept {
-        const std::error_code errorCode = close();
-        if (errorCode) {
-            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
-                                 ": UvAsyncHandle.close: ", errorCode, "\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-    };
+    ~UvAsyncHandle() noexcept;
     UvAsyncHandle(const UvAsyncHandle&) = delete;
     UvAsyncHandle& operator=(const UvAsyncHandle&) = delete;
-    UvAsyncHandle(UvAsyncHandle&& other) noexcept : state(std::move(other.state)) {};
+    UvAsyncHandle(UvAsyncHandle&& other) noexcept : state(std::move(other.state)) {}
     UvAsyncHandle& operator=(UvAsyncHandle&&) = delete;
 
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
     [[nodiscard]] uv_async_t*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvAsyncHandle is closed or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return &state->uvAsyncHandle;
-    }
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
 
     [[nodiscard]] Borrowed<UvAsyncHandle>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (state == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 ": UvAsyncHandle is closed or moved-from\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<UvAsyncHandle>(sourceLocation, state->borrowers, &state->uvAsyncHandle);
-    }
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
     UvAsyncHandle() noexcept = default;
