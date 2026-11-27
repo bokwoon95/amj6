@@ -4,6 +4,7 @@
 
 #include <quickjs.h>
 
+#include <array>
 #include <exception>
 #include <expected>
 #include <iostream>
@@ -30,15 +31,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            try {
-                std::cerr << "QuickJS runtime cleanup failed at " << sourceLocation.file_name()
-                          << ':' << sourceLocation.line() << " (" << sourceLocation.function_name()
-                          << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, "QuickJS runtime cleanup failed"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -52,15 +46,8 @@ public:
     [[nodiscard]] JSRuntime*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (jsRuntime == nullptr) {
-            try {
-                std::cerr << "Access through a closed or moved QuickJS runtime at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Access through a closed or moved QuickJS runtime"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -70,15 +57,8 @@ public:
     [[nodiscard]] Borrowed<QuickJSRuntime>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (jsRuntime == nullptr) {
-            try {
-                std::cerr << "Borrowing a closed or moved QuickJS runtime at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Borrowing a closed or moved QuickJS runtime"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -88,17 +68,10 @@ public:
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (!head.empty()) {
-            try {
-                std::cerr << "Closing a QuickJS runtime with outstanding borrowers at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-                for (const Borrower& borrower : head) {
-                    std::cerr << borrower.toString() << '\n' << std::flush;
-                }
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Closing a QuickJS runtime with outstanding borrowers"}));
+            for (const Borrower& borrower : head) {
+                fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
             }
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
@@ -135,15 +108,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            try {
-                std::cerr << "QuickJS context cleanup failed at " << sourceLocation.file_name()
-                          << ':' << sourceLocation.line() << " (" << sourceLocation.function_name()
-                          << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, "QuickJS context cleanup failed"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -160,15 +126,8 @@ public:
     [[nodiscard]] JSContext*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (jsContext == nullptr) {
-            try {
-                std::cerr << "Access through a closed or moved QuickJS context at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Access through a closed or moved QuickJS context"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -178,15 +137,8 @@ public:
     [[nodiscard]] Borrowed<QuickJSContext>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (jsContext == nullptr) {
-            try {
-                std::cerr << "Borrowing a closed or moved QuickJS context at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Borrowing a closed or moved QuickJS context"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -196,17 +148,10 @@ public:
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (!head.empty()) {
-            try {
-                std::cerr << "Closing a QuickJS context with outstanding borrowers at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-                for (const Borrower& borrower : head) {
-                    std::cerr << borrower.toString() << '\n' << std::flush;
-                }
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Closing a QuickJS context with outstanding borrowers"}));
+            for (const Borrower& borrower : head) {
+                fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
             }
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
@@ -242,15 +187,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            try {
-                std::cerr << "QuickJS value cleanup failed at " << sourceLocation.file_name() << ':'
-                          << sourceLocation.line() << " (" << sourceLocation.function_name() << ')'
-                          << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, "QuickJS value cleanup failed"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -268,15 +206,8 @@ public:
     [[nodiscard]] JSValue
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (!live) {
-            try {
-                std::cerr << "Access through a closed or moved QuickJS value at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Access through a closed or moved QuickJS value"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -286,15 +217,8 @@ public:
     [[nodiscard]] Borrowed<QuickJSValue>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (!live) {
-            try {
-                std::cerr << "Borrowing a closed or moved QuickJS value at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Borrowing a closed or moved QuickJS value"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -305,17 +229,10 @@ public:
     release(std::source_location sourceLocation = std::source_location::current()) noexcept {
         const JSValue result = get(sourceLocation);
         if (!head.empty()) {
-            try {
-                std::cerr << "Releasing a QuickJS value with outstanding borrowers at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-                for (const Borrower& borrower : head) {
-                    std::cerr << borrower.toString() << '\n' << std::flush;
-                }
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Releasing a QuickJS value with outstanding borrowers"}));
+            for (const Borrower& borrower : head) {
+                fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
             }
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
@@ -329,17 +246,10 @@ public:
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (!head.empty()) {
-            try {
-                std::cerr << "Closing a QuickJS value with outstanding borrowers at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-                for (const Borrower& borrower : head) {
-                    std::cerr << borrower.toString() << '\n' << std::flush;
-                }
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Closing a QuickJS value with outstanding borrowers"}));
+            for (const Borrower& borrower : head) {
+                fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
             }
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
@@ -350,30 +260,16 @@ public:
         live = false;
         const JSValue releasedValue = std::exchange(value, JS_UNDEFINED);
         if (!quickJSContext.has_value()) {
-            try {
-                std::cerr << "QuickJS value has no context during cleanup at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "QuickJS value has no context during cleanup"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
         try {
             JS_FreeValue(quickJSContext.value().get(sourceLocation), releasedValue);
         } catch (...) {
-            try {
-                std::cerr << "QuickJS value cleanup failed at " << sourceLocation.file_name() << ':'
-                          << sourceLocation.line() << " (" << sourceLocation.function_name() << ')'
-                          << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, "QuickJS value cleanup failed"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }

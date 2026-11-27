@@ -39,8 +39,7 @@ public:
     }
 
     template <typename T>
-        requires (!std::is_lvalue_reference_v<T>
-            && !std::is_pointer_v<std::remove_cvref_t<T>>)
+        requires(!std::is_lvalue_reference_v<T> && !std::is_pointer_v<std::remove_cvref_t<T>>)
     explicit VoidPtr(T&& value) {
         this->assign(std::forward<T>(value));
     }
@@ -55,8 +54,7 @@ public:
     }
 
     template <typename T>
-        requires (!std::is_lvalue_reference_v<T>
-            && !std::is_pointer_v<std::remove_cvref_t<T>>)
+        requires(!std::is_lvalue_reference_v<T> && !std::is_pointer_v<std::remove_cvref_t<T>>)
     void assign(T&& value) {
         static_assert(!std::is_array_v<T>);
         std::any replacement = static_cast<T*>(nullptr);

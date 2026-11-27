@@ -1,13 +1,60 @@
 #pragma once
 
+#include <array>
+#include <concepts>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <source_location>
-#include <sstream>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 
 namespace amj::safe {
+
+// Text is borrowed and must remain valid until printing finishes.
+class PrintArg {
+public:
+    PrintArg(std::string_view text) noexcept : value(text) {}
+
+    PrintArg(const char* text) noexcept {
+        if (text == nullptr) {
+            value = std::string_view();
+        } else {
+            value = std::string_view(text);
+        }
+    }
+
+    PrintArg(const std::string& text) noexcept : PrintArg(std::string_view(text)) {}
+
+    PrintArg(bool boolean) noexcept : value(boolean) {}
+
+    template <std::signed_integral T>
+        requires(sizeof(T) <= sizeof(std::int64_t))
+    PrintArg(T number) noexcept : value(static_cast<std::int64_t>(number)) {}
+
+    template <std::unsigned_integral T>
+        requires(sizeof(T) <= sizeof(std::uint64_t))
+    PrintArg(T number) noexcept : value(static_cast<std::uint64_t>(number)) {}
+
+    template <std::floating_point T>
+    PrintArg(T number) noexcept : value(static_cast<long double>(number)) {}
+
+    PrintArg(std::source_location sourceLocation) noexcept : value(sourceLocation) {}
+
+    void print(std::ostream& out) const;
+
+private:
+    std::variant<std::string_view, bool, std::int64_t, std::uint64_t, long double,
+        std::source_location>
+        value = {};
+};
+
+// Separates nonempty arguments with spaces and appends a newline. Output failures
+// are contained; argument evaluation before entry remains outside the catch.
+void fprintln(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
 
 // The owner embeds a sentinel named head; every Borrowed<T> embeds another node.
 // Empty/unlinked nodes point to themselves. All borrowing, access, movement,
@@ -28,6 +75,8 @@ class Borrower {
     };
 
 public:
+    const std::source_location sourceLocation = {};
+
     Borrower() noexcept : previous(this), next(this) {}
 
     Borrower(std::source_location sourceLocation, Borrower& previous) noexcept
@@ -73,15 +122,7 @@ public:
         };
     }
 
-    [[nodiscard]] std::string toString() const {
-        std::ostringstream buf;
-        buf << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-            << sourceLocation.function_name() << ")";
-        return buf.str();
-    }
-
 private:
-    std::source_location sourceLocation = {};
     Borrower* previous = nullptr;
     Borrower* next = nullptr;
 };
@@ -108,15 +149,8 @@ public:
     [[nodiscard]] decltype(std::declval<const T&>().get())
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
-            try {
-                std::cerr << "Access through an empty or moved borrow at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Access through an empty or moved borrow"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -126,15 +160,8 @@ public:
     [[nodiscard]] Borrowed<T>
     borrow(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
-            try {
-                std::cerr << "Borrowing through an empty or moved borrow at "
-                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
-                          << sourceLocation.function_name() << ')' << '\n'
-                          << std::flush;
-            } catch (...) {
-                printStackTrace(std::cerr, 1, 30);
-                std::terminate();
-            }
+            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                    "Borrowing through an empty or moved borrow"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
