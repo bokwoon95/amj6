@@ -5,9 +5,9 @@
 #include <quickjs.h>
 
 #include <expected>
-#include <optional>
 #include <source_location>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace amj::safe {
@@ -73,44 +73,43 @@ private:
 
 class QuickJSValue {
 public:
+    QuickJSValue() noexcept = default;
+
     QuickJSValue(Borrowed<QuickJSContext> quickJSContext, JSValue jsValue) noexcept
-        : jsValue(jsValue), live(true) {
+        : jsValue(jsValue) {
         std::ignore = quickJSContext.get(); // Make sure quickJSContext is valid.
         this->quickJSContext = std::move(quickJSContext);
     };
 
     ~QuickJSValue() noexcept;
-    QuickJSValue(const QuickJSValue&) = delete;
-    QuickJSValue& operator=(const QuickJSValue&) = delete;
+    QuickJSValue(const QuickJSValue& other) noexcept;
+    QuickJSValue& operator=(const QuickJSValue& other) noexcept;
     QuickJSValue(QuickJSValue&& other) noexcept
         : quickJSContext(std::move(other.quickJSContext)),
-          jsValue(std::exchange(other.jsValue, JS_UNDEFINED)),
-          live(std::exchange(other.live, false)), borrowers(std::move(other.borrowers)) {}
-    QuickJSValue& operator=(QuickJSValue&&) = delete;
+          jsValue(std::exchange(other.jsValue, JS_UNDEFINED)) {}
+    QuickJSValue& operator=(QuickJSValue&& other) noexcept;
 
-    [[nodiscard]] JSValue
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept;
+    [[nodiscard]] JSValue get() const noexcept {
+        return jsValue;
+    }
 
-    [[nodiscard]] Borrowed<QuickJSValue>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept;
+    [[nodiscard]] JSValue release() noexcept {
+        const JSValue releasedValue = std::exchange(jsValue, JS_UNDEFINED);
+        quickJSContext.reset();
+        return releasedValue;
+    }
 
-    [[nodiscard]] JSValue
-    release(std::source_location sourceLocation = std::source_location::current()) noexcept;
-
-    [[nodiscard]] std::error_code
-    close(std::source_location sourceLocation = std::source_location::current()) noexcept;
+    void reset() noexcept;
 
 private:
     Borrowed<QuickJSContext> quickJSContext = {};
     JSValue jsValue = JS_UNDEFINED;
-    bool live = false;
-    Borrower borrowers = {};
 };
 
 struct QuickJSPromise {
-    std::optional<QuickJSValue> promise = std::nullopt;
-    std::optional<QuickJSValue> resolveFunction = std::nullopt;
-    std::optional<QuickJSValue> rejectFunction = std::nullopt;
+    QuickJSValue promise = {};
+    QuickJSValue resolveFunction = {};
+    QuickJSValue rejectFunction = {};
 };
 
 } // namespace amj::safe

@@ -10,7 +10,6 @@
 #include <iostream>
 #include <source_location>
 #include <system_error>
-#include <tuple>
 #include <utility>
 
 namespace amj::safe {
@@ -131,84 +130,54 @@ Borrowed<QuickJSContext> QuickJSContext::borrow(std::source_location sourceLocat
 }
 
 QuickJSValue::~QuickJSValue() noexcept {
-    const std::error_code errorCode = close();
-    if (errorCode) {
-        const std::source_location sourceLocation = std::source_location::current();
-        print(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, " QuickJS value cleanup failed\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
+    if (quickJSContext) {
+        JS_FreeValue(quickJSContext.get(), jsValue);
     }
 }
 
-JSValue QuickJSValue::get(std::source_location sourceLocation) const noexcept {
-    if (!live) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Access through a closed or moved QuickJS value\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
+QuickJSValue::QuickJSValue(const QuickJSValue& other) noexcept {
+    if (other.quickJSContext) {
+        quickJSContext = other.quickJSContext.borrow();
+        jsValue = JS_DupValue(quickJSContext.get(), other.jsValue);
     }
-    return jsValue;
 }
 
-Borrowed<QuickJSValue> QuickJSValue::borrow(std::source_location sourceLocation) noexcept {
-    if (!live) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Borrowing a closed or moved QuickJS value\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
+QuickJSValue& QuickJSValue::operator=(const QuickJSValue& other) noexcept {
+    if (this == &other) {
+        return *this;
     }
-    return Borrowed<QuickJSValue>(sourceLocation, borrowers, jsValue);
+    Borrowed<QuickJSContext> borrowedQuickJSContext;
+    JSValue duplicatedJSValue = JS_UNDEFINED;
+    if (other.quickJSContext) {
+        borrowedQuickJSContext = other.quickJSContext.borrow();
+        duplicatedJSValue = JS_DupValue(borrowedQuickJSContext.get(), other.jsValue);
+    }
+    if (quickJSContext) {
+        JS_FreeValue(quickJSContext.get(), jsValue);
+    }
+    quickJSContext = std::move(borrowedQuickJSContext);
+    jsValue = duplicatedJSValue;
+    return *this;
 }
 
-JSValue QuickJSValue::release(std::source_location sourceLocation) noexcept {
-    const JSValue result = get(sourceLocation);
-    if (!borrowers.empty()) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Releasing a QuickJS value with outstanding borrowers\n"}));
-        for (const Borrower& borrower : borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
-        }
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
+QuickJSValue& QuickJSValue::operator=(QuickJSValue&& other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+    if (quickJSContext) {
+        JS_FreeValue(quickJSContext.get(), jsValue);
+    }
+    quickJSContext = std::move(other.quickJSContext);
+    jsValue = std::exchange(other.jsValue, JS_UNDEFINED);
+    return *this;
+}
+
+void QuickJSValue::reset() noexcept {
+    if (quickJSContext) {
+        JS_FreeValue(quickJSContext.get(), jsValue);
     }
     jsValue = JS_UNDEFINED;
-    live = false;
     quickJSContext.reset();
-    return result;
-}
-
-std::error_code QuickJSValue::close(std::source_location sourceLocation) noexcept {
-    if (!borrowers.empty()) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Closing a QuickJS value with outstanding borrowers\n"}));
-        for (const Borrower& borrower : borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
-        }
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
-    }
-    if (!live) {
-        return {};
-    }
-    live = false;
-    const JSValue releasedValue = std::exchange(jsValue, JS_UNDEFINED);
-    if (!quickJSContext) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " QuickJS value has no context during cleanup\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
-    }
-    try {
-        JS_FreeValue(quickJSContext.get(sourceLocation), releasedValue);
-    } catch (...) {
-        print(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, " QuickJS value cleanup failed\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
-    }
-    quickJSContext.reset();
-    return {};
 }
 
 } // namespace amj::safe
