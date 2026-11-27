@@ -5,7 +5,9 @@
 #include <curl/curl.h>
 #include <curl/multi.h>
 
+#include <exception>
 #include <expected>
+#include <iostream>
 #include <source_location>
 #include <system_error>
 
@@ -27,14 +29,34 @@ public:
     [[nodiscard]] CURL*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (ownedHandle == nullptr) {
-            fail("access through a closed or moved curl easy handle", sourceLocation);
+            try {
+                std::cerr << "Access through a closed or moved curl easy handle at "
+                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
+                          << sourceLocation.function_name() << ')' << '\n'
+                          << std::flush;
+            } catch (...) {
+                printStackTrace(std::cerr, 1, 30);
+                std::terminate();
+            }
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
         }
         return ownedHandle;
     }
     [[nodiscard]] Borrowed<CurlEasyHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (ownedHandle == nullptr) {
-            fail("borrowing a closed or moved curl easy handle", sourceLocation);
+            try {
+                std::cerr << "Borrowing a closed or moved curl easy handle at "
+                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
+                          << sourceLocation.function_name() << ')' << '\n'
+                          << std::flush;
+            } catch (...) {
+                printStackTrace(std::cerr, 1, 30);
+                std::terminate();
+            }
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
         }
         return Borrowed<CurlEasyHandle>(sourceLocation, head, ownedHandle);
     }
@@ -58,14 +80,34 @@ public:
     [[nodiscard]] CURLM*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (ownedHandle == nullptr) {
-            fail("access through a closed or moved curl multi handle", sourceLocation);
+            try {
+                std::cerr << "Access through a closed or moved curl multi handle at "
+                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
+                          << sourceLocation.function_name() << ')' << '\n'
+                          << std::flush;
+            } catch (...) {
+                printStackTrace(std::cerr, 1, 30);
+                std::terminate();
+            }
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
         }
         return ownedHandle;
     }
     [[nodiscard]] Borrowed<CurlMultiHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (ownedHandle == nullptr) {
-            fail("borrowing a closed or moved curl multi handle", sourceLocation);
+            try {
+                std::cerr << "Borrowing a closed or moved curl multi handle at "
+                          << sourceLocation.file_name() << ':' << sourceLocation.line() << " ("
+                          << sourceLocation.function_name() << ')' << '\n'
+                          << std::flush;
+            } catch (...) {
+                printStackTrace(std::cerr, 1, 30);
+                std::terminate();
+            }
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
         }
         return Borrowed<CurlMultiHandle>(sourceLocation, head, ownedHandle);
     }

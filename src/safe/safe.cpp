@@ -2,32 +2,27 @@
 
 #include <cpptrace/basic.hpp>
 
-#include <cstdio>
-#include <exception>
-#include <source_location>
+#include <cstddef>
+#include <ostream>
 
 namespace amj::safe {
 
-[[noreturn]] void fail(const char* reason, std::source_location sourceLocation) noexcept {
-    std::fprintf(stderr, "Fatal lifetime violation: %s\nAt %s:%u in %s\n", reason,
-        sourceLocation.file_name(), sourceLocation.line(), sourceLocation.function_name());
+void printStackTrace(std::ostream& out, int skip, int maxDepth) noexcept {
     try {
-        cpptrace::generate_trace(1, 30).print();
+        if (skip < 0 || maxDepth < 0) {
+            out << "Invalid stack trace limits\n" << std::flush;
+            return;
+        }
+        cpptrace::generate_trace(static_cast<std::size_t>(skip), static_cast<std::size_t>(maxDepth))
+            .print(out);
     } catch (...) {
-        std::fprintf(stderr, "Unable to capture failure stack trace\n");
+        try {
+            out << "Unable to print stack trace\n" << std::flush;
+        } catch (...) {
+            // Diagnostic output is best effort. The caller still terminates.
+            return;
+        }
     }
-    std::fflush(stderr);
-    std::terminate();
-}
-
-[[noreturn]] void fail(const char* reason, std::source_location sourceLocation,
-    const Borrower& head) noexcept {
-    std::fprintf(stderr, "Outstanding borrowers:\n");
-    for (const Borrower* borrower = head.next; borrower != &head; borrower = borrower->next) {
-        std::fprintf(stderr, "  %s:%u in %s\n", borrower->sourceLocation.file_name(),
-            borrower->sourceLocation.line(), borrower->sourceLocation.function_name());
-    }
-    fail(reason, sourceLocation);
 }
 
 } // namespace amj::safe
