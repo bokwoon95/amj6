@@ -36,8 +36,8 @@ std::error_code curlMultiError(CURLMcode code) noexcept {
 CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept : ownedHandle(ownedHandle) {
     if (ownedHandle == nullptr) {
         const std::source_location sourceLocation = std::source_location::current();
-        fprintln(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, "Cannot adopt a null curl easy handle"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, " Cannot adopt a null curl easy handle\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -47,7 +47,7 @@ CurlEasyHandle::~CurlEasyHandle() noexcept {
     const std::error_code error = close();
     if (error) {
         const std::source_location sourceLocation = std::source_location::current();
-        fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation, "Curl easy cleanup failed"}));
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation, " Curl easy cleanup failed\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -58,10 +58,10 @@ CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept
 
 std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexcept {
     if (!head.empty()) {
-        fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                "Closing a curl easy handle with outstanding borrowers"}));
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                             " Closing a curl easy handle with outstanding borrowers\n"}));
         for (const Borrower& borrower : head) {
-            fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
@@ -76,8 +76,8 @@ std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexc
 CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept : ownedHandle(ownedHandle) {
     if (ownedHandle == nullptr) {
         const std::source_location sourceLocation = std::source_location::current();
-        fprintln(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, "Cannot adopt a null curl multi handle"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, " Cannot adopt a null curl multi handle\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -87,7 +87,7 @@ CurlMultiHandle::~CurlMultiHandle() noexcept {
     const std::error_code error = close();
     if (error) {
         const std::source_location sourceLocation = std::source_location::current();
-        fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation, "Curl multi cleanup failed"}));
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation, " Curl multi cleanup failed\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -98,10 +98,10 @@ CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept
 
 std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noexcept {
     if (!head.empty()) {
-        fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                "Closing a curl multi handle with outstanding borrowers"}));
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                             " Closing a curl multi handle with outstanding borrowers\n"}));
         for (const Borrower& borrower : head) {
-            fprintln(std::cerr, std::to_array<PrintArg>({"-", borrower.sourceLocation}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();

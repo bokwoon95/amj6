@@ -30,8 +30,8 @@ public:
     [[nodiscard]] CURL*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (ownedHandle == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved curl easy handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved curl easy handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -40,8 +40,8 @@ public:
     [[nodiscard]] Borrowed<CurlEasyHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (ownedHandle == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved curl easy handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved curl easy handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -67,8 +67,8 @@ public:
     [[nodiscard]] CURLM*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (ownedHandle == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved curl multi handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved curl multi handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -77,8 +77,8 @@ public:
     [[nodiscard]] Borrowed<CurlMultiHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (ownedHandle == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved curl multi handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved curl multi handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }

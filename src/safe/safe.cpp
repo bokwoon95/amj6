@@ -73,18 +73,19 @@ void PrintArg::print(std::ostream& out) const {
     out << "<invalid PrintArg>";
 }
 
-void fprintln(std::ostream& out, std::span<const PrintArg> printArgs) noexcept {
+void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept {
     try {
-        bool written = false;
+        bool previousWasNonString = false;
         for (const PrintArg& printArg : printArgs) {
-            if (!written) {
-                written = true;
-            } else {
+            const bool currentIsNonString =
+                !std::holds_alternative<std::string_view>(printArg.value);
+            if (previousWasNonString && currentIsNonString) {
                 out << ' ';
             }
             printArg.print(out);
+            previousWasNonString = currentIsNonString;
         }
-        out << '\n' << std::flush;
+        out << std::flush;
     } catch (const std::exception& exception) {
         std::fputs(exception.what(), stderr);
         std::fputc('\n', stderr);
@@ -93,21 +94,14 @@ void fprintln(std::ostream& out, std::span<const PrintArg> printArgs) noexcept {
     }
 }
 
-void printStackTrace(std::ostream& out, int skip, int maxDepth) noexcept {
+void printStackTrace(std::ostream& out, size_t skip, size_t maxDepth) noexcept {
     try {
-        if (skip < 0 || maxDepth < 0) {
-            out << "Invalid stack trace limits\n" << std::flush;
-            return;
-        }
-        cpptrace::generate_trace(static_cast<std::size_t>(skip), static_cast<std::size_t>(maxDepth))
-            .print(out);
+        cpptrace::generate_trace(skip, maxDepth).print(out);
+    } catch (const std::exception& exception) {
+        std::fputs(exception.what(), stderr);
+        std::fputc('\n', stderr);
     } catch (...) {
-        try {
-            out << "Unable to print stack trace\n" << std::flush;
-        } catch (...) {
-            // Diagnostic output is best effort. The caller still terminates.
-            return;
-        }
+        std::fputs("exception thrown\n", stderr);
     }
 }
 

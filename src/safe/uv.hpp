@@ -28,9 +28,9 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            fprintln(std::cerr,
+            print(std::cerr,
                 std::to_array<PrintArg>({sourceLocation,
-                    "Libuv loop cleanup failed; drain and close all handles first"}));
+                    " Libuv loop cleanup failed; drain and close all handles first\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -46,8 +46,8 @@ public:
     [[nodiscard]] uv_loop_t*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved libuv loop"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved libuv loop\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -57,8 +57,8 @@ public:
     [[nodiscard]] Borrowed<UvLoop>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved libuv loop"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved libuv loop\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -84,8 +84,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            fprintln(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, "Libuv timer cleanup failed"}));
+            print(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, " Libuv timer cleanup failed\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -101,8 +101,8 @@ public:
     [[nodiscard]] uv_timer_t*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved libuv timer"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved libuv timer\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -112,8 +112,8 @@ public:
     [[nodiscard]] Borrowed<UvTimerHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved libuv timer"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved libuv timer\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -140,8 +140,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            fprintln(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, "Libuv poll handle cleanup failed"}));
+            print(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, " Libuv poll handle cleanup failed\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -157,8 +157,8 @@ public:
     [[nodiscard]] uv_poll_t*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved libuv poll handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved libuv poll handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -168,8 +168,8 @@ public:
 
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved libuv poll handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved libuv poll handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -196,8 +196,8 @@ public:
         const std::error_code errorCode = close();
         if (errorCode) {
             const std::source_location sourceLocation = std::source_location::current();
-            fprintln(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, "Libuv async handle cleanup failed"}));
+            print(std::cerr,
+                std::to_array<PrintArg>({sourceLocation, " Libuv async handle cleanup failed\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -213,8 +213,8 @@ public:
     [[nodiscard]] uv_async_t*
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through a closed or moved libuv async handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through a closed or moved libuv async handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -224,8 +224,8 @@ public:
     [[nodiscard]] Borrowed<UvAsyncHandle>
     borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (state == nullptr) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing a closed or moved libuv async handle"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing a closed or moved libuv async handle\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }

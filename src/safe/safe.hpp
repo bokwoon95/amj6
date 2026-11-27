@@ -2,6 +2,7 @@
 
 #include <array>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -15,19 +16,13 @@
 namespace amj::safe {
 
 // Text is borrowed and must remain valid until printing finishes.
-class PrintArg {
-public:
+struct PrintArg {
     PrintArg(std::string_view text) noexcept : value(text) {}
 
-    PrintArg(const char* text) noexcept {
-        if (text == nullptr) {
-            value = std::string_view();
-        } else {
-            value = std::string_view(text);
-        }
-    }
+    PrintArg(const char* text) noexcept
+        : value(text == nullptr ? std::string_view() : std::string_view(text)) {}
 
-    PrintArg(const std::string& text) noexcept : PrintArg(std::string_view(text)) {}
+    PrintArg(const std::string& text) noexcept : value(std::string_view(text)) {}
 
     PrintArg(bool boolean) noexcept : value(boolean) {}
 
@@ -46,15 +41,14 @@ public:
 
     void print(std::ostream& out) const;
 
-private:
-    std::variant<std::string_view, bool, std::int64_t, std::uint64_t, long double,
+    const std::variant<std::string_view, bool, std::int64_t, std::uint64_t, long double,
         std::source_location>
         value = {};
 };
 
-// Separates nonempty arguments with spaces and appends a newline. Output failures
-// are contained; argument evaluation before entry remains outside the catch.
-void fprintln(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
+// Inserts a space between adjacent non-string arguments. No newline is appended.
+// Output failures are contained; argument evaluation before entry remains outside the catch.
+void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
 
 class Borrower {
     struct Iterator {
@@ -124,9 +118,7 @@ private:
     Borrower* next = nullptr;
 };
 
-// skip counts frames to omit, including this helper; maxDepth limits capture.
-// Trace and output failures are contained; this helper never terminates callers.
-void printStackTrace(std::ostream& out, int skip, int maxDepth) noexcept;
+void printStackTrace(std::ostream& out, size_t skip, size_t maxDepth) noexcept;
 
 template <typename T> class Borrowed {
 public:
@@ -146,8 +138,8 @@ public:
     [[nodiscard]] decltype(std::declval<const T&>().get())
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Access through an empty or moved borrow"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Access through an empty or moved borrow\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -157,8 +149,8 @@ public:
     [[nodiscard]] Borrowed<T>
     borrow(std::source_location sourceLocation = std::source_location::current()) const noexcept {
         if (borrower.empty()) {
-            fprintln(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                    "Borrowing through an empty or moved borrow"}));
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 " Borrowing through an empty or moved borrow\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
