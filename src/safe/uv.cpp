@@ -68,7 +68,7 @@ std::error_code UvLoop::close(std::source_location sourceLocation) noexcept {
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              ": closed UvLoop with outstanding borrowers:\n"}));
         for (const Borrower& borrower : state->borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
@@ -138,7 +138,7 @@ std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexce
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              ": closed UvTimerHandle with outstanding borrowers:\n"}));
         for (const Borrower& borrower : state->borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
@@ -207,7 +207,7 @@ std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcep
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              ": closed UvPollHandle with outstanding borrowers:\n"}));
         for (const Borrower& borrower : state->borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
@@ -276,7 +276,7 @@ std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexce
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              ": closed UvAsyncHandle with outstanding borrowers:\n"}));
         for (const Borrower& borrower : state->borrowers) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();

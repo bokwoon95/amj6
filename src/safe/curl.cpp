@@ -61,7 +61,7 @@ std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexc
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              " Closing a curl easy handle with outstanding borrowers\n"}));
         for (const Borrower& borrower : head) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
@@ -101,7 +101,7 @@ std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noex
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
                              " Closing a curl multi handle with outstanding borrowers\n"}));
         for (const Borrower& borrower : head) {
-            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
+            print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();

@@ -65,8 +65,6 @@ class Borrower {
     };
 
 public:
-    const std::source_location sourceLocation = {};
-
     Borrower() noexcept : previous(this), next(this) {}
 
     Borrower(std::source_location sourceLocation, Borrower& previous) noexcept
@@ -94,7 +92,37 @@ public:
             other.next = &other;
         }
     }
-    Borrower& operator=(Borrower&&) = delete;
+    Borrower& operator=(Borrower&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        previous->next = next;
+        next->previous = previous;
+        sourceLocation = other.sourceLocation;
+        if (other.empty()) {
+            previous = this;
+            next = this;
+        } else {
+            previous = other.previous;
+            next = other.next;
+            previous->next = this;
+            next->previous = this;
+            other.previous = &other;
+            other.next = &other;
+        }
+        return *this;
+    }
+
+    void reset() noexcept {
+        previous->next = next;
+        next->previous = previous;
+        previous = this;
+        next = this;
+    }
+
+    [[nodiscard]] std::source_location getSourceLocation() const noexcept {
+        return sourceLocation;
+    }
 
     [[nodiscard]] bool empty() const noexcept {
         return next == this;
@@ -113,6 +141,7 @@ public:
     }
 
 private:
+    std::source_location sourceLocation = {};
     Borrower* previous = nullptr;
     Borrower* next = nullptr;
 };
@@ -134,7 +163,22 @@ public:
     Borrowed& operator=(const Borrowed&) = delete;
     Borrowed(Borrowed&& other) noexcept
         : borrower(std::move(other.borrower)), resource(other.resource) {}
-    Borrowed& operator=(Borrowed&&) = delete;
+    Borrowed& operator=(Borrowed&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        borrower = std::move(other.borrower);
+        resource = other.resource;
+        return *this;
+    }
+
+    explicit operator bool() const noexcept {
+        return !borrower.empty();
+    }
+
+    void reset() noexcept {
+        borrower.reset();
+    }
 
     [[nodiscard]] decltype(std::declval<const T&>().get())
     get(std::source_location sourceLocation = std::source_location::current()) const noexcept {

@@ -51,9 +51,7 @@ public:
     QuickJSContext(QuickJSContext&& other) noexcept
         : quickJSRuntime(std::move(other.quickJSRuntime)),
           jsContext(std::exchange(other.jsContext, nullptr)),
-          borrowers(std::move(other.borrowers)) {
-        other.quickJSRuntime.reset();
-    }
+          borrowers(std::move(other.borrowers)) {}
     QuickJSContext& operator=(QuickJSContext&&) = delete;
 
     [[nodiscard]] std::error_code
@@ -68,7 +66,7 @@ public:
 private:
     QuickJSContext() noexcept = default;
 
-    std::optional<Borrowed<QuickJSRuntime>> quickJSRuntime = std::nullopt;
+    Borrowed<QuickJSRuntime> quickJSRuntime = {};
     JSContext* jsContext = nullptr;
     Borrower borrowers = {};
 };
@@ -78,7 +76,7 @@ public:
     QuickJSValue(Borrowed<QuickJSContext> quickJSContext, JSValue jsValue) noexcept
         : jsValue(jsValue), live(true) {
         std::ignore = quickJSContext.get(); // Make sure quickJSContext is valid.
-        this->quickJSContext.emplace(std::move(quickJSContext));
+        this->quickJSContext = std::move(quickJSContext);
     };
 
     ~QuickJSValue() noexcept;
@@ -87,9 +85,7 @@ public:
     QuickJSValue(QuickJSValue&& other) noexcept
         : quickJSContext(std::move(other.quickJSContext)),
           jsValue(std::exchange(other.jsValue, JS_UNDEFINED)),
-          live(std::exchange(other.live, false)), borrowers(std::move(other.borrowers)) {
-        other.quickJSContext.reset();
-    }
+          live(std::exchange(other.live, false)), borrowers(std::move(other.borrowers)) {}
     QuickJSValue& operator=(QuickJSValue&&) = delete;
 
     [[nodiscard]] JSValue
@@ -105,7 +101,7 @@ public:
     close(std::source_location sourceLocation = std::source_location::current()) noexcept;
 
 private:
-    std::optional<Borrowed<QuickJSContext>> quickJSContext = std::nullopt;
+    Borrowed<QuickJSContext> quickJSContext = {};
     JSValue jsValue = JS_UNDEFINED;
     bool live = false;
     Borrower borrowers = {};
