@@ -30,9 +30,8 @@ public:
     ~QuickJSRuntime() noexcept {
         const std::error_code errorCode = close();
         if (errorCode) {
-            const std::source_location sourceLocation = std::source_location::current();
-            print(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, " QuickJS runtime cleanup failed\n"}));
+            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
+                                 ": QuickJSRuntime.close: ", errorCode, "\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -44,33 +43,11 @@ public:
           borrowers(std::move(other.borrowers)) {}
     QuickJSRuntime& operator=(QuickJSRuntime&&) = delete;
 
-    [[nodiscard]] JSRuntime*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (jsRuntime == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Access through a closed or moved QuickJS runtime\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return jsRuntime;
-    }
-
-    [[nodiscard]] Borrowed<QuickJSRuntime>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (jsRuntime == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Borrowing a closed or moved QuickJS runtime\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<QuickJSRuntime>(sourceLocation, borrowers, jsRuntime);
-    }
-
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
         if (!borrowers.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Closing a QuickJS runtime with outstanding borrowers\n"}));
+                                 ": closed QuickJSRuntime with outstanding borrowers:\n"}));
             for (const Borrower& borrower : borrowers) {
                 print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
             }
@@ -82,6 +59,28 @@ public:
             JS_FreeRuntime(runtime);
         }
         return {};
+    }
+
+    [[nodiscard]] JSRuntime*
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (jsRuntime == nullptr) {
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 ": QuickJSRuntime is closed or moved-from\n"}));
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
+        }
+        return jsRuntime;
+    }
+
+    [[nodiscard]] Borrowed<QuickJSRuntime>
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        if (jsRuntime == nullptr) {
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 ": QuickJSRuntime is closed or moved-from\n"}));
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
+        }
+        return Borrowed<QuickJSRuntime>(sourceLocation, borrowers, jsRuntime);
     }
 
 private:
@@ -108,9 +107,8 @@ public:
     ~QuickJSContext() noexcept {
         const std::error_code errorCode = close();
         if (errorCode) {
-            const std::source_location sourceLocation = std::source_location::current();
-            print(std::cerr,
-                std::to_array<PrintArg>({sourceLocation, " QuickJS context cleanup failed\n"}));
+            print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
+                                 ": QuickJSContext.close: ", errorCode, "\n"}));
             printStackTrace(std::cerr, 1, 30);
             std::terminate();
         }
@@ -119,39 +117,18 @@ public:
     QuickJSContext& operator=(const QuickJSContext&) = delete;
     QuickJSContext(QuickJSContext&& other) noexcept
         : quickJSRuntime(std::move(other.quickJSRuntime)),
-          jsContext(std::exchange(other.jsContext, nullptr)), head(std::move(other.head)) {
+          jsContext(std::exchange(other.jsContext, nullptr)),
+          borrowers(std::move(other.borrowers)) {
         other.quickJSRuntime.reset();
     }
     QuickJSContext& operator=(QuickJSContext&&) = delete;
 
-    [[nodiscard]] JSContext*
-    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
-        if (jsContext == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Access through a closed or moved QuickJS context\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return jsContext;
-    }
-
-    [[nodiscard]] Borrowed<QuickJSContext>
-    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (jsContext == nullptr) {
-            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Borrowing a closed or moved QuickJS context\n"}));
-            printStackTrace(std::cerr, 1, 30);
-            std::terminate();
-        }
-        return Borrowed<QuickJSContext>(sourceLocation, head, jsContext);
-    }
-
     [[nodiscard]] std::error_code
     close(std::source_location sourceLocation = std::source_location::current()) noexcept {
-        if (!head.empty()) {
+        if (!borrowers.empty()) {
             print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                                 " Closing a QuickJS context with outstanding borrowers\n"}));
-            for (const Borrower& borrower : head) {
+                                 ": closed QuickJSContext with outstanding borrowers:\n"}));
+            for (const Borrower& borrower : borrowers) {
                 print(std::cerr, std::to_array<PrintArg>({"- ", borrower.sourceLocation, "\n"}));
             }
             printStackTrace(std::cerr, 1, 30);
@@ -165,16 +142,36 @@ public:
         return {};
     }
 
+    [[nodiscard]] JSContext*
+    get(std::source_location sourceLocation = std::source_location::current()) const noexcept {
+        if (jsContext == nullptr) {
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 ": QuickJSContext is closed or moved-from\n"}));
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
+        }
+        return jsContext;
+    }
+
+    [[nodiscard]] Borrowed<QuickJSContext>
+    borrow(std::source_location sourceLocation = std::source_location::current()) noexcept {
+        if (jsContext == nullptr) {
+            print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                                 ": QuickJSContext is closed or moved-from\n"}));
+            printStackTrace(std::cerr, 1, 30);
+            std::terminate();
+        }
+        return Borrowed<QuickJSContext>(sourceLocation, borrowers, jsContext);
+    }
+
 private:
     QuickJSContext() noexcept = default;
 
     std::optional<Borrowed<QuickJSRuntime>> quickJSRuntime = std::nullopt;
     JSContext* jsContext = nullptr;
-    Borrower head = {};
+    Borrower borrowers = {};
 };
 
-// Adopts one owned JSValue reference. Call JS_DupValue explicitly when starting
-// from a borrowed value. The context borrow remains registered through cleanup.
 class QuickJSValue {
 public:
     QuickJSValue(Borrowed<QuickJSContext> quickJSContext, JSValue value) noexcept
