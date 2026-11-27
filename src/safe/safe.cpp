@@ -75,15 +75,14 @@ void PrintArg::print(std::ostream& out) const {
 
 void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept {
     try {
-        bool previousWasNonString = false;
+        bool wasString = false;
         for (const PrintArg& printArg : printArgs) {
-            const bool currentIsNonString =
-                !std::holds_alternative<std::string_view>(printArg.value);
-            if (previousWasNonString && currentIsNonString) {
+            const bool isString = !std::holds_alternative<std::string_view>(printArg.value);
+            if (wasString && isString) {
                 out << ' ';
             }
             printArg.print(out);
-            previousWasNonString = currentIsNonString;
+            wasString = isString;
         }
         out << std::flush;
     } catch (const std::exception& exception) {
