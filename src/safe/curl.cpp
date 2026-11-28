@@ -17,50 +17,64 @@
 
 namespace amj::safe {
 namespace {
-class CurlMultiCategory final : public std::error_category {
+class CurlErrorCategory final : public std::error_category {
 public:
     const char* name() const noexcept override {
-        return "curl.multi";
+        return "curl";
+    }
+    std::string message(int code) const override {
+        return curl_easy_strerror(static_cast<CURLcode>(code));
+    }
+};
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const CurlErrorCategory curlErrorCategoryInstance;
+
+class CurlMErrorCategory final : public std::error_category {
+public:
+    const char* name() const noexcept override {
+        return "curlm";
     }
     std::string message(int code) const override {
         return curl_multi_strerror(static_cast<CURLMcode>(code));
     }
 };
-const CurlMultiCategory curlMultiCategory; // NOLINT(bugprone-throwing-static-initialization)
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const CurlMErrorCategory curlMErrorCategoryInstance;
 } // namespace
 
-std::error_code curlMultiError(CURLMcode code) noexcept {
-    return {static_cast<int>(code), curlMultiCategory};
+const std::error_category& curlErrorCategory() noexcept {
+    return curlErrorCategoryInstance;
 }
 
-CurlEasyHandle::CurlEasyHandle(CURL* ownedHandle) noexcept : ownedHandle(ownedHandle) {
-    if (ownedHandle == nullptr) {
-        const std::source_location sourceLocation = std::source_location::current();
-        print(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, " Cannot adopt a null curl easy handle\n"}));
-        printStackTrace(std::cerr, 1, 30);
-        std::terminate();
+const std::error_category& curlMErrorCategory() noexcept {
+    return curlMErrorCategoryInstance;
+}
+
+std::expected<CurlEasyHandle, std::error_code> CurlEasyHandle::create() noexcept {
+    CurlEasyHandle curlEasyHandle;
+    curlEasyHandle.ownedHandle = curl_easy_init();
+    if (curlEasyHandle.ownedHandle == nullptr) {
+        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
     }
+    return curlEasyHandle;
 }
 
 CurlEasyHandle::~CurlEasyHandle() noexcept {
-    const std::error_code error = close();
-    if (error) {
-        const std::source_location sourceLocation = std::source_location::current();
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation, " Curl easy cleanup failed\n"}));
+    const std::error_code errorCode = close();
+    if (errorCode) {
+        print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
+                             ": CurlEasyHandle.close: ", errorCode, "\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
 }
 
-CurlEasyHandle::CurlEasyHandle(CurlEasyHandle&& other) noexcept
-    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
-
 std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexcept {
-    if (!head.empty()) {
+    if (!borrowers.empty()) {
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Closing a curl easy handle with outstanding borrowers\n"}));
-        for (const Borrower& borrower : head) {
+                             ": closed CurlEasyHandle with outstanding borrowers:\n"}));
+        for (const Borrower& borrower : borrowers) {
             print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
@@ -73,65 +87,84 @@ std::error_code CurlEasyHandle::close(std::source_location sourceLocation) noexc
     return {};
 }
 
-CurlMultiHandle::CurlMultiHandle(CURLM* ownedHandle) noexcept : ownedHandle(ownedHandle) {
+CURL* CurlEasyHandle::get(std::source_location sourceLocation) const noexcept {
     if (ownedHandle == nullptr) {
-        const std::source_location sourceLocation = std::source_location::current();
         print(std::cerr,
-            std::to_array<PrintArg>({sourceLocation, " Cannot adopt a null curl multi handle\n"}));
+            std::to_array<PrintArg>({sourceLocation, ": CurlEasyHandle is empty or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
+    return ownedHandle;
+}
+
+Borrowed<CurlEasyHandle> CurlEasyHandle::borrow(std::source_location sourceLocation) noexcept {
+    if (ownedHandle == nullptr) {
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": CurlEasyHandle is empty or moved-from\n"}));
+        printStackTrace(std::cerr, 1, 30);
+        std::terminate();
+    }
+    return Borrowed<CurlEasyHandle>(sourceLocation, borrowers, ownedHandle);
+}
+
+std::expected<CurlMultiHandle, std::error_code> CurlMultiHandle::create() noexcept {
+    CurlMultiHandle curlMultiHandle;
+    curlMultiHandle.ownedHandle = curl_multi_init();
+    if (curlMultiHandle.ownedHandle == nullptr) {
+        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
+    }
+    return curlMultiHandle;
 }
 
 CurlMultiHandle::~CurlMultiHandle() noexcept {
-    const std::error_code error = close();
-    if (error) {
-        const std::source_location sourceLocation = std::source_location::current();
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation, " Curl multi cleanup failed\n"}));
+    const std::error_code errorCode = close();
+    if (errorCode) {
+        print(std::cerr, std::to_array<PrintArg>({std::source_location::current(),
+                             ": CurlMultiHandle.close: ", errorCode, "\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
 }
 
-CurlMultiHandle::CurlMultiHandle(CurlMultiHandle&& other) noexcept
-    : ownedHandle(std::exchange(other.ownedHandle, nullptr)), head(std::move(other.head)) {}
-
 std::error_code CurlMultiHandle::close(std::source_location sourceLocation) noexcept {
-    if (!head.empty()) {
+    if (!borrowers.empty()) {
         print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             " Closing a curl multi handle with outstanding borrowers\n"}));
-        for (const Borrower& borrower : head) {
+                             ": closed CurlMultiHandle with outstanding borrowers:\n"}));
+        for (const Borrower& borrower : borrowers) {
             print(std::cerr, std::to_array<PrintArg>({"- ", borrower.getSourceLocation(), "\n"}));
         }
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
-    CURLM* handle = std::exchange(ownedHandle, nullptr);
-    if (handle == nullptr) {
+    if (ownedHandle == nullptr) {
         return {};
     }
-    const CURLMcode code = curl_multi_cleanup(handle);
+    const CURLMcode code = curl_multi_cleanup(ownedHandle);
     if (code != CURLM_OK) {
-        ownedHandle = handle;
-        return curlMultiError(code);
+        return std::error_code(static_cast<int>(code), curlMErrorCategory());
     }
+    ownedHandle = nullptr;
     return {};
 }
 
-std::expected<CurlEasyHandle, std::error_code> createCurlEasy() {
-    CURL* handle = curl_easy_init();
-    if (handle == nullptr) {
-        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
+CURLM* CurlMultiHandle::get(std::source_location sourceLocation) const noexcept {
+    if (ownedHandle == nullptr) {
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                             ": CurlMultiHandle is empty or moved-from\n"}));
+        printStackTrace(std::cerr, 1, 30);
+        std::terminate();
     }
-    return CurlEasyHandle(handle);
+    return ownedHandle;
 }
 
-std::expected<CurlMultiHandle, std::error_code> createCurlMulti() {
-    CURLM* handle = curl_multi_init();
-    if (handle == nullptr) {
-        return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
+Borrowed<CurlMultiHandle> CurlMultiHandle::borrow(std::source_location sourceLocation) noexcept {
+    if (ownedHandle == nullptr) {
+        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
+                             ": CurlMultiHandle is empty or moved-from\n"}));
+        printStackTrace(std::cerr, 1, 30);
+        std::terminate();
     }
-    return CurlMultiHandle(handle);
+    return Borrowed<CurlMultiHandle>(sourceLocation, borrowers, ownedHandle);
 }
 
 } // namespace amj::safe

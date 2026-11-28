@@ -21,26 +21,32 @@
 #include <utility>
 
 namespace amj::safe {
+
 namespace {
 class UvErrorCategory final : public std::error_category {
 public:
     const char* name() const noexcept override {
-        return "libuv";
+        return "uv";
     }
     std::string message(int status) const override {
         return uv_strerror(status);
     }
 };
 
-const UvErrorCategory uvErrorCategory; // NOLINT(bugprone-throwing-static-initialization)
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+const UvErrorCategory uvErrorCategoryInstance;
 } // namespace
+
+const std::error_category& uvErrorCategory() noexcept {
+    return uvErrorCategoryInstance;
+}
 
 std::expected<UvLoop, std::error_code> UvLoop::create() noexcept {
     try {
         std::unique_ptr<State> state = std::make_unique<State>();
         const int status = uv_loop_init(&state->uvLoop);
         if (status != 0) {
-            return std::unexpected(std::error_code(status, uvErrorCategory));
+            return std::unexpected(std::error_code(status, uvErrorCategory()));
         }
         UvLoop uvLoop;
         uvLoop.state = std::move(state);
@@ -75,7 +81,7 @@ std::error_code UvLoop::close(std::source_location sourceLocation) noexcept {
     }
     const int status = uv_loop_close(&state->uvLoop);
     if (status != 0) {
-        return std::error_code(status, uvErrorCategory);
+        return std::error_code(status, uvErrorCategory());
     }
     state.reset();
     return {};
@@ -109,7 +115,7 @@ UvTimerHandle::create(Borrowed<UvLoop> uvLoop) noexcept {
         });
         const int status = uv_timer_init(state->uvLoop.get(), &state->uvTimerHandle);
         if (status != 0) {
-            return std::unexpected(std::error_code(status, uvErrorCategory));
+            return std::unexpected(std::error_code(status, uvErrorCategory()));
         }
         state->uvTimerHandle.data = state.get();
         UvTimerHandle uvTimerHandle;
@@ -152,8 +158,8 @@ std::error_code UvTimerHandle::close(std::source_location sourceLocation) noexce
 
 uv_timer_t* UvTimerHandle::get(std::source_location sourceLocation) const noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvTimerHandle is empty or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvTimerHandle is empty or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -162,8 +168,8 @@ uv_timer_t* UvTimerHandle::get(std::source_location sourceLocation) const noexce
 
 Borrowed<UvTimerHandle> UvTimerHandle::borrow(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvTimerHandle is empty or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvTimerHandle is empty or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -178,7 +184,7 @@ std::expected<UvPollHandle, std::error_code> UvPollHandle::create(Borrowed<UvLoo
         });
         const int status = uv_poll_init_socket(state->uvLoop.get(), &state->uvPollHandle, socket);
         if (status != 0) {
-            return std::unexpected(std::error_code(status, uvErrorCategory));
+            return std::unexpected(std::error_code(status, uvErrorCategory()));
         }
         state->uvPollHandle.data = state.get();
         UvPollHandle uvPollHandle;
@@ -221,8 +227,8 @@ std::error_code UvPollHandle::close(std::source_location sourceLocation) noexcep
 
 uv_poll_t* UvPollHandle::get(std::source_location sourceLocation) const noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvPollHandle is closed or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvPollHandle is closed or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -231,8 +237,8 @@ uv_poll_t* UvPollHandle::get(std::source_location sourceLocation) const noexcept
 
 Borrowed<UvPollHandle> UvPollHandle::borrow(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvPollHandle is closed or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvPollHandle is closed or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -247,7 +253,7 @@ std::expected<UvAsyncHandle, std::error_code> UvAsyncHandle::create(Borrowed<UvL
         });
         const int status = uv_async_init(state->uvLoop.get(), &state->uvAsyncHandle, callback);
         if (status != 0) {
-            return std::unexpected(std::error_code(status, uvErrorCategory));
+            return std::unexpected(std::error_code(status, uvErrorCategory()));
         }
         state->uvAsyncHandle.data = state.get();
         UvAsyncHandle uvAsyncHandle;
@@ -290,8 +296,8 @@ std::error_code UvAsyncHandle::close(std::source_location sourceLocation) noexce
 
 uv_async_t* UvAsyncHandle::get(std::source_location sourceLocation) const noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvAsyncHandle is closed or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvAsyncHandle is closed or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }
@@ -300,8 +306,8 @@ uv_async_t* UvAsyncHandle::get(std::source_location sourceLocation) const noexce
 
 Borrowed<UvAsyncHandle> UvAsyncHandle::borrow(std::source_location sourceLocation) noexcept {
     if (state == nullptr) {
-        print(std::cerr, std::to_array<PrintArg>({sourceLocation,
-                             ": UvAsyncHandle is closed or moved-from\n"}));
+        print(std::cerr,
+            std::to_array<PrintArg>({sourceLocation, ": UvAsyncHandle is closed or moved-from\n"}));
         printStackTrace(std::cerr, 1, 30);
         std::terminate();
     }

@@ -17,6 +17,8 @@
 
 namespace amj::safe {
 
+const std::error_category& uvErrorCategory() noexcept;
+
 class UvLoop {
 public:
     [[nodiscard]] static std::expected<UvLoop, std::error_code> create() noexcept;

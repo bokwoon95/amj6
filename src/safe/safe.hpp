@@ -49,6 +49,10 @@ struct PrintArg {
         value = {};
 };
 
+void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
+
+void printStackTrace(std::ostream& out, size_t skip, size_t maxDepth) noexcept;
+
 class Borrower {
     struct Iterator {
         const Borrower* current = nullptr;
@@ -145,10 +149,6 @@ private:
     Borrower* previous = nullptr;
     Borrower* next = nullptr;
 };
-
-void print(std::ostream& out, std::span<const PrintArg> printArgs) noexcept;
-
-void printStackTrace(std::ostream& out, size_t skip, size_t maxDepth) noexcept;
 
 template <typename T> class Borrowed {
 public:
